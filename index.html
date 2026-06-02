@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>急診護理站電子點班系統</title>
+<style>
+  :root{
+    --bg:#e9edf0; --bg2:#dfe6ea; --card:#ffffff; --ink:#23313b; --ink-soft:#5d6c77; --line:#d3dbe1;
+    --brand:#0f7a86; --brand-dark:#0a5b64; --brand-soft:#e3f2f3;
+    --ok:#1f9d57; --ok-soft:#e6f6ed; --warn:#d68a00; --warn-soft:#fdf3df;
+    --bad:#d23d3d; --bad-soft:#fbe8e8;
+    --shadow:0 1px 3px rgba(20,40,55,.07),0 3px 12px rgba(20,40,55,.05);
+    --fs:15.5px;
+  }
+  [data-theme="dark"]{
+    --bg:#0f1620; --bg2:#0a0f17; --card:#1b2630; --ink:#dde7ee; --ink-soft:#9fb0bc; --line:#2c3c49;
+    --brand:#2bb3c0; --brand-dark:#1d8d99; --brand-soft:#16323a;
+    --ok:#3ec77a; --ok-soft:#15301f; --warn:#e0a93a; --warn-soft:#332710;
+    --bad:#ef6a6a; --bad-soft:#3a1d1d;
+    --shadow:0 1px 3px rgba(0,0,0,.35),0 3px 12px rgba(0,0,0,.28);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{font-family:"PingFang TC","Microsoft JhengHei","微軟正黑體","Helvetica Neue",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.55;font-size:var(--fs);
+    -webkit-font-smoothing:antialiased;transition:background .2s,color .2s}
+  .app{width:100%;margin:0 auto;min-height:100vh}
+  .narrow{max-width:460px;margin:0 auto}
+  .wide{max-width:1120px;margin:0 auto}
+
+  .topbar{background:linear-gradient(135deg,var(--brand),var(--brand-dark));color:#fff;
+    padding:14px 18px;position:sticky;top:0;z-index:50;box-shadow:0 2px 12px rgba(10,91,100,.25)}
+  .topbar-in{max-width:1120px;margin:0 auto}
+  .topbar .title{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .topbar .sub{font-size:12.5px;opacity:.88;margin-top:2px}
+  .back{background:rgba(255,255,255,.18);border:none;color:#fff;font-size:14px;padding:6px 13px;
+    border-radius:8px;font-family:inherit;cursor:pointer}
+  .screen{padding:18px}
+  .screen.lvl2{background:var(--bg2)}
+  .demo-banner{background:#fff8e6;border-bottom:1px solid #f1dca0;color:#8a6a1a;font-size:12px;
+    padding:8px 14px;text-align:center;font-weight:600}
+
+  .card{background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
+  .section-h{font-size:13px;font-weight:700;color:var(--ink-soft);margin:20px 4px 10px}
+  .btn{padding:13px 20px;border-radius:12px;border:none;font-size:15.5px;font-weight:700;font-family:inherit;cursor:pointer}
+  .btn-primary{background:var(--brand);color:#fff;box-shadow:0 4px 12px rgba(15,122,134,.3)}
+  .btn-primary:disabled{background:#b8c4ca;box-shadow:none}
+  .btn-block{width:100%}
+  .btn-ghost{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
+
+  /* login */
+  .login-wrap{padding:48px 26px;text-align:center;max-width:430px;margin:0 auto}
+  .login-logo{width:74px;height:74px;border-radius:20px;margin:0 auto 18px;
+    background:linear-gradient(135deg,var(--brand),var(--brand-dark));display:flex;align-items:center;
+    justify-content:center;font-size:36px;box-shadow:0 8px 24px rgba(15,122,134,.3)}
+  .login-wrap h1{font-size:22px;margin:0 0 4px}.login-wrap .tag{color:var(--ink-soft);font-size:14px;margin-bottom:28px}
+  .field{text-align:left;margin-bottom:14px}
+  .field label{font-size:13px;font-weight:600;color:var(--ink-soft);display:block;margin-bottom:6px}
+  .field input{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;font-size:16px;font-family:inherit}
+
+  /* home */
+  .date-block{text-align:center;padding:6px 0}
+  .date-block .big{font-size:30px;font-weight:800}
+  .date-block .day{color:var(--ink-soft);font-size:14px;margin-top:2px}
+  .shift-pill{display:inline-flex;align-items:center;gap:6px;background:var(--brand-soft);color:var(--brand-dark);
+    font-weight:700;padding:6px 14px;border-radius:999px;font-size:15px;margin-top:10px}
+  .role-tag{display:inline-block;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;margin-top:8px}
+
+  /* area tiles (先選分區) */
+  .area-tiles{display:grid;gap:10px;grid-template-columns:repeat(2,1fr)}
+  .area-tile{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:14px 15px;cursor:pointer;position:relative;min-height:64px;display:flex;flex-direction:column;
+    justify-content:center;box-shadow:var(--shadow);transition:transform .08s}
+  .area-tile:active{transform:scale(.98)}
+  .area-tile .an{font-size:17px;font-weight:800;display:flex;align-items:center}
+  .area-tile .ac{font-size:11.5px;color:var(--ink-soft);font-weight:600;margin-top:4px;padding-left:18px}
+  .area-tile .chev{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:20px;color:var(--ink-soft);opacity:.55}
+  .area-dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px;flex:0 0 10px}
+  /* sheet list (緊湊列) */
+  .area-bar{font-weight:800;font-size:15px;margin:0 2px 12px;padding-left:10px;border-left:4px solid var(--brand)}
+  .sheet-list{display:grid;gap:8px;grid-template-columns:1fr}
+  .sheet-row{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--brand);border-radius:10px;
+    padding:11px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;transition:.08s}
+  .sheet-row:active{opacity:.7}
+  /* category section in rollcall */
+  .cat{margin-bottom:18px}
+  .cat-h{display:flex;align-items:center;gap:9px;font-weight:800;font-size:17px;margin:0 2px 11px}
+  .cat-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .cat-cnt{font-size:13px;font-weight:700;color:var(--ink-soft);margin-left:auto}
+  .cat-tools{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 12px}
+  .tool-pill{font-size:13.5px;font-weight:700;padding:9px 15px;border-radius:10px;border:1.5px solid var(--brand);
+    background:var(--brand-soft);color:var(--brand);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .tool-pill:active{opacity:.7}
+  /* status banner (3rd level completion) — prominent */
+  .status-banner{display:flex;align-items:center;gap:14px;padding:18px 18px;border-radius:14px;margin-bottom:16px;font-weight:800;font-size:18px}
+  .status-banner.todo{background:var(--warn-soft);color:var(--warn);border:2px solid var(--warn)}
+  .status-banner.done{background:var(--ok-soft);color:var(--ok);border:2px solid var(--ok)}
+  .status-banner .sb-ic{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;flex:0 0 46px}
+  .status-banner.todo .sb-ic{background:var(--warn)} .status-banner.done .sb-ic{background:var(--ok)}
+  .status-banner .sb-sub{font-size:13px;font-weight:600;opacity:.92;margin-top:2px}
+  /* history */
+  .hist-day{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:9px}
+  .hist-date{font-weight:800;font-size:14.5px;margin-bottom:9px;display:flex;align-items:center;gap:8px}
+  .hist-shift{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13.5px;border-top:1px dashed var(--line)}
+  .hist-shift:first-of-type{border-top:none}
+  .hist-detail{padding:10px 12px;margin:2px 0 8px;background:var(--bg2);border-radius:9px}
+  .hd-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-top:1px dashed var(--line)}
+  .hd-row:first-child{border-top:none}
+  .month-fold{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:9px;
+    cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+  .month-fold .mf-r{font-size:12.5px;color:var(--ink-soft);font-weight:600}
+  .picker{display:flex;gap:8px;margin-bottom:14px}
+  .picker select{flex:1;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)}
+  /* leader reminder */
+  .rem-card{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--bad);border-radius:12px;padding:14px 15px;margin-bottom:11px}
+  .rem-card.ok{border-left-color:var(--ok)}
+  .rem-h{font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px}
+  .rem-li{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13.5px;border-top:1px dashed var(--line)}
+  .rem-li:first-of-type{border-top:none;margin-top:6px}
+  .pill-bad{background:var(--bad-soft);color:var(--bad);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+  .pill-ok{background:var(--ok-soft);color:var(--ok);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+  .pill-warn{background:var(--warn-soft);color:var(--warn);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+  /* AI analysis */
+  .ai-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 17px;margin-bottom:13px}
+  .ai-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .ai-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#6741d9,#9c5cf0);
+    display:flex;align-items:center;justify-content:center;font-size:22px;flex:0 0 42px}
+  .ai-insight{display:flex;gap:11px;padding:12px 0;border-top:1px solid var(--line)}
+  .ai-insight:first-of-type{border-top:none}
+  .ai-ic{width:32px;height:32px;border-radius:9px;flex:0 0 32px;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .ai-t{font-weight:700;font-size:14.5px}
+  .ai-d{font-size:13px;color:var(--ink-soft);margin-top:2px;line-height:1.6}
+  .ai-bar{height:8px;background:var(--line);border-radius:999px;overflow:hidden;margin-top:7px}
+  .ai-bar>div{height:100%;border-radius:999px}
+  .ai-typing{display:inline-block;animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.3}}
+  .sheet-name{font-weight:700;font-size:14.5px}
+  .sheet-meta{font-size:11.5px;color:var(--ink-soft);margin-top:1px}
+  .badge{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
+  .badge-2p{background:#7a5cc71a;color:#7a5cc7}
+  .st-tag{font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap}
+  .st-todo{background:#eef2f5;color:var(--ink-soft)} .st-doing{background:var(--warn-soft);color:var(--warn)} .st-done{background:var(--ok-soft);color:var(--ok)}
+
+  /* half select */
+  .half-card{background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:22px;text-align:center;cursor:pointer;font-weight:800;font-size:18px}
+  .half-card:hover{border-color:var(--brand);box-shadow:var(--shadow)}
+  .half-card .d{font-size:12.5px;color:var(--ink-soft);font-weight:600;margin-top:6px}
+
+  /* items as compact list (條列式) */
+  .bulk-bar{display:flex;gap:8px;margin-bottom:12px}
+  .item-list{display:grid;gap:6px;grid-template-columns:1fr}
+  .li{background:var(--card);border:1px solid var(--line);border-radius:9px;display:flex;flex-wrap:wrap;align-items:stretch}
+  .li.is-bad{border-color:var(--bad)}
+  .li-tap{flex:1;display:flex;gap:10px;align-items:center;padding:9px 11px;cursor:pointer;min-width:0}
+  .dot{width:28px;height:28px;border-radius:8px;border:2px solid var(--line);flex:0 0 28px;
+    display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:transparent}
+  .dot.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+  .dot.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+  .li-body{flex:1;min-width:0}
+  .li-name{font-weight:700;font-size:16.5px;line-height:1.35}
+  .li-qty{font-size:13px;color:var(--ink-soft);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .tb{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px}
+  .t-藥品{background:rgba(224,49,49,.14);color:#e03131}.t-耗材{background:rgba(15,122,134,.15);color:#0f9aa8}
+  .t-器械{background:rgba(28,126,214,.14);color:#1c7ed6}.t-儀器{background:rgba(103,65,217,.15);color:#7c5cf0}.t-其他{background:rgba(120,130,139,.16);color:#828c95}
+  .li-ctrl{display:flex;align-items:center;gap:6px;padding:0 10px}
+  .flagbtn{border:1.5px solid var(--line);background:var(--card);color:var(--ink-soft);font-family:inherit;
+    font-size:13.5px;font-weight:700;padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap}
+  .flagbtn.on{background:var(--bad);border-color:var(--bad);color:#fff}
+  .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:14px;padding:5px 8px;border-radius:8px;cursor:pointer}
+  .li-abn{flex-basis:100%;padding:10px 12px;border-top:1px dashed var(--line);background:var(--bad-soft)}
+  .abn-h{font-size:11.5px;font-weight:700;color:var(--bad);margin-bottom:7px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{padding:5px 10px;border-radius:999px;border:1.5px solid var(--line);background:var(--card);font-size:12px;
+    font-weight:700;color:var(--ink-soft);font-family:inherit;cursor:pointer}
+  .chip.on{background:var(--warn);border-color:var(--warn);color:#fff}
+  .chip.on.money{background:var(--bad);border-color:var(--bad)}
+  .chip.on.repair{background:var(--brand);border-color:var(--brand)}
+  .repair-note{font-size:11px;color:var(--brand);font-weight:700;margin-top:8px}
+  .note-in{width:100%;margin-top:8px;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;
+    font-size:13px;font-family:inherit;background:var(--card);color:var(--ink)}
+  /* map placeholder */
+  .mapbox{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;text-align:center}
+
+  /* bottom bar */
+  .bottombar{position:sticky;bottom:0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);
+    border-top:1px solid var(--line);padding:12px 18px;display:flex;gap:12px;align-items:center;z-index:40}
+  .bottombar-in{max-width:1120px;margin:0 auto;width:100%;display:flex;gap:12px;align-items:center}
+  .progress{flex:1}.progress .ptxt{font-size:12px;color:var(--ink-soft);font-weight:600;margin-bottom:5px}
+  .pbar{height:7px;background:var(--line);border-radius:999px;overflow:hidden}.pbar>div{height:100%;background:var(--brand);transition:width .3s}
+
+  /* summary */
+  .sum-row{display:flex;gap:12px;margin-bottom:14px}
+  .sum-stat{flex:1;background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:16px 10px;text-align:center}
+  .sum-stat .n{font-size:30px;font-weight:800}.sum-stat .l{font-size:12px;color:var(--ink-soft);margin-top:2px;font-weight:600}
+  .sum-stat.bad .n{color:var(--bad)}.sum-stat.ok .n{color:var(--ok)}
+  .issue{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}
+  .issue:last-child{border-bottom:none}
+  .issue-ic{width:32px;height:32px;border-radius:9px;flex:0 0 32px;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .issue-ic.bad{background:var(--bad-soft)}.issue-ic.warn{background:var(--warn-soft)}
+  .issue-t{font-weight:700;font-size:14px}.issue-d{font-size:12.5px;color:var(--ink-soft);margin-top:1px}
+  .done-wrap{text-align:center;padding:46px 20px;max-width:460px;margin:0 auto}
+  .done-circle{width:84px;height:84px;border-radius:50%;background:var(--ok-soft);display:flex;align-items:center;justify-content:center;font-size:42px;margin:0 auto 18px}
+
+  /* responsive */
+  @media(min-width:680px){
+    .item-list{grid-template-columns:repeat(2,1fr)}
+    .sheet-list{grid-template-columns:repeat(2,1fr)}
+    .area-tiles{grid-template-columns:repeat(3,1fr)}
+    .screen{padding:22px}
+  }
+  @media(min-width:1040px){
+    .item-list{grid-template-columns:repeat(3,1fr)}
+    .sheet-list{grid-template-columns:repeat(3,1fr)}
+    .area-tiles{grid-template-columns:repeat(4,1fr)}
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script>
+const ACCOUNTS=[
+  {id:"05845",name:"翁秀霞",title:"護理長",role:"護理長",active:true},
+  {id:"06843",name:"方宏榮",title:"副護理長",role:"副護理長",active:true},
+  {id:"03451",name:"陳子瑄",title:"護理師",role:"點班人員",active:true},
+  {id:"03746",name:"蔡佳娟",title:"小組長",role:"點班人員",active:true},
+  {id:"03838",name:"林素娥",title:"護理師",role:"點班人員",active:true},
+  {id:"05049",name:"康家瑜",title:"護理師",role:"點班人員",active:true},
+  {id:"05223",name:"楊嘉彤",title:"護理師",role:"點班人員",active:false},
+  {id:"11230",name:"李雅筑",title:"護理師",role:"點班人員",active:false},
+  {id:"11231",name:"蔡孟容",title:"護理師",role:"點班人員",active:true},
+  {id:"11304",name:"林昱庭",title:"護理師",role:"點班人員",active:true},
+  {id:"11562",name:"江沛鄉",title:"護理師",role:"點班人員",active:true},
+  {id:"11779",name:"董素惠",title:"護理師",role:"點班人員",active:false},
+  {id:"11849",name:"許佩珊",title:"護理師",role:"點班人員",active:true},
+  {id:"11872",name:"劉逸靚",title:"小組長",role:"點班人員",active:true},
+  {id:"11921",name:"畢宥頣",title:"護理師",role:"點班人員",active:false},
+  {id:"11957",name:"張舜硯",title:"護理師",role:"點班人員",active:false},
+  {id:"12049",name:"王孝彰",title:"護理師",role:"點班人員",active:true},
+  {id:"12243",name:"吳鈺珊",title:"護理師",role:"點班人員",active:true},
+  {id:"12346",name:"蔡婷瑋",title:"小組長",role:"點班人員",active:true},
+  {id:"12375",name:"王鈺茵",title:"護理師",role:"點班人員",active:true},
+  {id:"12524",name:"松韻嬋",title:"護理師",role:"點班人員",active:true},
+  {id:"12814",name:"吳秉訓",title:"護理師",role:"點班人員",active:true},
+  {id:"13109",name:"楊琇涵",title:"護理師",role:"點班人員",active:true},
+  {id:"13235",name:"吳家儀",title:"護理師",role:"點班人員",active:true},
+  {id:"13237",name:"郭馥瑄",title:"護理師",role:"點班人員",active:true},
+  {id:"13610",name:"蔡依伶",title:"護理師",role:"點班人員",active:true},
+  {id:"13712",name:"蘇佩如",title:"護理師",role:"點班人員",active:true},
+  {id:"13959",name:"洪詣婷",title:"護理師",role:"點班人員",active:true},
+  {id:"13965",name:"張祺勝",title:"護理師",role:"點班人員",active:true},
+  {id:"13969",name:"陳曉君",title:"護理師",role:"點班人員",active:true},
+  {id:"13974",name:"熊宜珊",title:"護理師",role:"點班人員",active:true},
+  {id:"14042",name:"林伯雄",title:"護理師",role:"點班人員",active:true},
+  {id:"14071",name:"謝琪文",title:"護理師",role:"點班人員",active:true},
+  {id:"14124",name:"何妍芝",title:"護理師",role:"點班人員",active:false},
+  {id:"14376",name:"曾鈺涵",title:"護理師",role:"點班人員",active:true},
+  {id:"14385",name:"黃堯",title:"護理師",role:"點班人員",active:true},
+  {id:"14403",name:"蕭筑云",title:"護理師",role:"點班人員",active:false},
+  {id:"14870",name:"李宜靜",title:"護理師",role:"點班人員",active:true},
+  {id:"15087",name:"林培琪",title:"護理師",role:"點班人員",active:true},
+  {id:"15260",name:"劉彩晶",title:"護理師",role:"點班人員",active:true},
+  {id:"15421",name:"張婉慈",title:"護理師",role:"點班人員",active:true},
+  {id:"15453",name:"王品琁",title:"護理師",role:"點班人員",active:true},
+  {id:"15569",name:"吳詠蓁",title:"護理師",role:"點班人員",active:true},
+  {id:"15594",name:"丁子傑",title:"護理師",role:"點班人員",active:true},
+  {id:"15682",name:"張荃茵",title:"護理師",role:"點班人員",active:false},
+  {id:"15727",name:"高若堇",title:"護理師",role:"點班人員",active:true},
+  {id:"15774",name:"陳永軒",title:"護理師",role:"點班人員",active:true},
+  {id:"15801",name:"洪芯綺",title:"護理師",role:"點班人員",active:true},
+  {id:"16063",name:"陳奕伶",title:"護理師",role:"點班人員",active:true},
+  {id:"16083",name:"黃書瑋",title:"護理師",role:"點班人員",active:true},
+  {id:"16098",name:"陳志凱",title:"護理師",role:"點班人員",active:true},
+  {id:"16104",name:"林乃嘉",title:"護理師",role:"點班人員",active:true},
+  {id:"16124",name:"賴郁佳",title:"護理師",role:"點班人員",active:true},
+  {id:"16125",name:"陳明君",title:"護理師",role:"點班人員",active:true},
+  {id:"16174",name:"蔡佩蓉",title:"護理師",role:"點班人員",active:true},
+  {id:"16199",name:"林以馨",title:"護理師",role:"點班人員",active:true},
+  {id:"16264",name:"劉玥澤",title:"護理師",role:"點班人員",active:true},
+  {id:"16267",name:"郭建良",title:"護理師",role:"點班人員",active:true},
+  {id:"16298",name:"蕭旆塏",title:"護理師",role:"點班人員",active:true},
+  {id:"16365",name:"何孟婷",title:"護理師",role:"點班人員",active:true},
+  {id:"16433",name:"楊子謙",title:"護理師",role:"點班人員",active:true},
+  {id:"16480",name:"黃晟凱",title:"護理師",role:"點班人員",active:true},
+  {id:"16493",name:"葉孟勳",title:"護理師",role:"點班人員",active:true},
+  {id:"16497",name:"凃維禎",title:"護理師",role:"點班人員",active:true},
+  {id:"16533",name:"洪莉婷",title:"護理師",role:"點班人員",active:true},
+  {id:"16538",name:"吳薏昕",title:"護理師",role:"點班人員",active:true},
+  {id:"16543",name:"王鈺鴻",title:"護理師",role:"點班人員",active:true},
+  {id:"16592",name:"林雅筑",title:"護理師",role:"點班人員",active:true},
+  {id:"16686",name:"黃冠菱",title:"護理師",role:"點班人員",active:true},
+  {id:"16536",name:"沈欣禹",title:"半日職",role:"點班人員",active:true},
+  {id:"16537",name:"邱琬心",title:"半日職",role:"點班人員",active:true},
+  {id:"16552",name:"吳槿葳",title:"半日職",role:"點班人員",active:true},
+  {id:"15757",name:"謝環憶",title:"助理員",role:"點班人員",active:true},
+  {id:"15829",name:"黃銘偉",title:"助理員",role:"點班人員",active:true},
+  {id:"15842",name:"蔡旻芳",title:"助理員",role:"點班人員",active:true},
+  {id:"16097",name:"葉俊德",title:"助理員",role:"點班人員",active:true},
+  {id:"16613",name:"蕭琇皣",title:"助理員",role:"點班人員",active:true},
+  {id:"16720",name:"羅勤祐",title:"助理員",role:"點班人員",active:true},
+  {id:"02907",name:"張秀月",title:"技術員",role:"點班人員",active:true},
+  {id:"12706",name:"陳盈利",title:"技術員",role:"點班人員",active:true},
+  {id:"15896",name:"龔鈺雯",title:"事務員",role:"點班人員",active:true}
+];
+const AREAS=[
+  {id:"triage",name:"檢傷",color:"#099268",sort:1},
+  {id:"peds",name:"兒童",color:"#C2255C",sort:2},
+  {id:"resus",name:"急救室",color:"#E03131",sort:3},
+  {id:"treat",name:"治療",color:"#6741D9",sort:4},
+  {id:"room",name:"診間",color:"#1C7ED6",sort:5},
+  {id:"obs",name:"留觀",color:"#E8590C",sort:6},
+  {id:"leader",name:"Leader",color:"#5C5F66",sort:7}
+];
+const SHEETS=[
+  {id:"triage",name:"檢傷區",area:"triage",sort:1,ops:1},
+  {id:"peds-triage",name:"兒童檢傷",area:"triage",sort:2,ops:1},
+  {id:"peds-area",name:"兒童區",area:"peds",sort:1,ops:1},
+  {id:"peds-cart",name:"兒科急救車",area:"peds",sort:2,ops:1},
+  {id:"resus-cart",name:"急救室急救車",area:"resus",sort:1,ops:1},
+  {id:"resus-1",name:"急救室-1",area:"resus",sort:2,ops:1},
+  {id:"resus-2",name:"急救室-2",area:"resus",sort:3,ops:1},
+  {id:"treat1",name:"治療區一(第一診間)",area:"treat",sort:1,ops:1},
+  {id:"treat23",name:"治療二、三",area:"treat",sort:2,ops:2},
+  {id:"room-ob",name:"OB診間",area:"room",sort:2,ops:1},
+  {id:"obs-1",name:"留觀區-1",area:"obs",sort:1,ops:1},
+  {id:"obs-2",name:"留觀區-2",area:"obs",sort:2,ops:1},
+  {id:"obs-cart",name:"留觀急救車",area:"obs",sort:3,ops:1},
+  {id:"leader",name:"Leader",area:"leader",sort:1,ops:1}
+];
+const ITEMS=[
+  ["triage","遮眼器/指揮棒","1/1","儀器",""],
+  ["triage","睫毛夾/眼勾/眼科","4/6/1","器械",""],
+  ["triage","組織夾","1","器械",""],
+  ["triage","眼科剪刀","1","器械",""],
+  ["triage","細隙燈","1","儀器",""],
+  ["triage","眼壓測量組","1","儀器",""],
+  ["triage","試鏡架+2片鏡片","1組","儀器",""],
+  ["triage","Lacytin","2","藥品",""],
+  ["triage","Mydrin-p","2","藥品",""],
+  ["triage","鼻擴張器","14","器械",""],
+  ["triage","直/彎壓舌板","3/5","器械",""],
+  ["triage","Forceps","1","器械",""],
+  ["triage","Kelly直(大)","1","器械",""],
+  ["triage","異物勾/線剪","2/2","器械",""],
+  ["triage","鑷子(大/小)","9/5","器械",""],
+  ["triage","反射鏡(大/小)","7/3","儀器",""],
+  ["triage","Suction tube","10","耗材",""],
+  ["triage","頭鏡","1","儀器",""],
+  ["triage","魚刺夾(大/小)","5/7","器械",""],
+  ["triage","ENT耳鏡、眼底鏡","1組","儀器",""],
+  ["triage","ENT抽吸鐵頭掛勾","2組","儀器",""],
+  ["triage","音叉/耳膜切開器","1/1","器械",""],
+  ["triage","放射線測量機筆形","1台","儀器",""],
+  ["triage","耳溫槍+座充(檢傷1號)","1","儀器",""],
+  ["triage","聽診器","1","儀器",""],
+  ["triage","基地台固定台","1","儀器",""],
+  ["triage","電子體重器","1","儀器",""],
+  ["triage","簡易型血糖機","1","儀器",""],
+  ["triage","血氧機+導線+小兒導線","2/2/2","儀器",""],
+  ["triage","錢臂夾","1","器械",""],
+  ["triage","錶式血壓計","1","儀器",""],
+  ["triage","檢傷繃帶剪","1","器械",""],
+  ["peds-triage","Bp monitor 7.8號","2","儀器",""],
+  ["peds-triage","滑板","1","其他",""],
+  ["peds-triage","耳溫槍+座充(兒童檢傷2號)","1/1","儀器",""],
+  ["peds-triage","傷口量尺","1","其他",""],
+  ["peds-triage","磅秤床","1","儀器",""],
+  ["peds-triage","扣診鎚","1","器械",""],
+  ["peds-triage","手電筒","1","其他",""],
+  ["peds-triage","Thumper機/急救板/呼吸器接管","2/4/3","儀器",""],
+  ["peds-triage","電動剃刀","1","儀器",""],
+  ["peds-triage","Heparin","10","藥品",""],
+  ["peds-triage","Alcaine","2","藥品",""],
+  ["peds-triage","RI","2","藥品",""],
+  ["peds-triage","NPH","1","藥品",""],
+  ["peds-area","耳鏡柄","2","儀器",""],
+  ["peds-area","娃娃車","2","其他",""],
+  ["peds-area","耳溫槍+座充(兒科區6號)","1/1","儀器",""],
+  ["peds-area","小兒3M聽診器","1","儀器",""],
+  ["peds-area","烤燈+量尺","各1","儀器",""],
+  ["peds-area","氧氣筒+推車","2","儀器",""],
+  ["peds-area","小兒壓脈帶 小(12-19cm)/大(17-25cm)","1/1","耗材",""],
+  ["peds-area","Bp monitor+Barcode機(10號-11號)","2/2","儀器",""],
+  ["peds-area","置針座","7號","其他",""],
+  ["peds-area","Voren supp","20","藥品",""],
+  ["peds-area","Ventolin","2","藥品",""],
+  ["peds-area","50%G/W","5","藥品",""],
+  ["peds-area","飛利浦DC Shock 5號","1/1","儀器",""],
+  ["peds-area","壁式五官鏡","1","儀器",""],
+  ["peds-area","肛溫計(電子)","1","儀器",""],
+  ["peds-area","兒科手機","1","儀器",""],
+  ["peds-area","公藥櫃感應卡","1","其他",""],
+  ["peds-area","血氧導線5號+成人+小孩導線","1/1/1","儀器",""],
+  ["peds-area","NIS護理車Ⅰ車+Barcode+座充","1/1/1","儀器",""],
+  ["peds-area","照相手機+充電器+插頭","1/1/1","儀器",""],
+  ["peds-area","Combivent","2","藥品",""],
+  ["peds-area","錶式血壓計","1","儀器",""],
+  ["peds-cart","Bosmin","10","藥品",""],
+  ["peds-cart","Adenocor","5","藥品",""],
+  ["peds-cart","Atropine","6","藥品",""],
+  ["peds-cart","Lidocaine 2%","2","藥品",""],
+  ["peds-cart","Valium","5","藥品",""],
+  ["peds-cart","Sod.bicarbonate","6","藥品",""],
+  ["peds-cart","Cordarone","2","藥品",""],
+  ["peds-cart","Mg Sulfate","2","藥品",""],
+  ["peds-cart","Dopamin","2","藥品",""],
+  ["peds-cart","Cal chloride","2","藥品",""],
+  ["peds-cart","Isoptin","2","藥品",""],
+  ["peds-cart","Digoxin","2","藥品",""],
+  ["peds-cart","Pre-mixi Dopamine","1","藥品",""],
+  ["peds-cart","氣管內管鉗/舌夾","1/1","器械",""],
+  ["peds-cart","止血鉗/鼻夾","1/1","器械",""],
+  ["peds-cart","張口器/繃帶剪","1/1","器械",""],
+  ["peds-cart","oral air way","1","耗材",""],
+  ["peds-cart","nasla air way(6號)","1","耗材",""],
+  ["peds-cart","喉頭鏡葉2號","1","器械",""],
+  ["peds-cart","喉頭鏡葉1號","3","器械",""],
+  ["peds-cart","喉頭鏡葉0號","2","器械",""],
+  ["peds-cart","喉頭鏡柄2隻","2","器械",""],
+  ["peds-cart","手電筒/瞳孔尺","1/1","其他",""],
+  ["peds-cart","電池3號/4號","2/2","耗材",""],
+  ["peds-cart","宜拉膠/jelly","20/20","耗材",""],
+  ["peds-cart","Bite","1","耗材",""],
+  ["peds-cart","Endo tube2/2.5/3號","1/1/1","耗材",""],
+  ["peds-cart","Endo tube3.5/4/4.5號","1/1/1","耗材",""],
+  ["peds-cart","Endo tube5/5.5/6號","1/1/1","耗材",""],
+  ["peds-cart","氣切套管3號","1","耗材",""],
+  ["peds-cart","防護面罩/護目鏡","2/2","耗材",""],
+  ["peds-cart","隔離衣/N95口罩","2/2","耗材",""],
+  ["peds-cart","Mask 5/3號","2/1","耗材",""],
+  ["peds-cart","Mask 2/01/00號","1/1/1","耗材",""],
+  ["peds-cart","Ambu+蓄氧袋(大)","2","耗材",""],
+  ["peds-cart","Ambu+蓄氧袋(中/小)","2/1","耗材",""],
+  ["peds-cart","氧氣連接管","5","耗材",""],
+  ["peds-cart","電動骨內穿刺針/臍夾","1/2","器械",""],
+  ["peds-cart","Av-shunt止血帶","1","耗材",""],
+  ["peds-cart","通條","4","耗材",""],
+  ["peds-cart","髮帽","5","耗材",""],
+  ["peds-cart","楊克氏抽吸管","2","耗材",""],
+  ["resus-cart","Bosmin","30","藥品",""],
+  ["resus-cart","Adenocor","5","藥品",""],
+  ["resus-cart","Atropine","6","藥品",""],
+  ["resus-cart","Lidocaine 2%","4","藥品",""],
+  ["resus-cart","Valium","5","藥品",""],
+  ["resus-cart","Sod.bicarbonate","10","藥品",""],
+  ["resus-cart","Cordarone","2","藥品",""],
+  ["resus-cart","Mg Sulfate","2","藥品",""],
+  ["resus-cart","Dopamin","2","藥品",""],
+  ["resus-cart","Isoptin","4","藥品",""],
+  ["resus-cart","Cal Chloride","4","藥品",""],
+  ["resus-cart","Dobutrex","2","藥品",""],
+  ["resus-cart","Digoxin","2","藥品",""],
+  ["resus-cart","Dilantin","4","藥品",""],
+  ["resus-cart","Succinylcholine","2","藥品",""],
+  ["resus-cart","NTG","1","藥品",""],
+  ["resus-cart","Pre-mixid Dopamin","1","藥品",""],
+  ["resus-cart","張口器/繃帶剪","1/1","器械",""],
+  ["resus-cart","氣管內管鉗/舌夾","1/1","器械",""],
+  ["resus-cart","止血鉗/鼻夾","1","器械",""],
+  ["resus-cart","oral air way","1","耗材",""],
+  ["resus-cart","nasla air way(7.0/7.5/8.0)","1/1/1","耗材",""],
+  ["resus-cart","bite","2","耗材",""],
+  ["resus-cart","手電筒/瞳孔尺","1/1","其他",""],
+  ["resus-cart","電池2號/4號","2/2","耗材",""],
+  ["resus-cart","宜拉膠/Jelly","20/20","耗材",""],
+  ["resus-cart","喉頭鏡葉4/3號","3/2","器械",""],
+  ["resus-cart","喉頭鏡葉2/1號","1/1","器械",""],
+  ["resus-cart","喉頭鏡葉0號","1","器械",""],
+  ["resus-cart","喉頭鏡柄3隻","3","器械",""],
+  ["resus-cart","LMA 3/4號","1/1","耗材",""],
+  ["resus-cart","延長線/排氣板","1/1","其他",""],
+  ["resus-cart","Endotube 2/2.5/3/3.5號","1/1/1/1","耗材",""],
+  ["resus-cart","Endo tube4/4.5/5號","1/1/1","耗材",""],
+  ["resus-cart","Endo tube5.5/6/6.5號","1/1/1","耗材",""],
+  ["resus-cart","Endo tube7/7.5/8號","2/3/2","耗材",""],
+  ["resus-cart","氣切套管6.5/7","1/1","耗材",""],
+  ["resus-cart","氣切套管7.5/8","1/1","耗材",""],
+  ["resus-cart","隔離衣/N95口罩","2/2","耗材",""],
+  ["resus-cart","防護面罩/護目鏡","2/2","耗材",""],
+  ["resus-cart","Ambu+蓄氧袋(大)","4","耗材",""],
+  ["resus-cart","Ambu+蓄氧袋(中/小)","1/1","耗材",""],
+  ["resus-cart","Mask 5/3號","4/1","耗材",""],
+  ["resus-cart","Mask 00/01/02號","1/1/1","耗材",""],
+  ["resus-cart","氧氣連接管","5","耗材",""],
+  ["resus-cart","電動骨內穿刺針","1","器械",""],
+  ["resus-cart","AV-SHUNT止血帶","2","耗材",""],
+  ["resus-cart","臍夾","2","器械",""],
+  ["resus-cart","通條","4","耗材",""],
+  ["resus-cart","AR","5","耗材",""],
+  ["resus-cart","髮帽","5","耗材",""],
+  ["resus-cart","楊克式抽吸管","1","耗材",""],
+  ["resus-1","Philip 1~5號+MX450+導線","5/5","儀器",""],
+  ["resus-1","百特 Set","6","耗材",""],
+  ["resus-1","百特 NTG Set","3","耗材",""],
+  ["resus-1","O-G tube 32","3","耗材",""],
+  ["resus-1","鋼彎","3","器械",""],
+  ["resus-1","輸血90 set","3","耗材",""],
+  ["resus-1","精密百特set","1","耗材",""],
+  ["resus-1","高氧mask","3","耗材",""],
+  ["resus-1","氣切mask","2","耗材",""],
+  ["resus-1","x-ray遙控器1號","1","儀器",""],
+  ["resus-1","氣管內管之通條","2","耗材",""],
+  ["resus-1","Trauma kit","1","耗材",""],
+  ["resus-1","簡易型血糖機","1","儀器",""],
+  ["resus-1","輸血加溫器","1","儀器",""],
+  ["resus-1","加溫器set","1","耗材",""],
+  ["resus-2","置針座","2","其他",""],
+  ["resus-2","傷口量尺","1","其他",""],
+  ["resus-2","相機1號/充電器1號","1/1","儀器",""],
+  ["resus-2","繃帶剪4號","1","器械",""],
+  ["resus-2","耳溫槍+座充7號","1","儀器",""],
+  ["resus-2","骨盆固定帶+加壓球","2/1","耗材",""],
+  ["resus-2","Chest tube24/28號","2/2","耗材",""],
+  ["resus-2","單瓶式胸腔引流瓶+外科接管","2/2","耗材",""],
+  ["resus-2","CVP 3way","5","耗材",""],
+  ["resus-2","A-lin單腔CVP/壓力檢測套/固定架/導線/A-line輸血加壓器","1/1/1/1/1","耗材",""],
+  ["resus-2","Pacemaker導線/貼片x3","3/3","耗材",""],
+  ["resus-2","血氧機+成人導線(1+2號)","2/2","儀器",""],
+  ["resus-2","EMMA+接頭","1/2","儀器",""],
+  ["resus-2","50%G/W","5","藥品",""],
+  ["resus-2","切割器","1","器械",""],
+  ["resus-2","博宜寧+導線1-4號","4","儀器",""],
+  ["resus-2","NIS護理車(G.H)+Barcode機+座充","2/2/2","儀器",""],
+  ["resus-2","生長尺","1","其他",""],
+  ["resus-2","Neopuff機器","1","儀器",""],
+  ["resus-2","Neopuff蛇型管","4","耗材",""],
+  ["resus-2","Neopuff Mask(XS.S.M.L.XL)","1/1/1/1/1","耗材",""],
+  ["resus-2","測量表","1","其他",""],
+  ["resus-2","ETCO2接頭(黑)+導線+模組","2/2/2","儀器",""],
+  ["resus-2","飛利浦DC shock 1到4號(1+2全配,3+4簡配)","2/2","儀器",""],
+  ["treat1","戒指鋸","1","器械",""],
+  ["treat1","燙傷包","2","耗材",""],
+  ["treat1","急產包","1","耗材",""],
+  ["treat1","氣切包","1","耗材",""],
+  ["treat1","UA包","1","耗材",""],
+  ["treat1","尿導擴張包","1","耗材",""],
+  ["treat1","開胸包","1","耗材",""],
+  ["treat1","腰椎穿刺包","1","耗材",""],
+  ["treat1","IV Pump(1-10號)","10","儀器",""],
+  ["treat1","鎖骨固定帶16吋","1","耗材",""],
+  ["treat1","鎖骨固定帶18吋","2","耗材",""],
+  ["treat1","鎖骨固定帶21吋","2","耗材",""],
+  ["treat1","置針座5-6號","2","其他",""],
+  ["treat1","眼科沖洗墊","1","耗材",""],
+  ["treat1","張眼器(大/小)","1/1","器械",""],
+  ["treat1","NIS護理車(E-F)+Barcode機+座充","2/2/2","儀器",""],
+  ["treat23","導尿包","10","耗材","A"],
+  ["treat23","約束帶","4","耗材","A"],
+  ["treat23","輸血加壓器","3","儀器","A"],
+  ["treat23","耳溫槍4+含座充","1/1","儀器","A"],
+  ["treat23","O2筒+推車","各8","儀器","A"],
+  ["treat23","BP monitor+Barcode機 3.4.5號","3/3","儀器","A"],
+  ["treat23","相機3號/充電器","1","儀器","A"],
+  ["treat23","靜脈定位儀/座充","1/1","儀器","A"],
+  ["treat23","內科NIS護理車(內A-內D)+Barcode機+座充","4/4/4","儀器","A"],
+  ["treat23","血糖機+座充+充電線(二觀)","1/1/1","儀器","A"],
+  ["treat23","腿部壓脈帶12號/13號","1/1","耗材","B"],
+  ["treat23","烤燈+量尺","2","儀器","B"],
+  ["treat23","壁式五官鏡+接頭","2組","儀器","B"],
+  ["treat23","置針座1-4號","1-4號","其他","B"],
+  ["treat23","傷口量尺/磅秤","1/1","儀器","B"],
+  ["treat23","研缽一組+湯匙","1","器械","B"],
+  ["treat23","便盆椅","2","其他","B"],
+  ["treat23","傳送桶","3","其他","B"],
+  ["treat23","血糖機+座充+充電線","1/1/1","儀器","B"],
+  ["treat23","飛利浦ER1-5+導線","5/5","儀器","B"],
+  ["treat1","急診包/大洞巾","2/2","耗材",""],
+  ["treat1","整形包","12","耗材",""],
+  ["treat1","縫合+CVP包","9","耗材",""],
+  ["treat1","恥骨穿刺包","1","耗材",""],
+  ["treat1","針包","2","耗材",""],
+  ["treat1","耳溫槍3號(含座充)","1","儀器",""],
+  ["treat1","可調式頸圈(成人)","4","耗材",""],
+  ["treat1","可調式頸圈(小孩)","1","耗材",""],
+  ["treat1","Kelly長/直/彎","3/1/1","器械",""],
+  ["treat1","3M剪刀","1","器械",""],
+  ["treat1","傷口量尺","1","其他",""],
+  ["treat1","繃帶剪1~3號","3","器械",""],
+  ["treat1","探針","2","器械",""],
+  ["treat1","BP monitor 6號+Barcode機","1/1","儀器",""],
+  ["treat1","Philip 6號","1","儀器",""],
+  ["treat1","相機4號+充電器座4號","1/1","儀器",""],
+  ["treat1","冰桶","1","其他",""],
+  ["treat1","長鑷","10","器械",""],
+  ["treat1","殘肢盒","2","其他",""],
+  ["treat1","無鉛沙袋 2kg","1","其他",""],
+  ["room-ob","聽診器","1","儀器",""],
+  ["room-ob","鴨嘴大/小","8/2","器械",""],
+  ["room-ob","固定鴨","1","器械",""],
+  ["room-ob","無齒長鑷","8","器械",""],
+  ["room-ob","單勾","1","器械",""],
+  ["room-ob","探針","2","器械",""],
+  ["room-ob","臍夾","2","器械",""],
+  ["room-ob","急產包","1","耗材",""],
+  ["room-ob","吸球","1","耗材",""],
+  ["room-ob","Suction(1-5號)","5","耗材",""],
+  ["room-ob","Kelly(大)","1","器械",""],
+  ["room-ob","產鉗","1","器械",""],
+  ["room-ob","婦科抽吸接頭","1","耗材",""],
+  ["room-ob","3M剪刀","1","器械",""],
+  ["room-ob","CD碗","1","其他",""],
+  ["room-ob","黑色手電筒","1","其他",""],
+  ["obs-1","RI/NPH","2/1","藥品",""],
+  ["obs-1","滑板","1","其他",""],
+  ["obs-1","聽診器","1/1","儀器",""],
+  ["obs-1","烤燈+量尺","1","儀器",""],
+  ["obs-1","氧氣筒+推車","5","儀器",""],
+  ["obs-1","叩診槌","1","器械",""],
+  ["obs-1","顳溫槍(1號)/耳溫槍","1/1","儀器",""],
+  ["obs-1","磅秤/傷口量尺","2/2","儀器",""],
+  ["obs-1","冰枕","3","其他",""],
+  ["obs-1","Bp monitor 1.2號+Barcode機","2/2","儀器",""],
+  ["obs-1","導尿包","5","耗材",""],
+  ["obs-1","CD包","3","耗材",""],
+  ["obs-1","血氧機+導線","2/2","儀器",""],
+  ["obs-1","輸血加壓器","1","儀器",""],
+  ["obs-1","血糖機+座充+充電線","1/1/1","儀器",""],
+  ["obs-1","直立式血壓機3.4.5","1/1/1","儀器",""],
+  ["obs-1","8吋邁瑞監視器1-10號","10","儀器",""],
+  ["obs-2","IV Pump(11-15號)","5","儀器",""],
+  ["obs-2","置針座","2","其他",""],
+  ["obs-2","研缽一組+湯匙","2","器械",""],
+  ["obs-2","便盆椅","2","其他",""],
+  ["obs-2","UD車鑰匙","1","其他",""],
+  ["obs-2","耗材櫃鑰匙","1","其他",""],
+  ["obs-2","Barcode+座充(1+2+3號)","3/3/3","儀器",""],
+  ["obs-2","長鑷","5","器械",""],
+  ["obs-2","體重計","1","儀器",""],
+  ["obs-2","相機2號+充電器2號","1/1","儀器",""],
+  ["obs-2","Alcaine","1","藥品",""],
+  ["obs-2","飛利浦MX450(6-10號)+導線","5/5","儀器",""],
+  ["obs-2","飛利浦DC SHOCK 6號","1","儀器",""],
+  ["obs-2","二觀耳溫槍","1","儀器",""],
+  ["obs-2","胸腹約束帶","1","耗材",""],
+  ["obs-2","二觀護理車條碼機(4號)與護理車鑰匙","1/1","儀器",""],
+  ["obs-cart","Bosmin","10","藥品",""],
+  ["obs-cart","Adenocor","5","藥品",""],
+  ["obs-cart","Atropine","3","藥品",""],
+  ["obs-cart","Lidocaine 2%","2","藥品",""],
+  ["obs-cart","Valium","5","藥品",""],
+  ["obs-cart","Sod.bicarbonate","5","藥品",""],
+  ["obs-cart","Cordarone","2","藥品",""],
+  ["obs-cart","Mg Sulfate","1","藥品",""],
+  ["obs-cart","Dopamin","2","藥品",""],
+  ["obs-cart","Cal chloride","2","藥品",""],
+  ["obs-cart","張口器/止血鉗","1/1","器械",""],
+  ["obs-cart","繃帶剪/鼻夾","1/1","器械",""],
+  ["obs-cart","氣管內管鉗/舌夾","1/1","器械",""],
+  ["obs-cart","oral air way(OP-A)(大)","1","耗材",""],
+  ["obs-cart","nasla air way(NP-A)(7.5)","1","耗材",""],
+  ["obs-cart","Jelly/宜拉膠","10/10","耗材",""],
+  ["obs-cart","bite","2","耗材",""],
+  ["obs-cart","手電筒/瞳孔尺","1/1","其他",""],
+  ["obs-cart","電池2號/4號","2/2","耗材",""],
+  ["obs-cart","NG16號/灌食空針/尿袋","1/1/1","耗材",""],
+  ["obs-cart","一般輸液套/精密輸液套","1/1","耗材",""],
+  ["obs-cart","輸血set","1","耗材",""],
+  ["obs-cart","Endo tube7/7.5/8號","1/1/1","耗材",""],
+  ["obs-cart","通條","2","耗材",""],
+  ["obs-cart","Pre-mixed Dopamine","1","藥品",""],
+  ["obs-cart","N/S 500ML/D10W 500ML","1/1","藥品",""],
+  ["obs-cart","N95口罩/防護面罩","2/2","耗材",""],
+  ["obs-cart","隔離衣/護目鏡","2/2","耗材",""],
+  ["obs-cart","Ambu+蓄氧袋(大)","1","耗材",""],
+  ["obs-cart","Mask 5號","1","耗材",""],
+  ["obs-cart","氧氣連接管","1","耗材",""],
+  ["obs-cart","流量表/D/W 500ML","1/1","耗材",""],
+  ["obs-cart","抽吸壓力表/抽吸組","1/1","儀器",""],
+  ["obs-cart","空針3cc/5cc/10cc","5/5/5","耗材",""],
+  ["obs-cart","喉頭鏡葉4號/3號","1/1","器械",""],
+  ["obs-cart","喉頭鏡柄1隻","1","器械",""],
+  ["obs-cart","抽痰管14號/12號","5/5","耗材",""],
+  ["obs-cart","楊克式抽吸管","2","耗材",""],
+  ["obs-cart","有粉手套/外科口罩","1/1","耗材",""],
+  ["obs-cart","無菌手套6.5/7.0/7.5","1/1/1","耗材",""],
+  ["obs-cart","髮帽","5","耗材",""],
+  ["obs-cart","錶式血壓計","1","儀器",""],
+  ["leader","Leader 鑰匙","1","其他",""],
+  ["leader","胸腹約束帶+磁扣","1組/3顆","耗材",""],
+  ["leader","Key/鎖","1/1","其他",""],
+  ["leader","A棟電梯鑰匙","1","其他",""],
+  ["leader","AED+TCP+電池","1","儀器",""],
+  ["leader","AED成人貼片","1","耗材",""],
+  ["leader","AED兒童貼片","1","耗材",""],
+  ["leader","VIP病歷鎖","2","其他",""],
+  ["leader","Leader手機","1","儀器",""],
+  ["leader","SD卡8G","1","其他",""],
+  ["leader","3M彎剪","1","器械",""],
+  ["leader","x-ray遙控器2號","1","儀器",""],
+  ["leader","O+st護理車鑰匙","3","其他",""],
+  ["leader","手約束帶/手、腳約束帶/磁扣","2/2/6","耗材",""],
+  ["leader","黑色相機+插電線","1/1","儀器",""],
+  ["leader","平板充電線組","1組","其他",""]
+];
+
+// ---------- helpers ----------
+const $app=document.getElementById('app');
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function areaById(id){return AREAS.find(a=>a.id===id)||{}}
+function sheetById(id){return SHEETS.find(s=>s.id===id)||{}}
+function areaColor(id){return (areaById(id).color)||'#0f7a86'}
+function fmtDate(d){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`}
+function weekday(d){return ['週日','週一','週二','週三','週四','週五','週六'][d.getDay()]}
+function detectShift(){const h=new Date().getHours();return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N'}
+const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
+function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
+const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
+const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失'];
+
+// item key & filtering
+function itemsOf(sheetId,half){
+  return ITEMS.map((it,i)=>({i,sheet:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4]}))
+              .filter(o=>o.sheet===sheetId && (!half || o.assign===half));
+}
+function keyOf(o){return o.sheet+'|'+o.i}
+
+// ---------- state ----------
+let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{},reason:{},note:{}};
+const store={
+  save(){try{localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
+  load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}}
+};
+
+// progress for a sheet (all halves)
+function sheetProgress(sheetId){
+  const all=itemsOf(sheetId,null);
+  let done=0;all.forEach(o=>{if(state.checks[keyOf(o)])done++});
+  return {total:all.length,done};
+}
+function sheetStatus(sheetId){
+  const p=sheetProgress(sheetId);
+  if(p.done===0)return ['st-todo','未開始'];
+  if(p.done<p.total)return ['st-doing',`進行中 ${p.done}/${p.total}`];
+  return ['st-done','已完成'];
+}
+
+// ---------- render ----------
+function render(){
+  store.save();
+  if(!state.user)state.screen='login';
+  ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
+    rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
+    history:renderHistory,leader:renderLeader,ai:renderAI}[state.screen]||renderLogin)();
+}
+
+function renderLogin(){
+  $app.innerHTML=`
+  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 登入碼初始＝員編</div>
+  <div class="login-wrap">
+    <div class="login-logo">🩺</div>
+    <h1>急診護理站點班</h1>
+    <div class="tag">儀器 · 保養 · 耗材 電子點檢</div>
+    <div class="field"><label>員編（5 碼）</label>
+      <input id="empIn" inputmode="numeric" maxlength="5" placeholder="例：05845" value="${state.user?state.user.id:''}"></div>
+    <div class="field"><label>登入碼</label>
+      <input id="pwIn" type="password" inputmode="numeric" placeholder="初始＝員編"></div>
+    <div id="loginErr" style="color:var(--bad);font-size:13px;font-weight:600;min-height:18px;margin-bottom:10px"></div>
+    <button class="btn btn-primary btn-block" onclick="doLogin()">登入</button>
+    <div style="font-size:11.5px;color:#9aa7b0;margin-top:14px;line-height:1.6">
+      試登入：護理長 05845／副護理長 06843／護理師 03451（登入碼皆＝員編）</div>
+  </div>`;
+}
+function doLogin(){
+  const emp=document.getElementById('empIn').value.trim();
+  const pw=document.getElementById('pwIn').value.trim();
+  const err=document.getElementById('loginErr');
+  const a=ACCOUNTS.find(x=>x.id===emp);
+  if(!a){err.textContent='查無此員編';return}
+  if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
+  if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
+  state.user={id:a.id,name:a.name,title:a.title,role:a.role};
+  state.screen='home';render();
+}
+function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
+
+function renderHome(){
+  const now=new Date(),cur=state.shift||detectShift();state.shift=cur;
+  const u=state.user;const isLeader=(u.role==='護理長'||u.role==='副護理長');
+  const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
+     <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
+     <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
+  const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+     onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
+  $app.innerHTML=`
+  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 尚未連接後端</div>
+  <div class="topbar"><div class="topbar-in">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div><div class="title">🩺 急診護理站點班</div>
+        <div class="sub">${esc(u.name)}（${esc(u.title)}）· ${u.id}</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="back" onclick="toggleTheme()" title="日/夜模式">${document.documentElement.dataset.theme==='dark'?'☀':'🌙'}</button>
+        <button class="back" onclick="logout()">登出</button></div></div>
+    <div><span class="role-tag">${u.role}・${ROLE_BADGE[u.role][0]}</span></div>
+  </div></div>
+  <div class="screen narrow">
+    <div class="card"><div class="date-block">
+      <div class="big">${fmtDate(now)}</div>
+      <div class="day">${weekday(now)} · 目前班別 <span class="shift-pill">🕐 ${SHIFT_NAME[cur]}</span></div>
+    </div></div>
+    <div class="section-h">今日各班狀態</div>
+    <div class="sum-row">${stat}</div>
+    <div class="section-h">作業</div>
+    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（選分區）</button>
+    ${reviewBtn}
+    <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
+  </div>`;
+}
+
+function renderAreas(){
+  const tiles=AREAS.slice().sort((a,b)=>a.sort-b.sort).map(a=>{
+    const sheets=SHEETS.filter(s=>s.area===a.id);
+    const done=sheets.filter(s=>{const p=sheetProgress(s.id);return p.total&&p.done===p.total}).length;
+    return `<div class="area-tile" style="background:${a.color}1c;border-color:${a.color}55" onclick="openArea('${a.id}')">
+      <div class="an"><span class="area-dot" style="background:${a.color}"></span>${esc(a.name)}</div>
+      <div class="ac">${sheets.length} 張表${done?` · 已完成 ${done}`:''}</div>
+      <span class="chev">›</span></div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">選擇分區</div><div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]}</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide"><div class="area-tiles">${tiles}</div></div>`;
+}
+function openArea(id){state.areaId=id;state.screen='pick';render()}
+
+function renderPick(){
+  const area=areaById(state.areaId);
+  const sheets=SHEETS.filter(s=>s.area===state.areaId).sort((a,b)=>a.sort-b.sort);
+  const rows=sheets.map(s=>{
+    const [stc,stt]=sheetStatus(s.id);const n=itemsOf(s.id,null).length;
+    const twop=String(s.ops)==='2'?'<span class="badge badge-2p">2人</span>':'';
+    return `<div class="sheet-row" style="border-left-color:${area.color}" onclick="openSheet('${s.id}')">
+      <div style="min-width:0"><div class="sheet-name">${esc(s.name)}${twop}</div><div class="sheet-meta">${n} 項</div></div>
+      <span class="st-tag ${stc}">${stt}</span></div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar" style="background:linear-gradient(135deg,${area.color},${area.color}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">${esc(area.name)}</div>
+      <div class="sub">${sheets.length} 張點班表</div></div>
+    <button class="back" onclick="state.screen='areas';render()">返回</button></div></div>
+  <div class="screen wide lvl2"><div class="sheet-list">${rows}</div></div>`;
+}
+function openSheet(id){
+  state.sheetId=id;const s=sheetById(id);
+  if(String(s.ops)==='2'){state.screen='half';render()}
+  else{state.half=null;state.screen='rollcall';render()}
+}
+function renderHalf(){
+  const s=sheetById(state.sheetId);
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">${esc(s.name)} · 2 人分工</div><div class="sub">請選擇你負責的部分</div></div>
+    <button class="back" onclick="state.screen='pick';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="section-h">這張表由兩人分工點檢（一人一頁）</div>
+    <div style="display:grid;gap:12px">
+      <div class="half-card" onclick="pickHalf('A')">A（第 1 頁）<div class="d">${itemsOf(s.id,'A').length} 項</div></div>
+      <div class="half-card" onclick="pickHalf('B')">B（第 2 頁）<div class="d">${itemsOf(s.id,'B').length} 項</div></div>
+    </div></div>`;
+}
+function pickHalf(h){state.half=h;state.screen='rollcall';render()}
+
+// 類別分組設定：器械、儀器（+定位+保養）、耗材（+欠物本）、藥品、其他
+const CAT_DEFS=[
+  {key:'器械',ic:'🔧',color:'#1c7ed6'},
+  {key:'儀器',ic:'🖥',color:'#6741d9'},
+  {key:'耗材',ic:'📦',color:'#0f9aa8'},
+  {key:'藥品',ic:'💊',color:'#e03131'},
+  {key:'其他',ic:'📁',color:'#7a828b'},
+];
+function renderRollcall(){
+  const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
+  const acolor=areaColor(s.area);
+  let done=0;list.forEach(o=>{if(state.checks[keyOf(o)])done++});
+  const pct=list.length?Math.round(done/list.length*100):0;
+  const halfTxt=state.half?` · ${state.half} 半`:'';
+  const remain=list.length-done;
+  const allDone=done===list.length&&list.length>0;
+
+  // 明顯的完成狀態橫幅
+  const banner=allDone
+    ? `<div class="status-banner done"><div class="sb-ic">✓</div>
+        <div><div>此點班表已完成</div><div class="sb-sub">${list.length} 項全部完成，可提交簽核</div></div></div>`
+    : `<div class="status-banner todo"><div class="sb-ic">!</div>
+        <div><div>尚未完成（還有 ${remain} 項）</div><div class="sb-sub">已點 ${done} / ${list.length}</div></div></div>`;
+
+  // 依類別分組（器械/儀器/耗材/藥品/其他）
+  let blocks='';
+  CAT_DEFS.forEach(cat=>{
+    const its=list.filter(o=>o.type===cat.key);
+    if(!its.length)return;
+    let cdone=0;its.forEach(o=>{if(state.checks[keyOf(o)])cdone++});
+    let tools='';
+    if(cat.key==='儀器') tools=`<div class="cat-tools">
+      <span class="tool-pill" onclick="openMap('全部儀器')">📍 儀器定位</span>
+      <span class="tool-pill" onclick="alert('保養卡：每班/每週/每月項目（正式版依到期顯示）。')">🛠 保養卡</span></div>
+      <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊已標記 beacon 的儀器，正式版會自動帶入此清單</div>`;
+    const rows=its.map(o=>renderItem(o,s)).join('');
+    blocks+=`<div class="cat">
+      <div class="cat-h"><span class="cat-ic" style="background:${cat.color}1f;color:${cat.color}">${cat.ic}</span>
+        ${cat.key}<span class="cat-cnt">${cdone}/${its.length}</span></div>
+      ${tools}
+      <div class="item-list">${rows}</div></div>`;
+  });
+
+  // 欠物本：獨立分類圖層（point 5）
+  const owedBlock=`<div class="cat">
+    <div class="cat-h"><span class="cat-ic" style="background:#e8590c1f;color:#e8590c">📒</span>
+      欠物本（本區）<span class="cat-cnt">0 筆未結</span></div>
+    <div class="card" style="padding:14px">
+      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
+        本區未結欠物紀錄（借出未還／待補貨／送修／漏計價／遺失）。<br>
+        ＊點班中標記「異常／沒有」的耗材，正式版會自動帶入此欠物本。</div>
+      <button class="btn btn-ghost btn-block" style="margin-top:12px;font-size:14px;padding:11px"
+        onclick="alert('欠物本：可新增一筆欠物、查詢未結項目、標記已補齊（正式版）。')">＋ 新增 / 查看欠物</button>
+    </div></div>`;
+
+  $app.innerHTML=`
+  <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">${esc(s.name)}${halfTxt}</div>
+      <div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]} · ${esc(state.user.name)}</div></div>
+    <button class="back" onclick="backFromRollcall()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    ${banner}
+    <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
+      <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(state.shift)}）點班結果</div>
+      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
+        ＊正式版顯示上一班的完成狀態與異常，交接更清楚。<br>
+        <span style="color:var(--bad);font-weight:700">● 未結請修</span>：x-ray 遙控器（上一班報修，維修中）— 已自動帶入本班<br>
+        <span style="color:var(--warn);font-weight:700">● 欠物</span>：4x4 紗布 短少（待補貨）
+      </div>
+    </div>
+    <div class="bulk-bar">
+      <button class="btn btn-primary" style="flex:1;font-size:14px;padding:11px" onclick="bulkNormal()">
+        ✓ 其餘 ${remain} 項全部標示正常</button>
+    </div>
+    <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 14px">先點出「異常／沒有」的項目，其餘一鍵標正常</div>
+    ${blocks}
+    ${owedBlock}
+  </div>
+  <div class="bottombar"><div class="bottombar-in">
+    <div class="progress"><div class="ptxt">已點 ${done}/${list.length}</div>
+      <div class="pbar"><div style="width:${pct}%;background:${acolor}"></div></div></div>
+    <button class="btn btn-primary" ${allDone?'':'disabled'} onclick="state.screen='summary';render()">完成 →</button>
+  </div></div>`;
+}
+function backFromRollcall(){const s=sheetById(state.sheetId);state.screen=String(s.ops)==='2'?'half':'pick';render()}
+function bulkNormal(){
+  const s=sheetById(state.sheetId);
+  itemsOf(s.id,state.half).forEach(o=>{const k=keyOf(o);if(!state.checks[k])state.checks[k]='ok'});
+  render();
+}
+
+function renderItem(o,s){
+  const k=keyOf(o);const st=state.checks[k];const isDev=o.type==='儀器';
+  const dot=st==='ok'?'<span class="dot ok">✓</span>':st==='bad'?'<span class="dot bad">!</span>':'<span class="dot"></span>';
+  const assignB=o.assign?`<span class="tb t-儀器">${o.assign}</span>`:'';
+  const dev=isDev?`<button class="locate-mini" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="定位">📍</button>`:'';
+  const repairNote=isDev&&state.reason[k]==='送修'?`<div class="repair-note">🔧 將於 Leader 系統開立請修單（示意）</div>`:'';
+  const abn=st==='bad'?`<div class="li-abn">
+     <div class="abn-h">⚠ 異常／沒有 — 請註記</div>
+     <div class="chips">${REASONS.map(r=>{const on=state.reason[k]===r;
+        const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':'');
+        return `<button class="chip ${on?'on':''} ${cls}" onclick="setReason('${k}','${r}')">${r}</button>`}).join('')}</div>
+     ${repairNote}
+     <input class="note-in" placeholder="備註（選填）" value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"></div>`:'';
+  return `<div class="li ${st==='bad'?'is-bad':''}">
+    <div class="li-tap" onclick="setCheck('${k}','ok')">
+      ${dot}
+      <div class="li-body"><div class="li-name">${esc(o.name)}${assignB}</div>
+        <div class="li-qty">標準 ${esc(o.qty)} <span class="tb t-${o.type}">${o.type}</span></div></div>
+    </div>
+    <div class="li-ctrl">${dev}<button class="flagbtn ${st==='bad'?'on':''}" onclick="setCheck('${k}','bad')">異常</button></div>
+    ${abn}</div>`;
+}
+function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k]}render()}
+function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
+function setNote(k,v){state.note[k]=v}
+
+function openMap(name){state.mapItem=name;state.screen='map';render()}
+function renderMap(){
+  const s=sheetById(state.sheetId);const area=areaById(s.area);
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📍 儀器定位</div><div class="sub">${esc(state.mapItem||'')}</div></div>
+    <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="mapbox">
+      <svg viewBox="0 0 320 220" style="width:100%;max-width:360px">
+        <rect x="6" y="6" width="308" height="208" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <line x1="160" y1="6" x2="160" y2="214" stroke="var(--line)" stroke-dasharray="4 4"/>
+        <line x1="6" y1="110" x2="314" y2="110" stroke="var(--line)" stroke-dasharray="4 4"/>
+        <text x="83" y="60" fill="var(--ink-soft)" font-size="11" text-anchor="middle">急救區</text>
+        <text x="237" y="60" fill="var(--ink-soft)" font-size="11" text-anchor="middle">檢傷區</text>
+        <text x="83" y="165" fill="var(--ink-soft)" font-size="11" text-anchor="middle">治療區</text>
+        <text x="237" y="165" fill="var(--ink-soft)" font-size="11" text-anchor="middle">留觀區</text>
+        <circle cx="110" cy="78" r="9" fill="${area.color}"/>
+        <circle cx="110" cy="78" r="16" fill="${area.color}" opacity="0.25"/>
+      </svg>
+      <div style="font-weight:700;margin-top:10px">${esc(state.mapItem||'此儀器')}</div>
+      <div style="font-size:12.5px;color:var(--ink-soft);margin-top:4px">
+        示意圖 — 正式版將顯示 beacon 廠商系統的即時位置／樓層／區域</div>
+      <div style="font-size:11.5px;color:var(--brand);font-weight:700;margin-top:10px">待廠商 beacon 系統接入後啟用</div>
+    </div>
+  </div>`;
+}
+function applyTheme(){const t=(()=>{try{return localStorage.getItem('ed_theme')}catch(e){return null}})();
+  if(t==='dark')document.documentElement.dataset.theme='dark';else delete document.documentElement.dataset.theme;}
+function toggleTheme(){const dark=document.documentElement.dataset.theme!=='dark';
+  if(dark)document.documentElement.dataset.theme='dark';else delete document.documentElement.dataset.theme;
+  try{localStorage.setItem('ed_theme',dark?'dark':'light')}catch(e){}render();}
+
+// ===== 歷史點班紀錄（近7天展開，8天以上按月封存）=====
+function genHistDemo(){
+  // demo：產生近 14 天的假紀錄（含異常明細）
+  const ISSUE_POOL=[
+    {area:'急救室',item:'CVP 套組',reason:'漏計價',type:'耗材'},
+    {area:'檢傷',item:'兒科手機',reason:'送修',type:'儀器'},
+    {area:'留觀',item:'4x4 紗布',reason:'待補貨',type:'耗材'},
+    {area:'治療',item:'x-ray 遙控器',reason:'遺失',type:'儀器'},
+    {area:'急救室',item:'喉頭鏡葉',reason:'借出未還',type:'器械'},
+  ];
+  const NAMES=['陳子瑄','王孝彰','蔡婷瑋','吳鈺珊','劉逸靚'];
+  const days=[];const today=new Date();
+  for(let i=0;i<14;i++){
+    const d=new Date(today);d.setDate(d.getDate()-i);
+    const shifts=['N','E','D'].map((sh,si)=>{
+      const total=14, done=(i===0&&sh===state.shift)?Math.floor(Math.random()*total):total;
+      const issueN=(i+sh.charCodeAt(0))%4===0?1:0;
+      const issues=[];for(let n=0;n<issueN;n++)issues.push(ISSUE_POOL[(i+si+n)%ISSUE_POOL.length]);
+      const op=NAMES[(i+si)%NAMES.length];
+      return {sh,total,done,issues,op};
+    });
+    days.push({date:d,shifts});
+  }
+  return days;
+}
+// 可展開的單班列（點入看明細）
+function histShiftRow(s,id){
+  const done=s.done===s.total;
+  const tag=done?`<span class="pill-ok">已完成</span>`:`<span class="pill-warn">${s.done}/${s.total}</span>`;
+  const iss=s.issues.length?` <span class="pill-bad">異常 ${s.issues.length}</span>`:'';
+  state._openShift=state._openShift||{};
+  const open=state._openShift[id];
+  const chev=`<span style="color:var(--ink-soft);font-size:13px;margin-left:8px">${open?'▾':'▸'}</span>`;
+  let detail='';
+  if(open){
+    const issLines=s.issues.length?s.issues.map(x=>{
+      const money=(x.reason==='漏計價'||x.reason==='遺失');
+      const rcls=money?'pill-bad':(x.reason==='送修'?'pill-warn':'pill-warn');
+      return `<div class="hd-row">
+        <span>${esc(x.area)} · ${esc(x.item)} <span style="font-size:11px;color:var(--ink-soft)">(${x.type})</span></span>
+        <span class="${rcls}">${esc(x.reason)}</span></div>`;
+    }).join(''):`<div class="hd-row" style="color:var(--ok)">✓ 無異常項目</div>`;
+    detail=`<div class="hist-detail">
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:7px">點班人員：${esc(s.op)} · 完成 ${s.done}/${s.total} 項</div>
+      ${issLines}</div>`;
+  }
+  return `<div class="hist-shift" onclick="toggleShift('${id}')" style="cursor:pointer">
+      <span>${SHIFT_NAME[s.sh]}${chev}</span><span>${tag}${iss}</span></div>${detail}`;
+}
+function toggleShift(id){state._openShift=state._openShift||{};state._openShift[id]=!state._openShift[id];render()}
+
+function renderHistory(){
+  const days=genHistDemo();
+  const isLeader=(state.user.role==='護理長'||state.user.role==='副護理長');
+  const recent=days.slice(0,7), older=days.slice(7);
+  state._foldMonths=state._foldMonths||{};
+  const recentHtml=recent.map((d,di)=>{
+    const rows=d.shifts.map((s,si)=>histShiftRow(s,'r'+di+'-'+si)).join('');
+    return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
+  }).join('');
+  // 按月封存（僅護理長可見更早紀錄）
+  const byMonth={};older.forEach(d=>{const k=`${d.date.getFullYear()}/${String(d.date.getMonth()+1).padStart(2,'0')}`;(byMonth[k]=byMonth[k]||[]).push(d)});
+  const monthHtml=Object.keys(byMonth).map(m=>{
+    const open=state._foldMonths[m];
+    const inner=open?byMonth[m].map((d,di)=>{
+      const rows=d.shifts.map((s,si)=>histShiftRow(s,'m'+m.replace(/\D/g,'')+'-'+di+'-'+si)).join('');
+      return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
+    }).join(''):'';
+    return `<div class="month-fold" onclick="toggleMonth('${m}')">
+        <div><b>${m}</b> <span class="mf-r">${byMonth[m].length} 天紀錄</span></div>
+        <span style="font-size:18px;color:var(--ink-soft)">${open?'▾':'▸'}</span></div>${inner}`;
+  }).join('');
+  const years=[2026,2025];const months=Array.from({length:12},(_,i)=>i+1);
+
+  // 權限分級：一般人員只能看 7 天；護理長不限
+  const olderSection=isLeader?`
+    <div class="section-h" style="margin-top:18px">更早紀錄（按月封存）</div>
+    <div class="picker">
+      <select onchange="alert('正式版：依年份查詢')"><option>${years[0]} 年</option><option>${years[1]} 年</option></select>
+      <select onchange="alert('正式版：依月份查詢')">${months.map(m=>`<option>${m} 月</option>`).join('')}</select>
+    </div>
+    ${monthHtml}`
+    :`<div class="card" style="margin-top:16px;text-align:center;padding:18px;color:var(--ink-soft);font-size:13px">
+        🔒 一般人員可查閱近 7 天紀錄<br>更早紀錄需護理長 / 副護理長權限</div>`;
+
+  const aiBtn=`<button class="btn btn-primary btn-block" style="margin-bottom:14px" onclick="state.screen='ai';render()">🤖 AI 點班分析</button>`;
+
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📅 歷史點班紀錄</div><div class="sub">${isLeader?'護理長 · 可查閱全部':'近 7 天'}</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    ${aiBtn}
+    <div class="section-h">近 7 天</div>
+    ${recentHtml}
+    ${olderSection}
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">＊demo 為示意資料；正式版由後端依日期查詢真實紀錄</div>
+  </div>`;
+}
+function toggleMonth(m){state._foldMonths=state._foldMonths||{};state._foldMonths[m]=!state._foldMonths[m];render()}
+
+// ===== Leader：未完成點班 / 儀保 提醒 =====
+function renderLeader(){
+  // demo：掃描目前各表完成狀態，列出未完成
+  const incomplete=[];
+  SHEETS.forEach(s=>{const p=sheetProgress(s.id);
+    if(p.done<p.total)incomplete.push({name:s.name,area:areaById(s.area).name,color:areaColor(s.area),done:p.done,total:p.total});
+  });
+  const maintDue=[
+    {name:'去顫器（電擊器）',area:'急救室',item:'每班自我測試',sh:'本班未做'},
+    {name:'超音波機',area:'檢傷',item:'每月開機測試',sh:'已逾期'},
+  ];
+  const incHtml=incomplete.length?incomplete.map(i=>`<div class="rem-li">
+      <span><span class="area-dot" style="background:${i.color}"></span>${esc(i.area)} · ${esc(i.name)}</span>
+      <span class="pill-warn">${i.done}/${i.total}</span></div>`).join('')
+    :'<div class="rem-li"><span>全部點班表已完成 🎉</span></div>';
+  const maintHtml=maintDue.map(m=>`<div class="rem-li">
+      <span>${esc(m.area)} · ${esc(m.name)}<br><span style="font-size:11.5px;color:var(--ink-soft)">${m.item}</span></span>
+      <span class="pill-bad">${m.sh}</span></div>`).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📋 主管審核 · 提醒</div><div class="sub">${esc(state.user.name)} · ${SHIFT_NAME[state.shift]}</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    <div class="rem-card ${incomplete.length?'':'ok'}">
+      <div class="rem-h">${incomplete.length?'🔴':'✅'} 未完成點班（${incomplete.length}）</div>
+      ${incHtml}
+    </div>
+    <div class="rem-card">
+      <div class="rem-h">🛠 儀器保養待辦 / 逾期（${maintDue.length}）</div>
+      ${maintHtml}
+    </div>
+    <button class="btn btn-primary btn-block" onclick="alert('正式版：可一鍵推播提醒該區人員，或分區簽核。')">🔔 推播提醒相關人員</button>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊未完成清單依目前各表狀態即時掃描；保養逾期為示意</div>
+  </div>`;
+}
+
+// ===== AI 點班分析 =====
+function renderAI(){
+  const insights=[
+    {ic:'📉',bg:'#fbe8e8',col:'#d23d3d',t:'高頻短少品項',
+     d:'近 30 天「4x4 紗布」在檢傷區短少 9 次，建議調高標準備量或檢討領料頻率。'},
+    {ic:'💰',bg:'#fdf3df',col:'#d68a00',t:'漏計價熱點',
+     d:'急救室急救車「CVP 套組」出現 4 次漏計價，估計收入流失，建議加強用後即刻計價。'},
+    {ic:'🛠',bg:'#16323a',col:'#0f9aa8',t:'保養逾期趨勢',
+     d:'超音波機「每月開機測試」連續 2 個月逾期，建議固定排在每月 1 號白班執行。'},
+    {ic:'🔧',bg:'#efe7fc',col:'#6741d9',t:'設備異常熱區',
+     d:'兒科手機近期報修 3 次，可能需更換；x-ray 遙控器維修中已跨 2 班未結。'},
+  ];
+  const completion=[['白班',96],['小夜',88],['大夜',79]];
+  const insightHtml=insights.map(i=>`<div class="ai-insight">
+      <div class="ai-ic" style="background:${i.bg};color:${i.col}">${i.ic}</div>
+      <div><div class="ai-t">${i.t}</div><div class="ai-d">${i.d}</div></div></div>`).join('');
+  const compHtml=completion.map(([n,v])=>`<div style="margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600">
+        <span>${n}</span><span>${v}%</span></div>
+      <div class="ai-bar"><div style="width:${v}%;background:${v>=90?'var(--ok)':v>=80?'var(--warn)':'var(--bad)'}"></div></div></div>`).join('');
+
+  $app.innerHTML=`
+  <div class="topbar" style="background:linear-gradient(135deg,#6741d9,#9c5cf0)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">🤖 AI 點班分析</div><div class="sub">近 30 天資料 · ${esc(state.user.name)}</div></div>
+    <button class="back" onclick="state.screen='history';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    <div class="ai-card">
+      <div class="ai-hd"><div class="ai-logo">🤖</div>
+        <div><div style="font-weight:800;font-size:16px">分析摘要</div>
+          <div style="font-size:12px;color:var(--ink-soft)">由 Claude 自動分析點班與欠物資料</div></div></div>
+      <div id="aiSummary" style="font-size:13.5px;line-height:1.75;color:var(--ink-soft)"></div>
+    </div>
+    <div class="ai-card">
+      <div style="font-weight:800;font-size:15px;margin-bottom:12px">🔍 重點發現</div>
+      ${insightHtml}
+    </div>
+    <div class="ai-card">
+      <div style="font-weight:800;font-size:15px;margin-bottom:12px">📊 各班點班完成率</div>
+      ${compHtml}
+      <div style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">大夜班完成率偏低，建議檢視夜間人力或簡化流程。</div>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="alert('正式版：可選分析範圍（日/週/月）、產出 PDF 報告、串 Claude API 做即時問答。')">📄 產出分析報告</button>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:12px;line-height:1.6">
+      ＊demo 為示意分析。正式版將透過 Claude API 即時分析真實點班 / 欠物 / 保養資料，
+      可問如「這個月哪一區最常缺藥？」「漏計價估計損失多少？」並產出報告供護理長決策。</div>
+  </div>`;
+
+  // 模擬 AI 逐字輸出
+  const txt='本月共完成 248 班次點班，整體完成率 88%。發現 3 項需關注：耗材短少集中在檢傷區、漏計價以急救室較多、夜班完成率偏低。建議優先處理高價耗材的計價流程與夜間人力配置。';
+  const el=document.getElementById('aiSummary');let i=0;
+  if(el){(function type(){if(i<=txt.length){el.innerHTML=esc(txt.slice(0,i))+'<span class="ai-typing">▋</span>';i++;setTimeout(type,18)}else{el.innerHTML=esc(txt)}})();}
+}
+
+function renderSummary(){
+  const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
+  const issues=[];
+  list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
+    const r=state.reason[k]||'未註記原因';const money=(r==='漏計價'||r==='遺失');
+    issues.push({type:money?'bad':'warn',t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')})}});
+  const issuesHtml=issues.length?issues.map(i=>`<div class="issue">
+     <div class="issue-ic ${i.type}">${i.type==='bad'?'⚠':'!'}</div>
+     <div><div class="issue-t">${esc(i.t)}</div><div class="issue-d">${esc(i.d)}</div></div></div>`).join('')
+     :'<div style="text-align:center;color:var(--ok);padding:16px;font-weight:600">✓ 無異常</div>';
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">點班摘要 · ${esc(s.name)}${state.half?(' '+state.half+'半'):''}</div>
+      <div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]}</div></div>
+    <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="sum-row">
+      <div class="sum-stat"><div class="n">${list.length}</div><div class="l">點檢項目</div></div>
+      <div class="sum-stat ${issues.length?'bad':'ok'}"><div class="n">${issues.length}</div><div class="l">異常項目</div></div>
+    </div>
+    <div class="section-h">異常清單</div>
+    <div class="card">${issuesHtml}</div>
+    <button class="btn btn-primary btn-block" onclick="state.screen='done';render()">提交並簽核</button>
+  </div>`;
+}
+
+function renderDone(){
+  const s=sheetById(state.sheetId);
+  $app.innerHTML=`
+  <div class="screen"><div class="done-wrap">
+    <div class="done-circle">✓</div>
+    <h2 style="margin:0 0 6px">點班完成</h2>
+    <p style="color:var(--ink-soft);margin:0 0 24px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
+      ${esc(state.user.name)}（${esc(state.user.title)}）· ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} 簽核</p>
+    <button class="btn btn-primary btn-block" onclick="state.screen='pick';render()">回點班表清單</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
+  </div></div>`;
+}
+
+// ---------- start ----------
+applyTheme();
+store.load();
+state.shift=state.shift||detectShift();
+if(!state.user)state.screen='login';
+render();
+</script>
+</body>
+</html>
