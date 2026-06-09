@@ -305,7 +305,7 @@ let seed=42; function rnd(){seed=(seed*9301+49297)%233280;return seed/233280;}
 // ===================== 資料來源（之後接創鈺,只改這一段） =====================
 const CONFIG={
   source:'demo',              // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料(創鈺)
-  masterUrl:'equipment.json', // 設備主檔(共用資訊):同 repo 的相對路徑;讀不到就用內建示意
+  masterUrl:'https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec?table=devices', // 設備主檔(共用資訊):同 repo 的相對路徑;讀不到就用內建示意
   feedUrl:'',                 // 即時清單端點:創鈺 API,或 Apps Script proxy 的 /exec 網址
   trackUrl:'',                // 軌跡端點(可留空):創鈺軌跡 API,需帶 ?code=財碼&from=&to=
   refreshSec:15,              // feed 模式自動刷新秒數

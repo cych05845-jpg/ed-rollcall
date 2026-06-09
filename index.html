@@ -159,6 +159,19 @@
     .sheet-list{grid-template-columns:repeat(3,1fr)}
     .area-tiles{grid-template-columns:repeat(4,1fr)}
   }
+
+  /* 本區定位儀器面板 */
+  .loc-panel{background:var(--brand-soft);border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:12px}
+  .loc-h{font-weight:700;color:var(--brand-dark);font-size:14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .loc-h .hint{font-size:11px;color:var(--ink-soft);font-weight:500}
+  .loc-row{display:flex;align-items:center;gap:8px;padding:7px 2px;border-top:1px solid var(--line)}
+  .loc-nm{flex:1;font-size:13.5px;font-weight:600;min-width:0}
+  .loc-zone{font-size:11.5px;color:var(--ink-soft)}
+  .loc-st{font-size:11.5px;padding:1px 9px;border-radius:20px;background:#eef2f3;color:var(--ink-soft);white-space:nowrap}
+  .loc-st.s-移位{background:#fff3e0;color:#b5680f}.loc-st.s-離線{background:#eceff1;color:#78858d}
+  .loc-st.s-送修{background:#e3f0fb;color:#2f7dc4}.loc-st.s-外借{background:#f0e8fb;color:#8e5bc4}
+  .loc-go{border:1px solid var(--brand);color:var(--brand);background:#fff;border-radius:7px;padding:5px 11px;font-size:12.5px;cursor:pointer;white-space:nowrap}
+  .loc-panel.empty{color:var(--ink-soft);font-size:12.5px;font-weight:500}
 </style>
 </head>
 <body>
@@ -247,6 +260,45 @@ const ACCOUNTS=[
   {id:"12706",name:"陳盈利",title:"技術員",role:"點班人員",active:true},
   {id:"15896",name:"龔鈺雯",title:"事務員",role:"點班人員",active:true}
 ];
+// ===================== 資料來源(共用設定) =====================
+const DATA_URL='https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec';                  // 點班清單 Sheet 的 Apps Script /exec(留空=用內建清單)
+const EQUIP_URL='equipment.json';   // 定位設備主檔(與 locator 同一份)
+const LOCATE_FEED='';               // 創鈺即時 feed /exec(留空=只顯示主檔,狀態待即時)
+// 點班區域 → 定位畫面區碼
+const AREA_ZONE={triage:'triage',peds:'peds',resus:'resus',treat:'treat',obs:'guan1',room:null,leader:null};
+const SHEET_ZONE={'obs-2':'guan2'}; // 個別 sheet 覆蓋(留觀區-2 → 第二觀察區)
+function zoneOfSheet(s){return s?(SHEET_ZONE[s.id]||AREA_ZONE[s.area]||null):null;}
+let LOCED=[];                       // 本院定位設備(名稱/區/狀態)
+
+async function loadItems(){
+  if(!DATA_URL)return;
+  try{
+    const r=await fetch(DATA_URL+(DATA_URL.includes('?')?'&':'?')+'table=items',{cache:'no-store'});
+    const rows=await r.json();
+    if(Array.isArray(rows)&&rows.length){
+      ITEMS=rows.map(x=>Array.isArray(x)?x:[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'']);
+    }
+  }catch(e){console.error('讀點班清單失敗,改用內建清單',e);}
+}
+async function loadLocator(){
+  let master=[];
+  // 來源優先序:有設 DATA_URL → 讀 Sheet 的 devices;否則讀 equipment.json
+  const devUrl=DATA_URL?(DATA_URL+(DATA_URL.includes('?')?'&':'?')+'table=devices'):EQUIP_URL;
+  try{const r=await fetch(devUrl,{cache:'no-store'});if(r.ok){const a=await r.json();if(Array.isArray(a))master=a;}}catch(e){}
+  let live={};
+  if(LOCATE_FEED){try{
+    const r=await fetch(LOCATE_FEED,{cache:'no-store'});const raw=await r.json();
+    (Array.isArray(raw)?raw:(raw.items||[])).forEach(d=>{const id=d.id||d.assetNo||d.code;if(!id)return;
+      live[id]={zone:d.area||d.areaName||d.zone, status:d.repairing?'送修':d.borrowed?'外借':(d.online===false?'離線':'在線')};});
+  }catch(e){console.error('讀即時定位失敗',e);}}
+  LOCED=master.map(m=>{const L=live[m.code];
+    const homeZone=m.home_zone||m.home;
+    let zone=(L&&L.zone)||homeZone, status=(L&&L.status)||'—';
+    if(status==='在線'&&zone&&homeZone&&zone!==homeZone)status='移位';
+    return {code:m.code,name:m.name,cat:m.cat,zone:zone,status:status};});
+}
+// =============================================================
+
 const AREAS=[
   {id:"triage",name:"檢傷",color:"#099268",sort:1},
   {id:"peds",name:"兒童",color:"#C2255C",sort:2},
@@ -272,7 +324,7 @@ const SHEETS=[
   {id:"obs-cart",name:"留觀急救車",area:"obs",sort:3,ops:1},
   {id:"leader",name:"Leader",area:"leader",sort:1,ops:1}
 ];
-const ITEMS=[
+let ITEMS=[
   ["triage","遮眼器/指揮棒","1/1","儀器",""],
   ["triage","睫毛夾/眼勾/眼科","4/6/1","器械",""],
   ["triage","組織夾","1","器械",""],
@@ -821,6 +873,17 @@ function renderRollcall(){
         ✓ 其餘 ${remain} 項全部標示正常</button>
     </div>
     <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 12px">先點出「異常／沒有」的項目，其餘一鍵標正常即可</div>
+    ${(function(){
+      const zone=zoneOfSheet(s);
+      const dev=LOCED.filter(d=>d.zone===zone);
+      if(!zone) return '';
+      if(!dev.length) return '<div class="loc-panel empty">📍 本區暫無定位儀器資料（放上 equipment.json／接創鈺後顯示）</div>';
+      return '<div class="loc-panel"><div class="loc-h">📍 本區定位儀器（'+dev.length+'）<span class="hint">名稱 · 狀態</span></div>'+
+        dev.map(d=>'<div class="loc-row"><span class="loc-nm">'+esc(d.name)+'</span>'+
+          '<span class="loc-st s-'+d.status+'">'+d.status+'</span>'+
+          '<button class="loc-go" onclick="window.open(\'locator/?code='+encodeURIComponent(d.code)+'\',\'_blank\')">定位</button></div>').join('')+
+        '</div>';
+    })()}
     <div class="item-list">${rows}</div>
   </div>
   <div class="bottombar"><div class="bottombar-in">
@@ -862,9 +925,22 @@ function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.check
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
-function openMap(name){
-  // 開啟同 repo 的定位畫面(locator/),用名稱搜尋並定位該儀器
-  window.open('locator/?q='+encodeURIComponent(name),'_blank');
+function openMap(name){ window.open('locator/?q='+encodeURIComponent(name),'_blank'); }
+
+// 呼叫後端 AI(key 在後端,不送 Content-Type 以避免跨網域預檢)
+async function askAI(task,payload){
+  if(!DATA_URL){alert('尚未設定後端 DATA_URL');return '';}
+  const r=await fetch(DATA_URL,{method:'POST',body:JSON.stringify({task,payload})});
+  const d=await r.json(); if(d.error) throw d.error; return d.text;
+}
+async function aiHandover(){
+  const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
+  const issues=[];
+  list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
+    const r=state.reason[k]||'未註記原因';issues.push({t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')});}});
+  const box=document.getElementById('aiBox');box.style.display='block';box.textContent='AI 產生中…';
+  try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[state.shift],issues}); }
+  catch(e){ box.textContent='AI 失敗:'+e; }
 }
 function renderMap(){
   const s=sheetById(state.sheetId);const area=areaById(s.area);
@@ -920,6 +996,8 @@ function renderSummary(){
     </div>
     <div class="section-h">異常清單</div>
     <div class="card">${issuesHtml}</div>
+    <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
+    <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
     <button class="btn btn-primary btn-block" onclick="state.screen='done';render()">提交並簽核</button>
   </div>`;
 }
@@ -943,6 +1021,7 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
+(async()=>{ await Promise.all([loadItems(),loadLocator()]); render(); })();
 </script>
 </body>
 </html>
