@@ -304,10 +304,11 @@ let seed=42; function rnd(){seed=(seed*9301+49297)%233280;return seed/233280;}
 
 // ===================== 資料來源（之後接創鈺,只改這一段） =====================
 const CONFIG={
-  source:'demo',    // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料(創鈺)
-  feedUrl:'',       // 即時清單端點:創鈺 API,或 Apps Script proxy 的 /exec 網址
-  trackUrl:'',      // 軌跡端點(可留空):創鈺軌跡 API,需帶 ?code=財碼&from=&to=
-  refreshSec:15,    // feed 模式自動刷新秒數
+  source:'demo',              // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料(創鈺)
+  masterUrl:'equipment.json', // 設備主檔(共用資訊):同 repo 的相對路徑;讀不到就用內建示意
+  feedUrl:'',                 // 即時清單端點:創鈺 API,或 Apps Script proxy 的 /exec 網址
+  trackUrl:'',                // 軌跡端點(可留空):創鈺軌跡 API,需帶 ?code=財碼&from=&to=
+  refreshSec:15,              // feed 模式自動刷新秒數
 };
 
 // 座標校正:創鈺地圖座標 → 本平面圖(0~1)。等創鈺給該樓層座標範圍再填。
@@ -352,7 +353,7 @@ function adaptRow(r){
   };
 }
 
-let EQUIP=[];
+let EQUIP=[], MASTER=[];
 function assignCoords(){seed=42;EQUIP.forEach(e=>{
   const p=projectXY(e.rx,e.ry);                              // 有校正座標就用真實點位
   if(p){e.px=p[0];e.py=p[1];}
@@ -362,18 +363,59 @@ function assignCoords(){seed=42;EQUIP.forEach(e=>{
 // 即時區≠配置區 → 自動標「移位」(創鈺只需給位置,移位由系統判斷)
 function deriveMoved(){EQUIP.forEach(e=>{if(e.status==='in'&&e.home&&e.zone&&e.zone!==e.home)e.status='out';});}
 
-async function loadEquip(){
-  if(CONFIG.source==='feed'&&CONFIG.feedUrl){
+// (1) 主檔:讀同 repo 的 equipment.json(你管理的共用資訊);讀不到就用內建示意
+async function loadMaster(){
+  if(CONFIG.masterUrl){
     try{
-      const res=await fetch(CONFIG.feedUrl,{cache:'no-store'});
-      const raw=await res.json();
-      EQUIP=(Array.isArray(raw)?raw:(raw.items||[])).map(adaptRow).filter(e=>e.code);
-      deriveMoved();
-    }catch(err){console.error('即時資料讀取失敗,暫用示意資料',err);EQUIP=DEMO_EQUIP.map(o=>({...o}));}
-  }else{
-    EQUIP=DEMO_EQUIP.map(o=>({...o}));
+      const res=await fetch(CONFIG.masterUrl,{cache:'no-store'});
+      if(res.ok){
+        const arr=await res.json();
+        if(Array.isArray(arr)&&arr.length){
+          return arr.map(m=>({
+            code:String(m.code), name:m.name, cat:m.cat||m.name, brand:m.brand||'',
+            home:mapZone(m.home_zone||m.home||'treat'), needRollcall:m.need_rollcall!==false,
+            zone:mapZone(m.home_zone||m.home||'treat'), status:'in', battery:100, lastSeen:0, rx:null, ry:null
+          }));
+        }
+      }
+    }catch(err){ /* 沒有 equipment.json → 用示意 */ }
   }
-  assignCoords();
+  return DEMO_EQUIP.map(o=>({...o}));     // 後備:示意資料(已含 live 欄位)
+}
+
+// (2) 即時:創鈺 feed,整理成 {財碼: 即時資料}
+async function loadLive(){
+  if(!(CONFIG.source==='feed'&&CONFIG.feedUrl))return null;
+  try{
+    const res=await fetch(CONFIG.feedUrl,{cache:'no-store'});
+    const raw=await res.json();
+    const live=(Array.isArray(raw)?raw:(raw.items||[])).map(adaptRow).filter(e=>e.code);
+    const map={}; live.forEach(e=>map[e.code]=e); return map;
+  }catch(err){console.error('即時資料讀取失敗',err);return null;}
+}
+
+// (3) 合併:主檔為準(財碼/名稱/類別/配置區),即時只覆蓋 位置/狀態/座標/電量
+function mergeLive(live){
+  EQUIP=MASTER.map(m=>{
+    const e={...m};
+    const L=live&&live[m.code];
+    if(L){e.zone=L.zone||m.home; e.status=L.status; e.rx=L.rx; e.ry=L.ry; e.battery=L.battery; e.lastSeen=L.lastSeen;}
+    return e;
+  });
+  deriveMoved(); assignCoords();
+}
+
+// 首次:載主檔+即時並合併
+async function loadEquip(){
+  MASTER=await loadMaster();
+  const live=await loadLive();
+  mergeLive(live);
+}
+// 定時:只刷新即時(主檔不重載,保留你在「管理清單」的編輯)
+async function refreshLive(){
+  const live=await loadLive();
+  mergeLive(live);
+  renderAll();
 }
 // =========================================================================
 
@@ -591,22 +633,27 @@ function renderAdminBody(){
   // 表格內 input 放大一點
   document.querySelectorAll('#adminBody input,#adminBody select').forEach(el=>{el.style.cssText+=';padding:5px 7px;border:1px solid var(--line);border-radius:6px;font-family:'+(el.style.fontFamily||'inherit')+';font-size:13px;width:100%';});
 }
+function syncMasterFromEquip(){
+  MASTER=EQUIP.map(e=>({code:e.code,name:e.name,cat:e.cat,brand:e.brand||'',
+    home:e.home,needRollcall:e.needRollcall!==false,
+    zone:e.home,status:'in',battery:100,lastSeen:0,rx:null,ry:null}));
+}
 function editField(i,field,val){
   if(!EQUIP[i])return;
   EQUIP[i][field]=val;
   if(field==='home'){ if(EQUIP[i].status==='in')EQUIP[i].zone=val; assignCoords(); }
-  if(field==='cat'||field==='code'||field==='name'){/* 即時反映到其他畫面 */}
+  syncMasterFromEquip();
   document.getElementById('aCount').textContent=EQUIP.length;
 }
 function addRow(){
   EQUIP.push({code:'',name:'',cat:'',brand:'',home:'treat',zone:'treat',status:'in',
     battery:100,lastSeen:0,needRollcall:true});
-  assignCoords();renderAdminBody();
+  assignCoords();syncMasterFromEquip();renderAdminBody();
 }
 function delRow(i){
   if(!EQUIP[i])return;
   if(!confirm('刪除 '+(EQUIP[i].name||'')+' '+(EQUIP[i].code||'')+'?'))return;
-  EQUIP.splice(i,1);renderAdminBody();renderBoard();
+  EQUIP.splice(i,1);syncMasterFromEquip();renderAdminBody();renderBoard();
 }
 function exportMaster(){
   // 只輸出主檔欄位(共用資訊),不含即時狀態
@@ -626,7 +673,7 @@ function importMaster(file){
       home:m.home_zone||m.home||'treat', zone:m.home_zone||m.home||'treat',
       status:'in', battery:100, lastSeen:0, needRollcall:m.need_rollcall!==false
     }));
-    assignCoords();renderAll();renderAdmin();
+    assignCoords();syncMasterFromEquip();renderAll();renderAdmin();
     alert('已匯入 '+EQUIP.length+' 台主檔。(即時狀態仍由創鈺 feed 提供)');
   }catch(err){alert('檔案格式有誤:'+err);}};
   r.readAsText(file);
@@ -670,12 +717,25 @@ function renderDataView(){
   <span style="color:var(--muted);font-size:12px">即時位置表預覽(前 3 筆):</span></div>
   <div class="schema">${JSON.stringify(sample,null,2)}</div>`;
 }
+// 寬鬆比對:點班用「名稱」(沒有財碼),所以用多層比對盡量對到正確類別
+function findByQuery(q){
+  q=(q||'').trim(); if(!q)return null;
+  let h=EQUIP.find(x=>x.code===q); if(h)return h;                       // 1.財碼完全相同
+  h=EQUIP.find(x=>x.cat.includes(q)||x.name.includes(q)); if(h)return h; // 2.類別/名稱含查詢字
+  h=EQUIP.find(x=>q.includes(x.cat)); if(h)return h;                    // 3.點班名稱含某類別
+  for(let i=0;i<q.length-1;i++){const g=q.substr(i,2);                  // 4.兩字片段(血氧/推床/超音波/心電…)
+    h=EQUIP.find(x=>x.cat.includes(g)||x.name.includes(g)); if(h)return h;}
+  return null;
+}
 function deepLink(type,val){switchView('map');
-  if(type==='code'){locate(val);}else{
-    document.querySelectorAll('.grp').forEach(x=>x.classList.remove('open','active'));
-    const e=EQUIP.find(x=>x.cat.includes(val)||x.name.includes(val));if(e){mapCat=e.cat;mapItem=null;curFilter=null;
-    const el=[...document.querySelectorAll('.grp')].find(x=>x.dataset.cat===e.cat);if(el)el.classList.add('open','active');
-    renderDots();renderMapbar();renderGroups();}}
+  if(type==='code'){locate(val);return;}
+  const e=findByQuery(val);
+  document.querySelectorAll('.grp').forEach(x=>x.classList.remove('open','active'));
+  if(e){mapCat=e.cat;mapItem=null;curFilter=null;
+    const el=[...document.querySelectorAll('.grp')].find(x=>x.dataset.cat===e.cat);if(el){el.classList.add('open','active');el.scrollIntoView({block:'nearest'});}
+    renderDots();renderMapbar();renderGroups();}
+  else{ // 對不到(可能非定位追蹤品項):顯示全部,讓使用者自己用搜尋框找
+    mapMode='all';mapCat=null;mapItem=null;curFilter=null;renderAll();}
 }
 
 function payload(){return EQUIP.map(e=>({asset_id:e.code,cat:e.cat,brand:e.brand,
@@ -789,7 +849,7 @@ async function boot(){
   await loadEquip();
   bootDeepLink();
   if(CONFIG.source==='feed'&&CONFIG.refreshSec){
-    setInterval(async()=>{await loadEquip();renderAll();},CONFIG.refreshSec*1000);
+    setInterval(refreshLive,CONFIG.refreshSec*1000);
   }
 }
 boot();
