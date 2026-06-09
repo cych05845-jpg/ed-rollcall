@@ -6,7 +6,7 @@
 <title>急診護理站電子點班系統</title>
 <style>
   :root{
-    --bg:#e9edf0; --bg2:#dfe6ea; --card:#ffffff; --ink:#23313b; --ink-soft:#5d6c77; --line:#d3dbe1;
+    --bg:#e9edf0; --card:#ffffff; --ink:#23313b; --ink-soft:#5d6c77; --line:#dce3e8;
     --brand:#0f7a86; --brand-dark:#0a5b64; --brand-soft:#e3f2f3;
     --ok:#1f9d57; --ok-soft:#e6f6ed; --warn:#d68a00; --warn-soft:#fdf3df;
     --bad:#d23d3d; --bad-soft:#fbe8e8;
@@ -14,7 +14,7 @@
     --fs:15.5px;
   }
   [data-theme="dark"]{
-    --bg:#0f1620; --bg2:#0a0f17; --card:#1b2630; --ink:#dde7ee; --ink-soft:#9fb0bc; --line:#2c3c49;
+    --bg:#0f1620; --card:#1b2630; --ink:#dde7ee; --ink-soft:#9fb0bc; --line:#2c3c49;
     --brand:#2bb3c0; --brand-dark:#1d8d99; --brand-soft:#16323a;
     --ok:#3ec77a; --ok-soft:#15301f; --warn:#e0a93a; --warn-soft:#332710;
     --bad:#ef6a6a; --bad-soft:#3a1d1d;
@@ -37,7 +37,6 @@
   .back{background:rgba(255,255,255,.18);border:none;color:#fff;font-size:14px;padding:6px 13px;
     border-radius:8px;font-family:inherit;cursor:pointer}
   .screen{padding:18px}
-  .screen.lvl2{background:var(--bg2)}
   .demo-banner{background:#fff8e6;border-bottom:1px solid #f1dca0;color:#8a6a1a;font-size:12px;
     padding:8px 14px;text-align:center;font-weight:600}
 
@@ -69,72 +68,18 @@
 
   /* area tiles (先選分區) */
   .area-tiles{display:grid;gap:10px;grid-template-columns:repeat(2,1fr)}
-  .area-tile{background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:14px 15px;cursor:pointer;position:relative;min-height:64px;display:flex;flex-direction:column;
-    justify-content:center;box-shadow:var(--shadow);transition:transform .08s}
-  .area-tile:active{transform:scale(.98)}
-  .area-tile .an{font-size:17px;font-weight:800;display:flex;align-items:center}
-  .area-tile .ac{font-size:11.5px;color:var(--ink-soft);font-weight:600;margin-top:4px;padding-left:18px}
-  .area-tile .chev{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:20px;color:var(--ink-soft);opacity:.55}
-  .area-dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:8px;flex:0 0 10px}
+  .area-tile{border-radius:14px;padding:14px;cursor:pointer;color:#fff;position:relative;min-height:72px;
+    display:flex;flex-direction:column;justify-content:center;box-shadow:0 2px 10px rgba(20,40,55,.12);transition:transform .08s}
+  .area-tile:active{transform:scale(.97)}
+  .area-tile .an{font-size:18px;font-weight:800}
+  .area-tile .ac{font-size:11.5px;opacity:.92;font-weight:600;margin-top:3px}
+  .area-tile .chev{position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:20px;opacity:.7}
   /* sheet list (緊湊列) */
   .area-bar{font-weight:800;font-size:15px;margin:0 2px 12px;padding-left:10px;border-left:4px solid var(--brand)}
   .sheet-list{display:grid;gap:8px;grid-template-columns:1fr}
-  .sheet-row{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--brand);border-radius:10px;
-    padding:11px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;transition:.08s}
-  .sheet-row:active{opacity:.7}
-  /* category section in rollcall */
-  .cat{margin-bottom:18px}
-  .cat-h{display:flex;align-items:center;gap:9px;font-weight:800;font-size:17px;margin:0 2px 11px}
-  .cat-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
-  .cat-cnt{font-size:13px;font-weight:700;color:var(--ink-soft);margin-left:auto}
-  .cat-tools{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 12px}
-  .tool-pill{font-size:13.5px;font-weight:700;padding:9px 15px;border-radius:10px;border:1.5px solid var(--brand);
-    background:var(--brand-soft);color:var(--brand);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-  .tool-pill:active{opacity:.7}
-  /* status banner (3rd level completion) — prominent */
-  .status-banner{display:flex;align-items:center;gap:14px;padding:18px 18px;border-radius:14px;margin-bottom:16px;font-weight:800;font-size:18px}
-  .status-banner.todo{background:var(--warn-soft);color:var(--warn);border:2px solid var(--warn)}
-  .status-banner.done{background:var(--ok-soft);color:var(--ok);border:2px solid var(--ok)}
-  .status-banner .sb-ic{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;flex:0 0 46px}
-  .status-banner.todo .sb-ic{background:var(--warn)} .status-banner.done .sb-ic{background:var(--ok)}
-  .status-banner .sb-sub{font-size:13px;font-weight:600;opacity:.92;margin-top:2px}
-  /* history */
-  .hist-day{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:9px}
-  .hist-date{font-weight:800;font-size:14.5px;margin-bottom:9px;display:flex;align-items:center;gap:8px}
-  .hist-shift{display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13.5px;border-top:1px dashed var(--line)}
-  .hist-shift:first-of-type{border-top:none}
-  .hist-detail{padding:10px 12px;margin:2px 0 8px;background:var(--bg2);border-radius:9px}
-  .hd-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-top:1px dashed var(--line)}
-  .hd-row:first-child{border-top:none}
-  .month-fold{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:9px;
-    cursor:pointer;display:flex;justify-content:space-between;align-items:center}
-  .month-fold .mf-r{font-size:12.5px;color:var(--ink-soft);font-weight:600}
-  .picker{display:flex;gap:8px;margin-bottom:14px}
-  .picker select{flex:1;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)}
-  /* leader reminder */
-  .rem-card{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--bad);border-radius:12px;padding:14px 15px;margin-bottom:11px}
-  .rem-card.ok{border-left-color:var(--ok)}
-  .rem-h{font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px}
-  .rem-li{display:flex;justify-content:space-between;align-items:center;padding:8px 0;font-size:13.5px;border-top:1px dashed var(--line)}
-  .rem-li:first-of-type{border-top:none;margin-top:6px}
-  .pill-bad{background:var(--bad-soft);color:var(--bad);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
-  .pill-ok{background:var(--ok-soft);color:var(--ok);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
-  .pill-warn{background:var(--warn-soft);color:var(--warn);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
-  /* AI analysis */
-  .ai-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 17px;margin-bottom:13px}
-  .ai-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-  .ai-logo{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#6741d9,#9c5cf0);
-    display:flex;align-items:center;justify-content:center;font-size:22px;flex:0 0 42px}
-  .ai-insight{display:flex;gap:11px;padding:12px 0;border-top:1px solid var(--line)}
-  .ai-insight:first-of-type{border-top:none}
-  .ai-ic{width:32px;height:32px;border-radius:9px;flex:0 0 32px;display:flex;align-items:center;justify-content:center;font-size:16px}
-  .ai-t{font-weight:700;font-size:14.5px}
-  .ai-d{font-size:13px;color:var(--ink-soft);margin-top:2px;line-height:1.6}
-  .ai-bar{height:8px;background:var(--line);border-radius:999px;overflow:hidden;margin-top:7px}
-  .ai-bar>div{height:100%;border-radius:999px}
-  .ai-typing{display:inline-block;animation:blink 1s infinite}
-  @keyframes blink{50%{opacity:.3}}
+  .sheet-row{background:#fff;border:1px solid var(--line);border-left-width:4px;border-radius:10px;
+    padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;transition:.08s}
+  .sheet-row:active{background:#f6f9fa}
   .sheet-name{font-weight:700;font-size:14.5px}
   .sheet-meta{font-size:11.5px;color:var(--ink-soft);margin-top:1px}
   .badge{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
@@ -153,19 +98,19 @@
   .li{background:var(--card);border:1px solid var(--line);border-radius:9px;display:flex;flex-wrap:wrap;align-items:stretch}
   .li.is-bad{border-color:var(--bad)}
   .li-tap{flex:1;display:flex;gap:10px;align-items:center;padding:9px 11px;cursor:pointer;min-width:0}
-  .dot{width:28px;height:28px;border-radius:8px;border:2px solid var(--line);flex:0 0 28px;
-    display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:transparent}
+  .dot{width:24px;height:24px;border-radius:7px;border:2px solid var(--line);flex:0 0 24px;
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:transparent}
   .dot.ok{background:var(--ok);border-color:var(--ok);color:#fff}
   .dot.bad{background:var(--bad);border-color:var(--bad);color:#fff}
   .li-body{flex:1;min-width:0}
-  .li-name{font-weight:700;font-size:16.5px;line-height:1.35}
-  .li-qty{font-size:13px;color:var(--ink-soft);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  .tb{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px}
+  .li-name{font-weight:600;font-size:14.5px;line-height:1.3}
+  .li-qty{font-size:11.5px;color:var(--ink-soft);margin-top:1px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .tb{font-size:9.5px;font-weight:800;padding:1px 6px;border-radius:999px}
   .t-藥品{background:rgba(224,49,49,.14);color:#e03131}.t-耗材{background:rgba(15,122,134,.15);color:#0f9aa8}
   .t-器械{background:rgba(28,126,214,.14);color:#1c7ed6}.t-儀器{background:rgba(103,65,217,.15);color:#7c5cf0}.t-其他{background:rgba(120,130,139,.16);color:#828c95}
   .li-ctrl{display:flex;align-items:center;gap:6px;padding:0 10px}
   .flagbtn{border:1.5px solid var(--line);background:var(--card);color:var(--ink-soft);font-family:inherit;
-    font-size:13.5px;font-weight:700;padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap}
+    font-size:12px;font-weight:700;padding:6px 11px;border-radius:8px;cursor:pointer;white-space:nowrap}
   .flagbtn.on{background:var(--bad);border-color:var(--bad);color:#fff}
   .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:14px;padding:5px 8px;border-radius:8px;cursor:pointer}
   .li-abn{flex-basis:100%;padding:10px 12px;border-top:1px dashed var(--line);background:var(--bad-soft)}
@@ -703,7 +648,6 @@ function fmtDate(d){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart
 function weekday(d){return ['週日','週一','週二','週三','週四','週五','週六'][d.getDay()]}
 function detectShift(){const h=new Date().getHours();return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N'}
 const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
-function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
 const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
 const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失'];
 
@@ -739,8 +683,7 @@ function render(){
   store.save();
   if(!state.user)state.screen='login';
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
-    rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
-    history:renderHistory,leader:renderLeader,ai:renderAI}[state.screen]||renderLogin)();
+    rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -780,7 +723,7 @@ function renderHome(){
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
   const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
+     onclick="alert('主管審核：分區各簽，顯示該區一週完成率＋欠物＋請修＋異常（正式版）。')">📋 主管審核（本週）</button>`:'';
   $app.innerHTML=`
   <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 尚未連接後端</div>
   <div class="topbar"><div class="topbar-in">
@@ -802,7 +745,7 @@ function renderHome(){
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（選分區）</button>
     ${reviewBtn}
-    <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
+    <button class="btn btn-ghost btn-block" onclick="alert('正式版顯示歷史紀錄與統計。')">查看歷史紀錄</button>
   </div>`;
 }
 
@@ -810,8 +753,8 @@ function renderAreas(){
   const tiles=AREAS.slice().sort((a,b)=>a.sort-b.sort).map(a=>{
     const sheets=SHEETS.filter(s=>s.area===a.id);
     const done=sheets.filter(s=>{const p=sheetProgress(s.id);return p.total&&p.done===p.total}).length;
-    return `<div class="area-tile" style="background:${a.color}1c;border-color:${a.color}55" onclick="openArea('${a.id}')">
-      <div class="an"><span class="area-dot" style="background:${a.color}"></span>${esc(a.name)}</div>
+    return `<div class="area-tile" style="background:${a.color}" onclick="openArea('${a.id}')">
+      <div class="an">${esc(a.name)}</div>
       <div class="ac">${sheets.length} 張表${done?` · 已完成 ${done}`:''}</div>
       <span class="chev">›</span></div>`;
   }).join('');
@@ -830,15 +773,15 @@ function renderPick(){
     const [stc,stt]=sheetStatus(s.id);const n=itemsOf(s.id,null).length;
     const twop=String(s.ops)==='2'?'<span class="badge badge-2p">2人</span>':'';
     return `<div class="sheet-row" style="border-left-color:${area.color}" onclick="openSheet('${s.id}')">
-      <div style="min-width:0"><div class="sheet-name">${esc(s.name)}${twop}</div><div class="sheet-meta">${n} 項</div></div>
+      <div><div class="sheet-name">${esc(s.name)}${twop}</div><div class="sheet-meta">${n} 項</div></div>
       <span class="st-tag ${stc}">${stt}</span></div>`;
   }).join('');
   $app.innerHTML=`
-  <div class="topbar" style="background:linear-gradient(135deg,${area.color},${area.color}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">${esc(area.name)}</div>
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title" style="display:flex;align-items:center;gap:7px"><span style="width:11px;height:11px;border-radius:3px;background:${area.color};display:inline-block"></span>${esc(area.name)}</div>
       <div class="sub">${sheets.length} 張點班表</div></div>
     <button class="back" onclick="state.screen='areas';render()">返回</button></div></div>
-  <div class="screen wide lvl2"><div class="sheet-list">${rows}</div></div>`;
+  <div class="screen wide"><div class="sheet-list">${rows}</div></div>`;
 }
 function openSheet(id){
   state.sheetId=id;const s=sheetById(id);
@@ -860,88 +803,30 @@ function renderHalf(){
 }
 function pickHalf(h){state.half=h;state.screen='rollcall';render()}
 
-// 類別分組設定：器械、儀器（+定位+保養）、耗材（+欠物本）、藥品、其他
-const CAT_DEFS=[
-  {key:'器械',ic:'🔧',color:'#1c7ed6'},
-  {key:'儀器',ic:'🖥',color:'#6741d9'},
-  {key:'耗材',ic:'📦',color:'#0f9aa8'},
-  {key:'藥品',ic:'💊',color:'#e03131'},
-  {key:'其他',ic:'📁',color:'#7a828b'},
-];
 function renderRollcall(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
-  const acolor=areaColor(s.area);
+  const rows=list.map(o=>renderItem(o,s)).join('');
   let done=0;list.forEach(o=>{if(state.checks[keyOf(o)])done++});
   const pct=list.length?Math.round(done/list.length*100):0;
   const halfTxt=state.half?` · ${state.half} 半`:'';
   const remain=list.length-done;
-  const allDone=done===list.length&&list.length>0;
-
-  // 明顯的完成狀態橫幅
-  const banner=allDone
-    ? `<div class="status-banner done"><div class="sb-ic">✓</div>
-        <div><div>此點班表已完成</div><div class="sb-sub">${list.length} 項全部完成，可提交簽核</div></div></div>`
-    : `<div class="status-banner todo"><div class="sb-ic">!</div>
-        <div><div>尚未完成（還有 ${remain} 項）</div><div class="sb-sub">已點 ${done} / ${list.length}</div></div></div>`;
-
-  // 依類別分組（器械/儀器/耗材/藥品/其他）
-  let blocks='';
-  CAT_DEFS.forEach(cat=>{
-    const its=list.filter(o=>o.type===cat.key);
-    if(!its.length)return;
-    let cdone=0;its.forEach(o=>{if(state.checks[keyOf(o)])cdone++});
-    let tools='';
-    if(cat.key==='儀器') tools=`<div class="cat-tools">
-      <span class="tool-pill" onclick="openMap('全部儀器')">📍 儀器定位</span>
-      <span class="tool-pill" onclick="alert('保養卡：每班/每週/每月項目（正式版依到期顯示）。')">🛠 保養卡</span></div>
-      <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊已標記 beacon 的儀器，正式版會自動帶入此清單</div>`;
-    const rows=its.map(o=>renderItem(o,s)).join('');
-    blocks+=`<div class="cat">
-      <div class="cat-h"><span class="cat-ic" style="background:${cat.color}1f;color:${cat.color}">${cat.ic}</span>
-        ${cat.key}<span class="cat-cnt">${cdone}/${its.length}</span></div>
-      ${tools}
-      <div class="item-list">${rows}</div></div>`;
-  });
-
-  // 欠物本：獨立分類圖層（point 5）
-  const owedBlock=`<div class="cat">
-    <div class="cat-h"><span class="cat-ic" style="background:#e8590c1f;color:#e8590c">📒</span>
-      欠物本（本區）<span class="cat-cnt">0 筆未結</span></div>
-    <div class="card" style="padding:14px">
-      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
-        本區未結欠物紀錄（借出未還／待補貨／送修／漏計價／遺失）。<br>
-        ＊點班中標記「異常／沒有」的耗材，正式版會自動帶入此欠物本。</div>
-      <button class="btn btn-ghost btn-block" style="margin-top:12px;font-size:14px;padding:11px"
-        onclick="alert('欠物本：可新增一筆欠物、查詢未結項目、標記已補齊（正式版）。')">＋ 新增 / 查看欠物</button>
-    </div></div>`;
-
   $app.innerHTML=`
-  <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">${esc(s.name)}${halfTxt}</div>
       <div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]} · ${esc(state.user.name)}</div></div>
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
-  <div class="screen wide lvl2">
-    ${banner}
-    <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
-      <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(state.shift)}）點班結果</div>
-      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
-        ＊正式版顯示上一班的完成狀態與異常，交接更清楚。<br>
-        <span style="color:var(--bad);font-weight:700">● 未結請修</span>：x-ray 遙控器（上一班報修，維修中）— 已自動帶入本班<br>
-        <span style="color:var(--warn);font-weight:700">● 欠物</span>：4x4 紗布 短少（待補貨）
-      </div>
-    </div>
+  <div class="screen wide">
     <div class="bulk-bar">
       <button class="btn btn-primary" style="flex:1;font-size:14px;padding:11px" onclick="bulkNormal()">
         ✓ 其餘 ${remain} 項全部標示正常</button>
     </div>
-    <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 14px">先點出「異常／沒有」的項目，其餘一鍵標正常</div>
-    ${blocks}
-    ${owedBlock}
+    <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 12px">先點出「異常／沒有」的項目，其餘一鍵標正常即可</div>
+    <div class="item-list">${rows}</div>
   </div>
   <div class="bottombar"><div class="bottombar-in">
     <div class="progress"><div class="ptxt">已點 ${done}/${list.length}</div>
-      <div class="pbar"><div style="width:${pct}%;background:${acolor}"></div></div></div>
-    <button class="btn btn-primary" ${allDone?'':'disabled'} onclick="state.screen='summary';render()">完成 →</button>
+      <div class="pbar"><div style="width:${pct}%;background:${areaColor(s.area)}"></div></div></div>
+    <button class="btn btn-primary" ${done===list.length&&list.length?'':'disabled'} onclick="state.screen='summary';render()">完成 →</button>
   </div></div>`;
 }
 function backFromRollcall(){const s=sheetById(state.sheetId);state.screen=String(s.ops)==='2'?'half':'pick';render()}
@@ -977,7 +862,10 @@ function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.check
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
-function openMap(name){state.mapItem=name;state.screen='map';render()}
+function openMap(name){
+  // 開啟同 repo 的定位畫面(locator/),用名稱搜尋並定位該儀器
+  window.open('locator/?q='+encodeURIComponent(name),'_blank');
+}
 function renderMap(){
   const s=sheetById(state.sheetId);const area=areaById(s.area);
   $app.innerHTML=`
@@ -1009,196 +897,6 @@ function applyTheme(){const t=(()=>{try{return localStorage.getItem('ed_theme')}
 function toggleTheme(){const dark=document.documentElement.dataset.theme!=='dark';
   if(dark)document.documentElement.dataset.theme='dark';else delete document.documentElement.dataset.theme;
   try{localStorage.setItem('ed_theme',dark?'dark':'light')}catch(e){}render();}
-
-// ===== 歷史點班紀錄（近7天展開，8天以上按月封存）=====
-function genHistDemo(){
-  // demo：產生近 14 天的假紀錄（含異常明細）
-  const ISSUE_POOL=[
-    {area:'急救室',item:'CVP 套組',reason:'漏計價',type:'耗材'},
-    {area:'檢傷',item:'兒科手機',reason:'送修',type:'儀器'},
-    {area:'留觀',item:'4x4 紗布',reason:'待補貨',type:'耗材'},
-    {area:'治療',item:'x-ray 遙控器',reason:'遺失',type:'儀器'},
-    {area:'急救室',item:'喉頭鏡葉',reason:'借出未還',type:'器械'},
-  ];
-  const NAMES=['陳子瑄','王孝彰','蔡婷瑋','吳鈺珊','劉逸靚'];
-  const days=[];const today=new Date();
-  for(let i=0;i<14;i++){
-    const d=new Date(today);d.setDate(d.getDate()-i);
-    const shifts=['N','E','D'].map((sh,si)=>{
-      const total=14, done=(i===0&&sh===state.shift)?Math.floor(Math.random()*total):total;
-      const issueN=(i+sh.charCodeAt(0))%4===0?1:0;
-      const issues=[];for(let n=0;n<issueN;n++)issues.push(ISSUE_POOL[(i+si+n)%ISSUE_POOL.length]);
-      const op=NAMES[(i+si)%NAMES.length];
-      return {sh,total,done,issues,op};
-    });
-    days.push({date:d,shifts});
-  }
-  return days;
-}
-// 可展開的單班列（點入看明細）
-function histShiftRow(s,id){
-  const done=s.done===s.total;
-  const tag=done?`<span class="pill-ok">已完成</span>`:`<span class="pill-warn">${s.done}/${s.total}</span>`;
-  const iss=s.issues.length?` <span class="pill-bad">異常 ${s.issues.length}</span>`:'';
-  state._openShift=state._openShift||{};
-  const open=state._openShift[id];
-  const chev=`<span style="color:var(--ink-soft);font-size:13px;margin-left:8px">${open?'▾':'▸'}</span>`;
-  let detail='';
-  if(open){
-    const issLines=s.issues.length?s.issues.map(x=>{
-      const money=(x.reason==='漏計價'||x.reason==='遺失');
-      const rcls=money?'pill-bad':(x.reason==='送修'?'pill-warn':'pill-warn');
-      return `<div class="hd-row">
-        <span>${esc(x.area)} · ${esc(x.item)} <span style="font-size:11px;color:var(--ink-soft)">(${x.type})</span></span>
-        <span class="${rcls}">${esc(x.reason)}</span></div>`;
-    }).join(''):`<div class="hd-row" style="color:var(--ok)">✓ 無異常項目</div>`;
-    detail=`<div class="hist-detail">
-      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:7px">點班人員：${esc(s.op)} · 完成 ${s.done}/${s.total} 項</div>
-      ${issLines}</div>`;
-  }
-  return `<div class="hist-shift" onclick="toggleShift('${id}')" style="cursor:pointer">
-      <span>${SHIFT_NAME[s.sh]}${chev}</span><span>${tag}${iss}</span></div>${detail}`;
-}
-function toggleShift(id){state._openShift=state._openShift||{};state._openShift[id]=!state._openShift[id];render()}
-
-function renderHistory(){
-  const days=genHistDemo();
-  const isLeader=(state.user.role==='護理長'||state.user.role==='副護理長');
-  const recent=days.slice(0,7), older=days.slice(7);
-  state._foldMonths=state._foldMonths||{};
-  const recentHtml=recent.map((d,di)=>{
-    const rows=d.shifts.map((s,si)=>histShiftRow(s,'r'+di+'-'+si)).join('');
-    return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
-  }).join('');
-  // 按月封存（僅護理長可見更早紀錄）
-  const byMonth={};older.forEach(d=>{const k=`${d.date.getFullYear()}/${String(d.date.getMonth()+1).padStart(2,'0')}`;(byMonth[k]=byMonth[k]||[]).push(d)});
-  const monthHtml=Object.keys(byMonth).map(m=>{
-    const open=state._foldMonths[m];
-    const inner=open?byMonth[m].map((d,di)=>{
-      const rows=d.shifts.map((s,si)=>histShiftRow(s,'m'+m.replace(/\D/g,'')+'-'+di+'-'+si)).join('');
-      return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
-    }).join(''):'';
-    return `<div class="month-fold" onclick="toggleMonth('${m}')">
-        <div><b>${m}</b> <span class="mf-r">${byMonth[m].length} 天紀錄</span></div>
-        <span style="font-size:18px;color:var(--ink-soft)">${open?'▾':'▸'}</span></div>${inner}`;
-  }).join('');
-  const years=[2026,2025];const months=Array.from({length:12},(_,i)=>i+1);
-
-  // 權限分級：一般人員只能看 7 天；護理長不限
-  const olderSection=isLeader?`
-    <div class="section-h" style="margin-top:18px">更早紀錄（按月封存）</div>
-    <div class="picker">
-      <select onchange="alert('正式版：依年份查詢')"><option>${years[0]} 年</option><option>${years[1]} 年</option></select>
-      <select onchange="alert('正式版：依月份查詢')">${months.map(m=>`<option>${m} 月</option>`).join('')}</select>
-    </div>
-    ${monthHtml}`
-    :`<div class="card" style="margin-top:16px;text-align:center;padding:18px;color:var(--ink-soft);font-size:13px">
-        🔒 一般人員可查閱近 7 天紀錄<br>更早紀錄需護理長 / 副護理長權限</div>`;
-
-  const aiBtn=`<button class="btn btn-primary btn-block" style="margin-bottom:14px" onclick="state.screen='ai';render()">🤖 AI 點班分析</button>`;
-
-  $app.innerHTML=`
-  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📅 歷史點班紀錄</div><div class="sub">${isLeader?'護理長 · 可查閱全部':'近 7 天'}</div></div>
-    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
-  <div class="screen wide lvl2">
-    ${aiBtn}
-    <div class="section-h">近 7 天</div>
-    ${recentHtml}
-    ${olderSection}
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">＊demo 為示意資料；正式版由後端依日期查詢真實紀錄</div>
-  </div>`;
-}
-function toggleMonth(m){state._foldMonths=state._foldMonths||{};state._foldMonths[m]=!state._foldMonths[m];render()}
-
-// ===== Leader：未完成點班 / 儀保 提醒 =====
-function renderLeader(){
-  // demo：掃描目前各表完成狀態，列出未完成
-  const incomplete=[];
-  SHEETS.forEach(s=>{const p=sheetProgress(s.id);
-    if(p.done<p.total)incomplete.push({name:s.name,area:areaById(s.area).name,color:areaColor(s.area),done:p.done,total:p.total});
-  });
-  const maintDue=[
-    {name:'去顫器（電擊器）',area:'急救室',item:'每班自我測試',sh:'本班未做'},
-    {name:'超音波機',area:'檢傷',item:'每月開機測試',sh:'已逾期'},
-  ];
-  const incHtml=incomplete.length?incomplete.map(i=>`<div class="rem-li">
-      <span><span class="area-dot" style="background:${i.color}"></span>${esc(i.area)} · ${esc(i.name)}</span>
-      <span class="pill-warn">${i.done}/${i.total}</span></div>`).join('')
-    :'<div class="rem-li"><span>全部點班表已完成 🎉</span></div>';
-  const maintHtml=maintDue.map(m=>`<div class="rem-li">
-      <span>${esc(m.area)} · ${esc(m.name)}<br><span style="font-size:11.5px;color:var(--ink-soft)">${m.item}</span></span>
-      <span class="pill-bad">${m.sh}</span></div>`).join('');
-  $app.innerHTML=`
-  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📋 主管審核 · 提醒</div><div class="sub">${esc(state.user.name)} · ${SHIFT_NAME[state.shift]}</div></div>
-    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
-  <div class="screen wide lvl2">
-    <div class="rem-card ${incomplete.length?'':'ok'}">
-      <div class="rem-h">${incomplete.length?'🔴':'✅'} 未完成點班（${incomplete.length}）</div>
-      ${incHtml}
-    </div>
-    <div class="rem-card">
-      <div class="rem-h">🛠 儀器保養待辦 / 逾期（${maintDue.length}）</div>
-      ${maintHtml}
-    </div>
-    <button class="btn btn-primary btn-block" onclick="alert('正式版：可一鍵推播提醒該區人員，或分區簽核。')">🔔 推播提醒相關人員</button>
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊未完成清單依目前各表狀態即時掃描；保養逾期為示意</div>
-  </div>`;
-}
-
-// ===== AI 點班分析 =====
-function renderAI(){
-  const insights=[
-    {ic:'📉',bg:'#fbe8e8',col:'#d23d3d',t:'高頻短少品項',
-     d:'近 30 天「4x4 紗布」在檢傷區短少 9 次，建議調高標準備量或檢討領料頻率。'},
-    {ic:'💰',bg:'#fdf3df',col:'#d68a00',t:'漏計價熱點',
-     d:'急救室急救車「CVP 套組」出現 4 次漏計價，估計收入流失，建議加強用後即刻計價。'},
-    {ic:'🛠',bg:'#16323a',col:'#0f9aa8',t:'保養逾期趨勢',
-     d:'超音波機「每月開機測試」連續 2 個月逾期，建議固定排在每月 1 號白班執行。'},
-    {ic:'🔧',bg:'#efe7fc',col:'#6741d9',t:'設備異常熱區',
-     d:'兒科手機近期報修 3 次，可能需更換；x-ray 遙控器維修中已跨 2 班未結。'},
-  ];
-  const completion=[['白班',96],['小夜',88],['大夜',79]];
-  const insightHtml=insights.map(i=>`<div class="ai-insight">
-      <div class="ai-ic" style="background:${i.bg};color:${i.col}">${i.ic}</div>
-      <div><div class="ai-t">${i.t}</div><div class="ai-d">${i.d}</div></div></div>`).join('');
-  const compHtml=completion.map(([n,v])=>`<div style="margin-bottom:9px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600">
-        <span>${n}</span><span>${v}%</span></div>
-      <div class="ai-bar"><div style="width:${v}%;background:${v>=90?'var(--ok)':v>=80?'var(--warn)':'var(--bad)'}"></div></div></div>`).join('');
-
-  $app.innerHTML=`
-  <div class="topbar" style="background:linear-gradient(135deg,#6741d9,#9c5cf0)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">🤖 AI 點班分析</div><div class="sub">近 30 天資料 · ${esc(state.user.name)}</div></div>
-    <button class="back" onclick="state.screen='history';render()">返回</button></div></div>
-  <div class="screen wide lvl2">
-    <div class="ai-card">
-      <div class="ai-hd"><div class="ai-logo">🤖</div>
-        <div><div style="font-weight:800;font-size:16px">分析摘要</div>
-          <div style="font-size:12px;color:var(--ink-soft)">由 Claude 自動分析點班與欠物資料</div></div></div>
-      <div id="aiSummary" style="font-size:13.5px;line-height:1.75;color:var(--ink-soft)"></div>
-    </div>
-    <div class="ai-card">
-      <div style="font-weight:800;font-size:15px;margin-bottom:12px">🔍 重點發現</div>
-      ${insightHtml}
-    </div>
-    <div class="ai-card">
-      <div style="font-weight:800;font-size:15px;margin-bottom:12px">📊 各班點班完成率</div>
-      ${compHtml}
-      <div style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">大夜班完成率偏低，建議檢視夜間人力或簡化流程。</div>
-    </div>
-    <button class="btn btn-primary btn-block" onclick="alert('正式版：可選分析範圍（日/週/月）、產出 PDF 報告、串 Claude API 做即時問答。')">📄 產出分析報告</button>
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:12px;line-height:1.6">
-      ＊demo 為示意分析。正式版將透過 Claude API 即時分析真實點班 / 欠物 / 保養資料，
-      可問如「這個月哪一區最常缺藥？」「漏計價估計損失多少？」並產出報告供護理長決策。</div>
-  </div>`;
-
-  // 模擬 AI 逐字輸出
-  const txt='本月共完成 248 班次點班，整體完成率 88%。發現 3 項需關注：耗材短少集中在檢傷區、漏計價以急救室較多、夜班完成率偏低。建議優先處理高價耗材的計價流程與夜間人力配置。';
-  const el=document.getElementById('aiSummary');let i=0;
-  if(el){(function type(){if(i<=txt.length){el.innerHTML=esc(txt.slice(0,i))+'<span class="ai-typing">▋</span>';i++;setTimeout(type,18)}else{el.innerHTML=esc(txt)}})();}
-}
 
 function renderSummary(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
