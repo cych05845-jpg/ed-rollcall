@@ -214,6 +214,22 @@
     .sheet-list{grid-template-columns:repeat(3,1fr)}
     .area-tiles{grid-template-columns:repeat(4,1fr)}
   }
+
+  /* 儀器定位浮動速查表 */
+  .loc-sheet{position:fixed;inset:0;background:rgba(15,32,43,.45);z-index:999;display:flex;align-items:flex-end;justify-content:center}
+  .loc-sheet-card{background:var(--card);width:100%;max-width:520px;border-radius:18px 18px 0 0;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 -8px 30px rgba(0,0,0,.28);animation:locUp .18s ease}
+  @keyframes locUp{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
+  .loc-sheet-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);font-size:15.5px;font-weight:700;color:var(--brand-dark)}
+  .loc-x{background:none;border:none;font-size:20px;color:var(--ink-soft);cursor:pointer;line-height:1}
+  .loc-sheet-body{overflow-y:auto;padding:6px 12px}
+  .loc-item{display:flex;align-items:center;gap:10px;padding:12px 6px;border-bottom:1px solid var(--line)}
+  .loc-item:last-child{border-bottom:none}
+  .loc-item-main{flex:1;min-width:0}.loc-item-main b{font-size:15px}
+  .loc-item-main .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+  .loc-st-badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand-dark);margin-left:6px}
+  .loc-map-btn{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
+  .loc-empty{text-align:center;color:var(--ink-soft);padding:26px 10px;font-size:14px}.loc-empty span{font-size:12px}
+  .loc-sheet-foot{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-soft);text-align:center}
 </style>
 </head>
 <body>
@@ -1003,7 +1019,48 @@ function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.check
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
-function openMap(name){ window.open('locator/?q='+encodeURIComponent(name),'_blank'); }
+const ZONE_NAME={triage:'檢傷區',resus:'急救室',treat:'治療區',peds:'兒科區',guan1:'第一觀察區',guan2:'第二觀察區',neg:'負壓室'};
+let LOCED=[];
+async function loadLocator(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=devices',{cache:'no-store'});
+    const a=await r.json();
+    if(Array.isArray(a)) LOCED=a.map(d=>({unit:d.unit||'',code:d.code,name:d.name,cat:d.cat||d.name,zone:d.home_zone||d.zone,status:d.status||'—'}));
+  }catch(e){console.error('讀定位設備失敗',e);}
+}
+function matchDevices(name){
+  if(!name||name==='全部儀器') return LOCED.slice();
+  let r=LOCED.filter(d=>(d.cat&&(name.includes(d.cat)||d.cat.includes(name)))||(d.name&&(name.includes(d.name)||d.name.includes(name)))||(d.unit&&name.includes(d.unit)));
+  if(r.length) return r;
+  for(let i=0;i<name.length-1;i++){const g=name.substr(i,2);
+    const m=LOCED.filter(d=>(d.cat&&d.cat.includes(g))||(d.name&&d.name.includes(g)));
+    if(m.length) return m;}
+  return [];
+}
+// 點 📍 → 跳浮動速查表(編號·狀態·區域),點「地圖」再開全螢幕定位
+function openMap(name){ showLocatePanel(name); }
+function showLocatePanel(name){
+  const list=matchDevices(name);
+  closeLocatePanel();
+  const wrap=document.createElement('div');wrap.id='locSheet';wrap.className='loc-sheet';
+  wrap.onclick=e=>{if(e.target===wrap)closeLocatePanel();};
+  const rows=list.length?list.map(d=>`
+    <div class="loc-item">
+      <div class="loc-item-main"><b>${esc(d.unit||d.name)}</b>
+        <div class="sub">${ZONE_NAME[d.zone]||d.zone||'—'}<span class="loc-st-badge">${esc(d.status||'—')}</span></div></div>
+      <button class="loc-map-btn" onclick="openDeviceMap('${(d.code||'').replace(/'/g,'')}')">地圖</button>
+    </div>`).join('')
+    :'<div class="loc-empty">尚無對應的定位設備<br><span>（在後端 devices 表填入單位編號＋財碼後顯示）</span></div>';
+  wrap.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>📍 儀器定位 · ${esc(name)}</span><button class="loc-x" onclick="closeLocatePanel()">✕</button></div>
+    <div class="loc-sheet-body">${rows}</div>
+    <div class="loc-sheet-foot">輕觸「地圖」看位置;地圖中可查該台軌跡</div>
+  </div>`;
+  document.body.appendChild(wrap);
+}
+function openDeviceMap(code){ window.open('locator/?code='+encodeURIComponent(code),'_blank'); closeLocatePanel(); }
+function closeLocatePanel(){const e=document.getElementById('locSheet');if(e)e.remove();}
 function renderMap(){
   const s=sheetById(state.sheetId);const area=areaById(s.area);
   $app.innerHTML=`
@@ -1273,7 +1330,7 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
-(async()=>{ await loadItems(); render(); })();
+(async()=>{ await Promise.all([loadItems(),loadLocator()]); render(); })();
 </script>
 </body>
 </html>

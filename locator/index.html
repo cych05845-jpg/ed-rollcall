@@ -364,21 +364,26 @@ function assignCoords(){seed=42;EQUIP.forEach(e=>{
 function deriveMoved(){EQUIP.forEach(e=>{if(e.status==='in'&&e.home&&e.zone&&e.zone!==e.home)e.status='out';});}
 
 // (1) 主檔:讀同 repo 的 equipment.json(你管理的共用資訊);讀不到就用內建示意
+// fetch 逾時保護:後端再慢也不會卡死畫面
+function fetchT(url,opt,ms){
+  const c=new AbortController();const t=setTimeout(()=>c.abort(),ms||8000);
+  return fetch(url,Object.assign({},opt,{signal:c.signal})).finally(()=>clearTimeout(t));
+}
 async function loadMaster(){
   if(CONFIG.masterUrl){
     try{
-      const res=await fetch(CONFIG.masterUrl,{cache:'no-store'});
+      const res=await fetchT(CONFIG.masterUrl,{cache:'no-store'},8000);
       if(res.ok){
         const arr=await res.json();
         if(Array.isArray(arr)&&arr.length){
           return arr.map(m=>({
-            code:String(m.code), name:m.name, cat:m.cat||m.name, brand:m.brand||'',
+            unit:m.unit||'', code:String(m.code), name:m.name, cat:m.cat||m.name, brand:m.brand||'',
             home:mapZone(m.home_zone||m.home||'treat'), needRollcall:m.need_rollcall!==false,
             zone:mapZone(m.home_zone||m.home||'treat'), status:'in', battery:100, lastSeen:0, rx:null, ry:null
           }));
         }
       }
-    }catch(err){ /* 沒有 equipment.json → 用示意 */ }
+    }catch(err){ /* 沒有資料或逾時 → 用示意 */ }
   }
   return DEMO_EQUIP.map(o=>({...o}));     // 後備:示意資料(已含 live 欄位)
 }
@@ -387,7 +392,7 @@ async function loadMaster(){
 async function loadLive(){
   if(!(CONFIG.source==='feed'&&CONFIG.feedUrl))return null;
   try{
-    const res=await fetch(CONFIG.feedUrl,{cache:'no-store'});
+    const res=await fetchT(CONFIG.feedUrl,{cache:'no-store'},8000);
     const raw=await res.json();
     const live=(Array.isArray(raw)?raw:(raw.items||[])).map(adaptRow).filter(e=>e.code);
     const map={}; live.forEach(e=>map[e.code]=e); return map;
@@ -431,6 +436,7 @@ function visibleOnMap(e){
   return e.status==='out'||e.status==='off';   // 預設:只顯示異常
 }
 
+function lbl(e){return e.unit||e.name||e.code;}            // 顯示用:優先院內編號
 function statusCounts(){const c={tot:EQUIP.length,in:0,out:0,off:0,repair:0,borrow:0,away:0};
   EQUIP.forEach(e=>c[e.status]++);return c;}
 
@@ -472,7 +478,7 @@ function renderDots(){
     const d=document.createElement('div');
     d.className='dot s-'+e.status+(e.code===selCode?' sel':'');
     d.style.left=(e.px*100)+'%';d.style.top=(e.py*100)+'%';
-    d.innerHTML=`<span class="tag">${e.name} ${e.code.slice(-5)}</span>`;
+    d.innerHTML=`<span class="tag">${lbl(e)}</span>`;
     d.title=e.name+' '+e.code;
     d.onclick=ev=>{ev.stopPropagation();showPop(e,d);};
     f.appendChild(d);
@@ -485,7 +491,7 @@ function showPop(e,d){
   const p=document.createElement('div');p.className='poptip';
   p.style.left=(e.px*100)+'%';p.style.top=(e.py*100)+'%';
   const [sl]=STATUS[e.status];const moved=e.zone!==e.home;
-  p.innerHTML=`<h4>${e.name}</h4><div class="code">${e.code} · ${e.brand}</div>
+  p.innerHTML=`<h4>${lbl(e)}</h4><div class="code">${e.code} · ${e.brand}</div>
     <div class="meta"><span>即時:<b style="${moved?'color:#b5680f':''}">${ZONES[e.zone].name}</b></span><span>配置:${ZONES[e.home].name}</span></div>
     <div class="meta"><span>狀態:<b>${sl}</b></span><span>🔋${e.battery}% · ${e.lastSeen}分前</span></div>
     <div class="acts"><button onclick="openBR('${e.code}')">外借/送修</button>
@@ -509,7 +515,7 @@ function renderGroups(){
       <span class="chev">▶</span></div>
       <div class="items">${all.map(e=>{const moved=e.zone!==e.home&&e.status==='out';
         return `<div class="it ${e.code===selCode?'sel':''}" onclick="locate('${e.code}',event)"><span class="sdot" style="background:var(--${'s-'+e.status})"></span>
-        <span><span class="nm">${e.code.slice(-5)}</span> <span class="cd">${e.brand}</span></span>
+        <span><span class="nm">${e.unit||e.code.slice(-5)}</span> <span class="cd">${e.brand}</span></span>
         <span class="zn ${moved?'moved':''}">${ZONES[e.zone].name}</span></div>`;}).join('')}</div>`;
     el.querySelector('.gh').onclick=()=>{
       const nowOpen=el.classList.contains('open');
@@ -546,14 +552,14 @@ function renderSuggest(q,boxId,onItem,onCat){
   if(!q){box.classList.remove('on');return;}
   // 先列符合的類別,再列符合的個別儀器
   const cats=[...new Set(EQUIP.map(e=>e.cat))].filter(c=>c.toLowerCase().includes(q));
-  const items=EQUIP.filter(e=>(e.name+e.code+e.brand).toLowerCase().includes(q)).slice(0,12);
+  const items=EQUIP.filter(e=>((e.unit||'')+e.name+e.code+e.brand).toLowerCase().includes(q)).slice(0,12);
   if(!cats.length&&!items.length){box.innerHTML='<div class="sg" style="color:#9aa6ad">查無符合</div>';box.classList.add('on');return;}
   let h='';
   if(cats.length){h+='<div class="hd">類別（看整類）</div>'+cats.map(c=>{
     const n=EQUIP.filter(e=>e.cat===c).length;
     return `<div class="sg" data-cat="${c}">${ICON[c]||'⬛'} ${c} <span class="cd">${n} 台</span></div>`;}).join('');}
   if(items.length){h+='<div class="hd">單台儀器</div>'+items.map(e=>
-    `<div class="sg" data-code="${e.code}"><span class="sdot" style="background:var(--${'s-'+e.status})"></span>${e.name} · ${e.brand}<span class="cd">${e.code}</span></div>`).join('');}
+    `<div class="sg" data-code="${e.code}"><span class="sdot" style="background:var(--${'s-'+e.status})"></span>${e.unit||e.name} · ${e.brand}<span class="cd">${e.code}</span></div>`).join('');}
   box.innerHTML=h;box.classList.add('on');
   box.querySelectorAll('.sg[data-code]').forEach(s=>s.onmousedown=()=>onItem(s.dataset.code));
   if(onCat)box.querySelectorAll('.sg[data-cat]').forEach(s=>s.onmousedown=()=>onCat(s.dataset.cat));
@@ -584,7 +590,7 @@ function renderListBody(){
   document.getElementById('listBody').innerHTML=`<table><thead><tr>
     <th>財產碼</th><th>儀器名稱</th><th>品牌</th><th>配置區</th><th>即時區</th><th>狀態</th><th>電量</th><th></th></tr></thead><tbody>
     ${rows.map(e=>{const[sl,sc]=STATUS[e.status];const moved=e.zone!==e.home;
-    return `<tr><td class="code">${e.code}</td><td>${e.name}</td><td>${e.brand}</td><td>${ZONES[e.home].name}</td>
+    return `<tr><td class="code">${e.code}</td><td>${e.unit?('<b>'+e.unit+'</b><br><span style=\'color:var(--muted);font-size:11px\'>'+e.name+'</span>'):e.name}</td><td>${e.brand}</td><td>${ZONES[e.home].name}</td>
     <td style="${moved?'color:#b5680f;font-weight:700':''}">${ZONES[e.zone].name}</td>
     <td><span class="pill" style="background:var(--${sc})">${sl}</span></td><td>${e.battery}%</td>
     <td><button class="btn ghost" style="padding:3px 10px;font-size:12px" onclick="locate('${e.code}')">定位</button></td></tr>`;}).join('')}
@@ -717,13 +723,13 @@ function renderDataView(){
   <span style="color:var(--muted);font-size:12px">即時位置表預覽(前 3 筆):</span></div>
   <div class="schema">${JSON.stringify(sample,null,2)}</div>`;
 }
-// 寬鬆比對:點班用「名稱」(沒有財碼),所以用多層比對盡量對到正確類別
+// 寬鬆比對:點班可能用「院內編號」或「名稱」,多層比對盡量對到
 function findByQuery(q){
   q=(q||'').trim(); if(!q)return null;
-  let h=EQUIP.find(x=>x.code===q); if(h)return h;                       // 1.財碼完全相同
-  h=EQUIP.find(x=>x.cat.includes(q)||x.name.includes(q)); if(h)return h; // 2.類別/名稱含查詢字
-  h=EQUIP.find(x=>q.includes(x.cat)); if(h)return h;                    // 3.點班名稱含某類別
-  for(let i=0;i<q.length-1;i++){const g=q.substr(i,2);                  // 4.兩字片段(血氧/推床/超音波/心電…)
+  let h=EQUIP.find(x=>x.code===q||(x.unit&&x.unit===q)); if(h)return h;     // 1.財碼或編號完全相同
+  h=EQUIP.find(x=>(x.unit&&x.unit.includes(q))||x.cat.includes(q)||x.name.includes(q)); if(h)return h; // 2.編號/類別/名稱含查詢字
+  h=EQUIP.find(x=>q.includes(x.cat)||(x.unit&&q.includes(x.unit))); if(h)return h; // 3.點班字串含某類別/編號
+  for(let i=0;i<q.length-1;i++){const g=q.substr(i,2);                     // 4.兩字片段(血氧/推床/超音波/心電…)
     h=EQUIP.find(x=>x.cat.includes(g)||x.name.includes(g)); if(h)return h;}
   return null;
 }
@@ -787,7 +793,7 @@ function demoPath(e){
 let trackPts=null, trackDevice=null;
 async function playTrack(){
   const q=document.getElementById('tkCode').value.trim().toLowerCase();
-  const e=EQUIP.find(x=>x.code.toLowerCase()===q)||EQUIP.find(x=>(x.name+x.code+x.brand).toLowerCase().includes(q));
+  const e=EQUIP.find(x=>x.code.toLowerCase()===q)||EQUIP.find(x=>((x.unit||'')+x.name+x.code+x.brand).toLowerCase().includes(q));
   if(!e){alert('查無符合的儀器,試試打「心電圖」');return;}
   const real=await fetchTrackPoints(e.code);
   trackPts=(real&&real.length>=2)?real:demoPath(e);
@@ -846,8 +852,17 @@ function bootDeepLink(){
   renderAll();
 }
 async function boot(){
-  await loadEquip();
+  // 先用內建示意資料把畫面畫出來(後端再慢也不白屏)
+  MASTER=DEMO_EQUIP.map(o=>({...o}));
+  mergeLive(null);
   bootDeepLink();
+  // 背景載入真實主檔(+即時),好了再重畫
+  try{
+    MASTER=await loadMaster();
+    const live=await loadLive();
+    mergeLive(live);
+    bootDeepLink();
+  }catch(e){console.error('載入真實資料失敗,維持示意',e);}
   if(CONFIG.source==='feed'&&CONFIG.refreshSec){
     setInterval(refreshLive,CONFIG.refreshSec*1000);
   }
