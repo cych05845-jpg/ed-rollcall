@@ -66,6 +66,23 @@
   .shift-pill{display:inline-flex;align-items:center;gap:6px;background:var(--brand-soft);color:var(--brand-dark);
     font-weight:700;padding:6px 14px;border-radius:999px;font-size:15px;margin-top:10px}
   .role-tag{display:inline-block;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;margin-top:8px}
+  /* home overview stats */
+  .ov-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:6px}
+  .ov{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 12px;text-align:center;box-shadow:var(--shadow)}
+  .ov .n{font-size:26px;font-weight:800;line-height:1.1}
+  .ov .l{font-size:12px;color:var(--ink-soft);margin-top:3px;font-weight:600}
+  /* home action cards */
+  .act{display:flex;align-items:center;gap:13px;background:var(--card);border:1px solid var(--line);border-radius:13px;
+    padding:14px 15px;margin-bottom:10px;cursor:pointer;transition:.08s;box-shadow:var(--shadow)}
+  .act:active{opacity:.75}
+  .act.primary{background:var(--brand);border-color:var(--brand)}
+  .act .ac-ic{width:44px;height:44px;border-radius:12px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;font-size:21px;background:var(--brand-soft)}
+  .act.primary .ac-ic{background:rgba(255,255,255,.18)}
+  .act .at{font-weight:700;font-size:16.5px}
+  .act .ad{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+  .act.primary .at{color:#fff}.act.primary .ad{color:#d4ecee}
+  .act .ac-chev{margin-left:auto;color:var(--ink-soft);font-size:20px;opacity:.5}
+  .act.primary .ac-chev{color:#cfeaec;opacity:.9}
 
   /* area tiles (先選分區) */
   .area-tiles{display:grid;gap:10px;grid-template-columns:repeat(2,1fr)}
@@ -214,44 +231,6 @@
     .sheet-list{grid-template-columns:repeat(3,1fr)}
     .area-tiles{grid-template-columns:repeat(4,1fr)}
   }
-
-  /* 儀器定位浮動速查表 */
-  .loc-sheet{position:fixed;inset:0;background:rgba(15,32,43,.45);z-index:999;display:flex;align-items:flex-end;justify-content:center}
-  .loc-sheet-card{background:var(--card);width:100%;max-width:520px;border-radius:18px 18px 0 0;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 -8px 30px rgba(0,0,0,.28);animation:locUp .18s ease}
-  @keyframes locUp{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
-  .loc-sheet-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);font-size:15.5px;font-weight:700;color:var(--brand-dark)}
-  .loc-x{background:none;border:none;font-size:20px;color:var(--ink-soft);cursor:pointer;line-height:1}
-  .loc-sheet-body{overflow-y:auto;padding:6px 12px}
-  .loc-item{display:flex;align-items:center;gap:10px;padding:12px 6px;border-bottom:1px solid var(--line)}
-  .loc-item:last-child{border-bottom:none}
-  .loc-item-main{flex:1;min-width:0}.loc-item-main b{font-size:15px}
-  .loc-item-main .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
-  .loc-st-badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand-dark);margin-left:6px}
-  .loc-map-btn{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
-  .loc-empty{text-align:center;color:var(--ink-soft);padding:26px 10px;font-size:14px}.loc-empty span{font-size:12px}
-  .loc-sheet-foot{padding:10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-soft);text-align:center}
-
-  /* 欠物本 */
-  .owe-sec{margin-bottom:16px}
-  .owe-zone{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;border-left:4px solid var(--brand);padding-left:10px;margin:0 2px 8px}
-  .owe-n{margin-left:auto;font-size:12px;color:var(--ink-soft);font-weight:600}
-  .owe-row{display:flex;align-items:flex-start;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line)}
-  .owe-row:last-child{border-bottom:none}
-  .owe-main{flex:1;min-width:0}.owe-main b{font-size:15px}
-  .owe-sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px;word-break:break-all}
-  .owe-date{font-size:12px;color:var(--ink-soft);white-space:nowrap;font-variant-numeric:tabular-nums}
-
-  .owe-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-  .owe-badge{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--warn-soft);color:var(--warn);margin-left:6px;vertical-align:middle}
-  .owe-close{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
-  .owe-f{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:10px}
-  .owe-f select,.owe-f input{display:block;width:100%;margin-top:4px;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;background:var(--card);color:var(--ink)}
-  .owe-mini{margin-top:8px;border:1.5px solid #b5680f;color:#b5680f;background:#fff8ee;border-radius:8px;padding:6px 13px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
-  .toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(20px);background:#23313b;color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;z-index:1200;opacity:0;transition:.3s;box-shadow:0 6px 20px rgba(0,0,0,.3)}
-  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-
-  .owe-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:#fff3e0;color:#b5680f;border:1px solid #f0d2a8;margin-left:6px;cursor:pointer;vertical-align:middle}
-  .owe-tag:active{opacity:.7}
 </style>
 </head>
 <body>
@@ -365,33 +344,7 @@ const SHEETS=[
   {id:"obs-cart",name:"留觀急救車",area:"obs",sort:3,ops:1},
   {id:"leader",name:"Leader",area:"leader",sort:1,ops:1}
 ];
-// ===================== 後端(Google Sheet + AI,單一來源) =====================
-const API_URL='https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec';   // 點班清單來源 + AI 後端;留空=用內建清單、AI停用
-async function loadItems(){
-  if(!API_URL)return;
-  try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=items',{cache:'no-store'});
-    const rows=await r.json();
-    if(Array.isArray(rows)&&rows.length) ITEMS=rows.map(x=>Array.isArray(x)?x:[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'']);
-  }catch(e){console.error('讀點班清單失敗,改用內建清單',e);}
-}
-async function askAI(task,payload){
-  if(!API_URL){alert('尚未設定後端 API_URL');return '';}
-  const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});
-  const d=await r.json(); if(d.error) throw d.error; return d.text;
-}
-async function aiHandover(){
-  const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
-  const issues=[];
-  list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
-    const r=state.reason[k]||'未註記原因';issues.push({t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')});}});
-  const box=document.getElementById('aiBox');box.style.display='block';box.textContent='AI 產生中…';
-  try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[state.shift],issues}); }
-  catch(e){ box.textContent='AI 失敗:'+e; }
-}
-// ==========================================================================
-
-let ITEMS=[
+const ITEMS=[
   ["triage","遮眼器/指揮棒","1/1","儀器",""],
   ["triage","睫毛夾/眼勾/眼科","4/6/1","器械",""],
   ["triage","組織夾","1","器械",""],
@@ -804,7 +757,7 @@ function render(){
   if(!state.user)state.screen='login';
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
-    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed}[state.screen]||renderLogin)();
+    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,book:renderBook}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -840,11 +793,16 @@ function logout(){state.user=null;state.checks={};state.reason={};state.note={};
 function renderHome(){
   const now=new Date(),cur=state.shift||detectShift();state.shift=cur;
   const u=state.user;const isLeader=(u.role==='護理長'||u.role==='副護理長');
-  const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
+  // 今日概況：即時掃描完成表數，其餘為示意
+  let doneSheets=0;SHEETS.forEach(s=>{const p=sheetProgress(s.id);if(p.total&&p.done===p.total)doneSheets++;});
+  const stat=['D','E','N'].map(s=>`<div class="sum-stat" style="${s===cur?'background:var(--warn-soft)':''}">
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
-  const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
+  const greet=cur==='N'?'夜深了，辛苦了':cur==='E'?'晚安':'您好';
+  const act=(cls,ic,t,d,scr)=>`<div class="act ${cls}" onclick="state.screen='${scr}';render()">
+     <div class="ac-ic">${ic}</div><div><div class="at">${t}</div><div class="ad">${d}</div></div>
+     <div class="ac-chev">›</div></div>`;
+  const reviewCard=isLeader?act('','📋','主管審核 · 提醒','未完成點班、保養逾期一覽','leader'):'';
   $app.innerHTML=`
   <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 尚未連接後端</div>
   <div class="topbar"><div class="topbar-in">
@@ -858,16 +816,25 @@ function renderHome(){
   </div></div>
   <div class="screen narrow">
     <div class="card"><div class="date-block">
+      <div style="font-size:13px;color:var(--ink-soft);font-weight:600">${greet}，${esc(u.name)}</div>
       <div class="big">${fmtDate(now)}</div>
       <div class="day">${weekday(now)} · 目前班別 <span class="shift-pill">🕐 ${SHIFT_NAME[cur]}</span></div>
     </div></div>
+    <div class="section-h">今日概況</div>
+    <div class="ov-grid">
+      <div class="ov"><div class="n" style="color:var(--brand)">${doneSheets}<span style="font-size:15px;color:var(--ink-soft)">/14</span></div><div class="l">本班完成點班表</div></div>
+      <div class="ov"><div class="n" style="color:var(--warn)">3</div><div class="l">未結欠物</div></div>
+      <div class="ov"><div class="n" style="color:var(--bad)">1</div><div class="l">待處理請修</div></div>
+      <div class="ov"><div class="n" style="color:#6741d9">2</div><div class="l">保養待辦</div></div>
+    </div>
     <div class="section-h">今日各班狀態</div>
     <div class="sum-row">${stat}</div>
     <div class="section-h">作業</div>
-    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（選分區）</button>
-    ${reviewBtn}
-    <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
-    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
+    ${act('primary','✓','開始點班','選分區 → 選點班表 → 逐項點檢','areas')}
+    ${reviewCard}
+    ${act('','📅','歷史點班紀錄','近 7 天（護理長不限）· 可展開明細','history')}
+    ${act('','📒','欠物本（依分區）','各區未結欠物登記與查詢','owed')}
+    ${act('','📖','點班本（原始表單）','對照紙本點班表、附上掃描檔','book')}
   </div>`;
 }
 
@@ -1020,9 +987,6 @@ function renderItem(o,s){
   const k=keyOf(o);const st=state.checks[k];const isDev=o.type==='儀器';
   const dot=st==='ok'?'<span class="dot ok">✓</span>':st==='bad'?'<span class="dot bad">!</span>':'<span class="dot"></span>';
   const assignB=o.assign?`<span class="tb t-儀器">${o.assign}</span>`:'';
-  const _zn=areaById(s.area)?areaById(s.area).name:'';
-  const _owes=owedFor(o.name,_zn);
-  const oweTag=_owes.length?`<span class="owe-tag" onclick="event.stopPropagation();showOwedDetail('${esc(o.name).replace(/'/g,"")}','${esc(_zn).replace(/'/g,"")}')">🔖 欠物中×${_owes.length}</span>`:'';
   const dev=isDev?`<button class="locate-mini" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="定位">📍</button>`:'';
   const repairNote=isDev&&state.reason[k]==='送修'?`<div class="repair-note">🔧 將於 Leader 系統開立請修單（示意）</div>`:'';
   const abn=st==='bad'?`<div class="li-abn">
@@ -1031,12 +995,11 @@ function renderItem(o,s){
         const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':'');
         return `<button class="chip ${on?'on':''} ${cls}" onclick="setReason('${k}','${r}')">${r}</button>`}).join('')}</div>
      ${repairNote}
-     <input class="note-in" placeholder="備註（選填）" value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)">
-     ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}')">＋記欠物</button>`:''}</div>`:'';
+     <input class="note-in" placeholder="備註（選填）" value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"></div>`:'';
   return `<div class="li ${st==='bad'?'is-bad':''}">
     <div class="li-tap" onclick="setCheck('${k}','ok')">
       ${dot}
-      <div class="li-body"><div class="li-name">${esc(o.name)}${assignB}${oweTag}</div>
+      <div class="li-body"><div class="li-name">${esc(o.name)}${assignB}</div>
         <div class="li-qty">標準 ${esc(o.qty)} <span class="tb t-${o.type}">${o.type}</span></div></div>
     </div>
     <div class="li-ctrl">${dev}<button class="flagbtn ${st==='bad'?'on':''}" onclick="setCheck('${k}','bad')">異常</button></div>
@@ -1046,174 +1009,7 @@ function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.check
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
-const ZONE_NAME={triage:'檢傷區',resus:'急救室',treat:'治療區',peds:'兒科區',guan1:'第一觀察區',guan2:'第二觀察區',neg:'負壓室'};
-let LOCED=[];
-const OWED_FALLBACK=[{"id": "OW001", "zone": "急救室", "date": "2023-05-01", "item": "ETCO2(黑)", "names": "張祺勝", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW002", "zone": "急救室", "date": "2023-07-07", "item": "鋼彎", "names": "林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "2023/10/7已送單"}, {"id": "OW003", "zone": "急救室", "date": "2024-12-18", "item": "0號 Mask", "names": "江沛鄉/曾鈺涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW004", "zone": "急救室", "date": "2025-08-08", "item": "血氧機", "names": "李宜靜", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "不確定是否已回來"}, {"id": "OW005", "zone": "急救室", "date": "2025-11-04", "item": "5號 Mask", "names": "蔡依玲/林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW006", "zone": "急救室", "date": "2025-11-14", "item": "5號 Mask", "names": "楊琇涵/林素娥", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW007", "zone": "急救室", "date": "2026-03-30", "item": "ETCO2(黑)", "names": "張祺勝/劉彩晶", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW008", "zone": "第一診間", "date": "2020-06-13", "item": "大彎Kelly", "names": "林伯雄/松韻禪", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW009", "zone": "第一診間", "date": "2023-11-08", "item": "CVP包", "names": "林妤蓁/張爾珈", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW010", "zone": "第一診間", "date": "2024-02-19", "item": "張眼器(小)", "names": "陳永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW011", "zone": "第一診間", "date": "2026-05-03", "item": "置針座5號", "names": "黃晟凱", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW012", "zone": "檢傷", "date": "2024-10-16", "item": "Suction tube", "names": "張舜硯", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW013", "zone": "檢傷", "date": "2025-01-26", "item": "Forceps", "names": "楊琇涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW014", "zone": "檢傷", "date": "2025-06-02", "item": "Suction tube", "names": "蕭筑云", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW015", "zone": "留觀區", "date": "2019-09-03", "item": "小鼻聶", "names": "家儀/琪文/祐蓁/鐘毅", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW016", "zone": "留觀區", "date": "2026-02-24", "item": "冰枕", "names": "永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW017", "zone": "留觀區", "date": "2026-02-26", "item": "冰枕", "names": "乃嘉", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}];
-let OWED=OWED_FALLBACK.slice();
-async function loadOwed(){
-  if(!API_URL)return;
-  try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=owed',{cache:'no-store'});
-    const a=await r.json();
-    if(Array.isArray(a)) OWED=a.map(o=>({id:o.id,zone:o.zone,date:o.date,item:o.item,names:o.names,status:o.status||'欠物中',way:o.way||'',closer:o.closer||'',note:o.note||''}));
-  }catch(e){console.error('讀欠物本失敗,改用內建',e);}
-}
-// 寫回後端(新增/結案);不帶 Content-Type 以避免跨網域預檢
-async function owedWrite(task,payload){
-  if(!API_URL){alert('尚未設定後端 API_URL');return {ok:false};}
-  try{const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});return await r.json();}
-  catch(e){return {ok:false,error:String(e)};}
-}
-// 結案權限:護理長/副護理長 或 帳號標記財管
-function canCloseOwed(){
-  const u=state.user; if(!u)return false;
-  if(u.role==='護理長'||u.role==='副護理長')return true;
-  const a=ACCOUNTS.find(x=>x.id===u.id);
-  return !!(a&&(a.caishi||(a.note&&String(a.note).includes('財管'))));
-}
-const OWE_ZONES=['檢傷','急救室','治療','留觀區','第一診間','兒童','負壓室'];
-function openOwedAdd(zone){
-  closeOwedAdd();
-  const zopts=OWE_ZONES.map(z=>`<option ${z===zone?'selected':''}>${z}</option>`).join('');
-  const w=document.createElement('div');w.id='oweAdd';w.className='loc-sheet';
-  w.onclick=e=>{if(e.target===w)closeOwedAdd();};
-  w.innerHTML=`<div class="loc-sheet-card">
-    <div class="loc-sheet-h"><span>＋ 登記欠物</span><button class="loc-x" onclick="closeOwedAdd()">✕</button></div>
-    <div class="loc-sheet-body" style="padding:14px 16px">
-      <label class="owe-f">分區<select id="ow_z">${zopts}</select></label>
-      <label class="owe-f">物品<input id="ow_i" placeholder="例：5號 Mask"></label>
-      <label class="owe-f">名單<input id="ow_n" value="${esc(state.user?state.user.name:'')}"></label>
-      <label class="owe-f">備註<input id="ow_r" placeholder="選填，例：借出未還"></label>
-      <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitOwedAdd()">登記</button>
-    </div></div>`;
-  document.body.appendChild(w);
-}
-function closeOwedAdd(){const e=document.getElementById('oweAdd');if(e)e.remove();}
-async function submitOwedAdd(){
-  const z=document.getElementById('ow_z').value, i=document.getElementById('ow_i').value.trim(),
-        n=document.getElementById('ow_n').value.trim(), r=document.getElementById('ow_r').value.trim();
-  if(!i){alert('請輸入物品');return;}
-  const today=new Date().toISOString().slice(0,10);
-  OWED.push({id:'tmp'+Date.now(),zone:z,date:today,item:i,names:n,status:'欠物中',way:'',closer:'',note:r});
-  closeOwedAdd();renderOwed();
-  await owedWrite('owed_add',{zone:z,item:i,names:n,note:r,date:today});
-  await loadOwed();renderOwed();
-}
-async function owedCloseUI(id){
-  if(!canCloseOwed()){alert('只有護理長/副護理長或財管負責人可結案');return;}
-  const way=prompt('處理方式：輸入「歸還」或「報失賠償」','歸還');
-  if(way===null)return;
-  OWED=OWED.filter(o=>o.id!==id);renderOwed();
-  await owedWrite('owed_close',{id,status:'已返還結案',way:way||'',closer:state.user.name});
-  await loadOwed();renderOwed();
-}
-// 點班內一鍵記欠物
-async function oweFromRollcall(zone,item,reason){
-  const today=new Date().toISOString().slice(0,10);
-  OWED.push({id:'tmp'+Date.now(),zone,date:today,item,names:state.user.name,status:'欠物中',way:'',closer:'',note:reason});
-  toast('已記入欠物本：'+item);
-  await owedWrite('owed_add',{zone,item,names:state.user.name,note:reason,date:today});
-  await loadOwed(); if(state.screen==='rollcall')render();
-}
-function owedFor(name,zoneName){
-  return OWED.filter(d=>d.status!=='已返還結案').filter(d=>{
-    const z=zoneName||'',dz=d.zone||'';
-    const zok=!dz||!z||z.includes(dz)||dz.includes(z);    // 同區(寬鬆,橋接命名差異)
-    if(!zok)return false;
-    const a=d.item||'',b=name||''; if(!a||!b)return false; // 名稱寬鬆比對
-    if(a===b||a.includes(b)||b.includes(a))return true;
-    for(let i=0;i<b.length-1;i++){if(a.includes(b.substr(i,2)))return true;}
-    return false;
-  });
-}
-function showOwedDetail(name,zoneName){
-  const list=owedFor(name,zoneName);
-  const old=document.getElementById('oweDetail');if(old)old.remove();
-  const w=document.createElement('div');w.id='oweDetail';w.className='loc-sheet';
-  w.onclick=e=>{if(e.target===w)w.remove();};
-  const rows=list.map(o=>`<div class="loc-item"><div class="loc-item-main">
-     <b>${esc(o.item)}</b>${o.status&&o.status!=='欠物中'?`<span class="owe-badge">${esc(o.status)}</span>`:''}
-     <div class="sub">${esc(o.names||'')} · ${esc(o.date||'')}${o.note?(' · '+esc(o.note)):''}</div></div></div>`).join('')
-     ||'<div class="loc-empty">無欠物記錄</div>';
-  w.innerHTML=`<div class="loc-sheet-card">
-    <div class="loc-sheet-h"><span>🔖 欠物中 · ${esc(name)}</span><button class="loc-x" onclick="document.getElementById('oweDetail').remove()">✕</button></div>
-    <div class="loc-sheet-body">${rows}</div>
-    <div class="loc-sheet-foot">同區名稱比對;結案請至欠物本</div></div>`;
-  document.body.appendChild(w);
-}
-function toast(msg){
-  const t=document.createElement('div');t.className='toast';t.textContent=msg;document.body.appendChild(t);
-  setTimeout(()=>t.classList.add('on'),10);setTimeout(()=>{t.classList.remove('on');setTimeout(()=>t.remove(),300);},1800);
-}
-function renderOwed(){
-  const active=OWED.filter(o=>o.status!=='已返還結案');
-  const byZone={};active.forEach(o=>{(byZone[o.zone]=byZone[o.zone]||[]).push(o);});
-  const can=canCloseOwed();
-  const zc=z=>{const a=AREAS.find(a=>String(z).includes(a.name)||a.name.includes(String(z)));return a?a.color:'#5d6c77';};
-  const secs=Object.keys(byZone).map(z=>{
-    const its=byZone[z],c=zc(z);
-    const rows=its.map(o=>{
-      const badge=o.status&&o.status!=='欠物中'?`<span class="owe-badge">${esc(o.status)}</span>`:'';
-      const closeBtn=can?`<button class="owe-close" onclick="owedCloseUI('${o.id}')">蓋回結案</button>`:'';
-      return `<div class="owe-row">
-        <div class="owe-main"><b>${esc(o.item||'')}</b>${badge}
-          <div class="owe-sub">${esc(o.names||'')}${o.note?(' · '+esc(o.note)):''}</div></div>
-        <div class="owe-right"><div class="owe-date">${esc(o.date||'')}</div>${closeBtn}</div></div>`;
-    }).join('');
-    return `<div class="owe-sec">
-      <div class="owe-zone" style="border-color:${c}"><span class="area-dot" style="background:${c}"></span>${esc(z)}<span class="owe-n">${its.length} 筆</span></div>
-      <div class="card" style="padding:4px 12px">${rows}</div></div>`;
-  }).join('');
-  $app.innerHTML=`
-  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📦 欠物本</div><div class="sub">未結 ${active.length} 筆 · 依分區</div></div>
-    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
-  <div class="screen narrow">
-    <button class="btn btn-primary btn-block" style="margin-bottom:12px" onclick="openOwedAdd()">＋ 登記欠物</button>
-    ${secs||'<div class="card" style="text-align:center;color:var(--ink-soft);padding:20px">目前無未結欠物 🎉</div>'}
-    ${can?'':'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊蓋回結案需護理長/副護理長或財管負責人</div>'}
-  </div>`;
-}
-async function loadLocator(){
-  if(!API_URL)return;
-  try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=devices',{cache:'no-store'});
-    const a=await r.json();
-    if(Array.isArray(a)) LOCED=a.map(d=>({unit:d.unit||'',code:d.code,name:d.name,cat:d.cat||d.name,zone:d.home_zone||d.zone,status:d.status||'—'}));
-  }catch(e){console.error('讀定位設備失敗',e);}
-}
-function matchDevices(name){
-  if(!name||name==='全部儀器') return LOCED.slice();
-  let r=LOCED.filter(d=>(d.cat&&(name.includes(d.cat)||d.cat.includes(name)))||(d.name&&(name.includes(d.name)||d.name.includes(name)))||(d.unit&&name.includes(d.unit)));
-  if(r.length) return r;
-  for(let i=0;i<name.length-1;i++){const g=name.substr(i,2);
-    const m=LOCED.filter(d=>(d.cat&&d.cat.includes(g))||(d.name&&d.name.includes(g)));
-    if(m.length) return m;}
-  return [];
-}
-// 點 📍 → 跳浮動速查表(編號·狀態·區域),點「地圖」再開全螢幕定位
-function openMap(name){ showLocatePanel(name); }
-function showLocatePanel(name){
-  const list=matchDevices(name);
-  closeLocatePanel();
-  const wrap=document.createElement('div');wrap.id='locSheet';wrap.className='loc-sheet';
-  wrap.onclick=e=>{if(e.target===wrap)closeLocatePanel();};
-  const rows=list.length?list.map(d=>`
-    <div class="loc-item">
-      <div class="loc-item-main"><b>${esc(d.unit||d.name)}</b>
-        <div class="sub">${ZONE_NAME[d.zone]||d.zone||'—'}<span class="loc-st-badge">${esc(d.status||'—')}</span></div></div>
-      <button class="loc-map-btn" onclick="openDeviceMap('${(d.code||'').replace(/'/g,'')}')">地圖</button>
-    </div>`).join('')
-    :'<div class="loc-empty">尚無對應的定位設備<br><span>（在後端 devices 表填入單位編號＋財碼後顯示）</span></div>';
-  wrap.innerHTML=`<div class="loc-sheet-card">
-    <div class="loc-sheet-h"><span>📍 儀器定位 · ${esc(name)}</span><button class="loc-x" onclick="closeLocatePanel()">✕</button></div>
-    <div class="loc-sheet-body">${rows}</div>
-    <div class="loc-sheet-foot">輕觸「地圖」看位置;地圖中可查該台軌跡</div>
-  </div>`;
-  document.body.appendChild(wrap);
-}
-function openDeviceMap(code){ window.open('locator/?code='+encodeURIComponent(code),'_blank'); closeLocatePanel(); }
-function closeLocatePanel(){const e=document.getElementById('locSheet');if(e)e.remove();}
+function openMap(name){state.mapItem=name;state.screen='map';render()}
 function renderMap(){
   const s=sheetById(state.sheetId);const area=areaById(s.area);
   $app.innerHTML=`
@@ -1436,6 +1232,54 @@ function renderAI(){
   if(el){(function type(){if(i<=txt.length){el.innerHTML=esc(txt.slice(0,i))+'<span class="ai-typing">▋</span>';i++;setTimeout(type,18)}else{el.innerHTML=esc(txt)}})();}
 }
 
+// ===== 欠物本（依分區）=====
+function renderOwed(){
+  const demo={triage:1,resus:1,obs:1};
+  const rows=AREAS.slice().sort((a,b)=>a.sort-b.sort).map(a=>{
+    const n=demo[a.id]||0;
+    const tag=n?`<span class="pill-warn">${n} 筆未結</span>`:`<span class="pill-ok">無</span>`;
+    return `<div class="sheet-row" onclick="alert('${esc(a.name)}欠物本：列出未結欠物（借出未還／待補貨／送修／漏計價／遺失），可新增與標記已結。正式版串後端。')">
+      <div style="display:flex;align-items:center;gap:9px;min-width:0">
+        <span class="area-dot" style="background:${a.color}"></span>
+        <div><div class="sheet-name">${esc(a.name)}</div><div class="sheet-meta">未結欠物</div></div></div>
+      ${tag}</div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📒 欠物本（依分區）</div><div class="sub">各區未結欠物登記</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    <div class="sheet-list">${rows}</div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊點班標記「異常／沒有」的耗材會自動帶入對應分區欠物本（正式版）。</div>
+  </div>`;
+}
+
+// ===== 點班本（原始紙本表單對照）=====
+function renderBook(){
+  const rows=AREAS.slice().sort((a,b)=>a.sort-b.sort).map(a=>{
+    const sheets=SHEETS.filter(s=>s.area===a.id).sort((x,y)=>x.sort-y.sort);
+    const items=sheets.map(s=>`<div class="sheet-row" onclick="alert('「${esc(s.name)}」原始表單：正式版可在此檢視 / 附上紙本掃描檔（PDF/照片），供新人對照與稽核留存。')">
+        <div style="display:flex;align-items:center;gap:9px;min-width:0">
+          <span class="area-dot" style="background:${a.color}"></span>
+          <div><div class="sheet-name">${esc(s.name)}</div><div class="sheet-meta">原始紙本表單</div></div></div>
+        <span class="tool-pill" style="pointer-events:none">📎 附掃描檔</span></div>`).join('');
+    return `<div style="margin-bottom:16px"><div class="area-bar" style="border-left-color:${a.color};color:${a.color}">${esc(a.name)}</div>
+        <div class="sheet-list">${items}</div></div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📖 點班本（原始表單）</div><div class="sub">紙本點班表對照 · 可附掃描檔</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    <div class="card" style="padding:13px 15px;margin-bottom:14px">
+      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
+        保留原始紙本點班表作為對照與稽核留存：每張電子點班表可附上對應的紙本掃描檔（PDF / 照片），
+        新人可對照、評鑑時可佐證。正式版接後端後啟用上傳。</div>
+    </div>
+    ${rows}
+  </div>`;
+}
+
 function renderSummary(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
   const issues=[];
@@ -1458,8 +1302,6 @@ function renderSummary(){
     </div>
     <div class="section-h">異常清單</div>
     <div class="card">${issuesHtml}</div>
-    <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
-    <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
     <button class="btn btn-primary btn-block" onclick="state.screen='done';render()">提交並簽核</button>
   </div>`;
 }
@@ -1483,7 +1325,6 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
-(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed()]); render(); })();
 </script>
 </body>
 </html>
