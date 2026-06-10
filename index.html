@@ -375,6 +375,19 @@ async function loadItems(){
     if(Array.isArray(rows)&&rows.length) ITEMS=rows.map(x=>Array.isArray(x)?x:[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'']);
   }catch(e){console.error('讀點班清單失敗,改用內建清單',e);}
 }
+function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((d.getDay()+6)%7));const w1=new Date(d.getFullYear(),0,4);return d.getFullYear()+'-W'+String(1+Math.round(((d-w1)/86400000-3+((w1.getDay()+6)%7))/7)).padStart(2,'0');}
+// 點班提交 → 寫回後端完成紀錄(週五簽核/找未完成的地基)
+async function submitRollcall(){
+  const s=sheetById(state.sheetId), list=itemsOf(s.id,state.half);
+  let done=0,bad=0; list.forEach(o=>{const v=state.checks[keyOf(o)]; if(v==='ok'||v==='bad')done++; if(v==='bad')bad++;});
+  const today=new Date();
+  const payload={date:today.toISOString().slice(0,10), week:isoWeek(today),
+    shift:state.shift||'', sheetId:s.id, sheet:s.name||'', assign:state.half||'',
+    empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
+    done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否'};
+  state.screen='done'; render();                 // 先進完成畫面(體感快)
+  try{ await owedWrite('rollcall_submit',payload); }catch(e){console.error('寫入完成紀錄失敗',e);}
+}
 async function askAI(task,payload){
   if(!API_URL){alert('尚未設定後端 API_URL');return '';}
   const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});
@@ -1481,7 +1494,7 @@ function renderSummary(){
     <div class="card">${issuesHtml}</div>
     <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
     <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
-    <button class="btn btn-primary btn-block" onclick="state.screen='done';render()">提交並簽核</button>
+    <button class="btn btn-primary btn-block" onclick="submitRollcall()">提交並簽核</button>
   </div>`;
 }
 
