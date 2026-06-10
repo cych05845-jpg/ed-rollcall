@@ -1022,7 +1022,7 @@ function renderItem(o,s){
   const assignB=o.assign?`<span class="tb t-儀器">${o.assign}</span>`:'';
   const _zn=areaById(s.area)?areaById(s.area).name:'';
   const _owes=owedFor(o.name,_zn);
-  const oweTag=_owes.length?`<span class="owe-tag" onclick="event.stopPropagation();showOwedDetail('${esc(o.name).replace(/'/g,"")}','${esc(_zn).replace(/'/g,"")}')">🔖 欠物中×${_owes.length}</span>`:'';
+  const oweTag=_owes.length?`<span class="owe-tag" onclick="event.stopPropagation();showOwedDetail('${esc(o.name).replace(/'/g,"")}','${esc(_zn).replace(/'/g,"")}','${k}')">🔖 欠物中×${_owes.length}</span>`:'';
   const dev=isDev?`<button class="locate-mini" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="定位">📍</button>`:'';
   const repairNote=isDev&&state.reason[k]==='送修'?`<div class="repair-note">🔧 將於 Leader 系統開立請修單（示意）</div>`:'';
   const abn=st==='bad'?`<div class="li-abn">
@@ -1055,7 +1055,16 @@ async function loadOwed(){
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=owed',{cache:'no-store'});
     const a=await r.json();
-    if(Array.isArray(a)&&a.length) OWED=a.map(o=>({id:o.id,zone:o.zone,date:o.date,item:o.item,names:o.names,status:o.status||'欠物中',way:o.way||'',closer:o.closer||'',note:o.note||''}));
+    if(Array.isArray(a)&&a.length){
+      const mapped=a.map(o=>({
+        id:o.id||o['欠物ID']||('OW'+Math.random().toString(36).slice(2,8)),
+        zone:o.zone||o['分區']||'', date:o.date||o['日期']||'',
+        item:o.item||o['物品']||'', names:o.names||o['名單']||'',
+        status:o.status||o['狀態']||'欠物中', way:o.way||o['處理方式']||'',
+        closer:o.closer||o['結案人']||'', note:o.note||o['備註']||''
+      })).filter(o=>o.item && o.status!=='已返還結案');
+      if(mapped.length) OWED=mapped;
+    }
   }catch(e){console.error('讀欠物本失敗,改用內建',e);}
 }
 // 寫回後端(新增/結案);不帶 Content-Type 以避免跨網域預檢
@@ -1126,7 +1135,11 @@ function owedFor(name,zoneName){
     return false;
   });
 }
-function showOwedDetail(name,zoneName){
+function markBadFromOwe(k){
+  const el=document.getElementById('oweDetail');if(el)el.remove();
+  state.checks[k]='bad';render();
+}
+function showOwedDetail(name,zoneName,k){
   const list=owedFor(name,zoneName);
   const old=document.getElementById('oweDetail');if(old)old.remove();
   const w=document.createElement('div');w.id='oweDetail';w.className='loc-sheet';
@@ -1138,6 +1151,7 @@ function showOwedDetail(name,zoneName){
   w.innerHTML=`<div class="loc-sheet-card">
     <div class="loc-sheet-h"><span>🔖 欠物中 · ${esc(name)}</span><button class="loc-x" onclick="document.getElementById('oweDetail').remove()">✕</button></div>
     <div class="loc-sheet-body">${rows}</div>
+    ${k?`<div style="padding:10px 16px"><button class="btn btn-primary btn-block" onclick="markBadFromOwe('${k}')">在點班把此項標記為異常</button></div>`:''}
     <div class="loc-sheet-foot">同區名稱比對;結案請至欠物本</div></div>`;
   document.body.appendChild(w);
 }
@@ -1179,7 +1193,14 @@ async function loadLocator(){
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=devices',{cache:'no-store'});
     const a=await r.json();
-    if(Array.isArray(a)&&a.length) LOCED=a.map(d=>({unit:d.unit||'',code:d.code,name:d.name,cat:d.cat||d.name,zone:d.home_zone||d.zone,status:d.status||'—'}));
+    if(Array.isArray(a)&&a.length){
+      const mapped=a.map(d=>({
+        unit:d.unit||d['單位編號']||'', code:d.code||d['財碼']||'',
+        name:d.name||d['名稱']||'', cat:d.cat||d['類別']||d.name||d['名稱']||'',
+        zone:d.home_zone||d.zone||d['分區']||'', status:d.status||'—'
+      })).filter(d=>d.code||d.name);
+      if(mapped.length) LOCED=mapped;
+    }
   }catch(e){console.error('讀定位設備失敗',e);}
 }
 function matchDevices(name){
