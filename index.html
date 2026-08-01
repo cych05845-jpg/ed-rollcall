@@ -404,6 +404,90 @@ async function aiHandover(){
 }
 // ==========================================================================
 
+// ===================== 連動排班系統(Firebase) → 依今日班表帶入分區 =====================
+const SCHED_DB='https://cych-ed-scheduling-default-rtdb.asia-southeast1.firebasedatabase.app';
+function normDept(d){return String(d||'').trim().toUpperCase().replace(/\s+/g,'');}
+// 排班科別代碼 → 點班目標(sheet=直接進表 / area=進該區表清單 / multi=複合班二選一 / skip=不需點班)
+function deptToTarget(dept){
+  const d=normDept(dept); if(!d) return null;
+  const M={
+    'CPR':{type:'area',areaId:'resus'},
+    'T':{type:'sheet',sheetId:'triage'},
+    'PT':{type:'sheet',sheetId:'peds-triage'},
+    'P':{type:'area',areaId:'peds'},
+    'R1':{type:'sheet',sheetId:'treat1'},
+    'R2':{type:'sheet',sheetId:'treat23'},
+    'R3':{type:'sheet',sheetId:'treat23'},
+    'O+ST':{type:'area',areaId:'obs'},
+    'OB':{type:'sheet',sheetId:'room-ob'},
+    'L':{type:'sheet',sheetId:'leader'},
+    'L+OB':{type:'multi',options:[{type:'sheet',sheetId:'leader',label:'Leader'},{type:'sheet',sheetId:'room-ob',label:'診間'}]},
+    'P+OB':{type:'multi',options:[{type:'area',areaId:'peds',label:'兒童'},{type:'sheet',sheetId:'room-ob',label:'診間'}]}
+  };
+  if(M[d]) return M[d];
+  if(d==='R') return {type:'skip'};   // 單純R(無分區號)→今天不需點班
+  return null;                        // 未知代碼 → 手動選區
+}
+function targetLabel(t){ if(!t)return''; if(t.type==='area')return areaById(t.areaId).name||t.areaId; if(t.type==='sheet')return sheetById(t.sheetId).name||t.sheetId; return ''; }
+function shiftOf(node,dayNum){ if(!node)return''; if(Array.isArray(node))return node[dayNum]||''; return node[String(dayNum)]||node[dayNum]||''; }
+const REST_SHIFT=/^(OFF|O|V|休|例|事|病|公|特|補|假)/i;
+async function fetchMonth(base,monthKey){
+  try{const r=await fetch(SCHED_DB+'/'+base+'/'+encodeURIComponent(monthKey)+'.json',{cache:'no-store'});return r.ok?await r.json():null;}
+  catch(e){console.error('讀排班失敗',base,e);return null;}
+}
+// 用「姓名」比對(兩系統員編/pid不同),讀今天的科別。只綁已公告(published)的班表。
+async function bindSchedule(){
+  const u=state.user; if(!u) return {status:'nomatch'};
+  const now=new Date();
+  const monthKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const dayNum=now.getDate(), dayStr=String(dayNum);
+  const isAide=/助理員/.test(u.title||'');
+  const bases=isAide?['aide-schedules','schedules']:['schedules','aide-schedules'];
+  for(const base of bases){
+    const root=await fetchMonth(base,monthKey);
+    if(!root) continue;
+    if(!root.meta||root.meta.status!=='published') continue;   // 未公告不綁
+    const data=root.data||{};
+    const staffRaw=data.staff||[]; const staff=Array.isArray(staffRaw)?staffRaw:Object.values(staffRaw);
+    const me=staff.find(s=>s&&s.name===u.name); if(!me) continue;
+    const pid=me.id;
+    const fday=data.flags&&data.flags[pid]?data.flags[pid][dayStr]:null;
+    const dept=fday?fday.dept:'';
+    const shift=shiftOf(data.schedule&&data.schedule[pid],dayNum);
+    if(dept) return {status:'ok',dept,shift,target:deptToTarget(dept)};
+    if(!shift||REST_SHIFT.test(String(shift))) return {status:'off',shift};
+    return {status:'nomatch',shift};
+  }
+  return {status:'nomatch'};
+}
+function goTarget(t){
+  if(!t) return;
+  if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
+  if(t.type==='sheet'){
+    const s=sheetById(t.sheetId); if(!s.id){state.screen='areas';render();return;}
+    state.areaId=s.area; state.sheetId=s.id; state.half=null;
+    state.screen=(String(s.ops)==='2')?'half':'rollcall'; render();
+  }
+}
+// 首頁「今日班表」卡片
+function todayBindCard(){
+  const b=state.todayBind;
+  const wrap=(color,inner)=>`<div class="card" style="border-left:4px solid ${color}">${inner}</div>`;
+  if(!b||b.status==='loading') return wrap('var(--brand)','<div style="font-size:13.5px;color:var(--ink-soft)">📅 讀取今日班表中…</div>');
+  if(b.status==='off') return wrap('var(--ink-soft)',`<div style="font-weight:800;margin-bottom:4px">📅 今日班表</div><div style="font-size:13.5px;color:var(--ink-soft)">今天為休假／無排班${b.shift?`（${esc(b.shift)}）`:''}，不需點班。若要協助點班，可用下方「手動選分區」。</div>`);
+  if(b.status==='nomatch') return wrap('var(--warn)',`<div style="font-weight:800;margin-bottom:4px">📅 今日班表</div><div style="font-size:13.5px;color:var(--ink-soft)">查無你今天的分區指派${b.shift?`（班別 ${esc(b.shift)}）`:''}，請用下方「手動選分區」點班。</div>`);
+  const t=b.target;
+  if(!t) return wrap('var(--warn)',`<div style="font-weight:800;margin-bottom:4px">📅 今日班表：${esc(b.dept||'')}</div><div style="font-size:13.5px;color:var(--ink-soft)">此代碼尚未對應點班分區，請用下方「手動選分區」點班。</div>`);
+  if(t.type==='skip') return wrap('var(--ink-soft)',`<div style="font-weight:800;margin-bottom:4px">📅 今日班表：${esc(b.dept)}</div><div style="font-size:13.5px;color:var(--ink-soft)">此班別不需點班。若仍要點班，可用下方「手動選分區」。</div>`);
+  if(t.type==='multi'){
+    const btns=t.options.map(o=>`<button class="btn btn-primary btn-block" style="margin-bottom:8px" onclick='goTarget(${JSON.stringify(o)})'>進入：${esc(o.label)}</button>`).join('');
+    return wrap('var(--ok)',`<div style="font-weight:800;margin-bottom:2px">📅 今日班表指派：${esc(b.dept)}</div><div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px">複合班（一人顧兩區）${b.shift?` · 班別 ${esc(b.shift)}`:''}，請選擇要先點的分區：</div>${btns}`);
+  }
+  const label=targetLabel(t);
+  return wrap('var(--ok)',`<div style="font-weight:800;margin-bottom:2px">📅 今日班表指派：${esc(b.dept)}</div><div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px">已依班表帶入 <b>${esc(label)}</b>${b.shift?` · 班別 ${esc(b.shift)}`:''}</div><button class="btn btn-primary btn-block" onclick='goTarget(${JSON.stringify(t)})'>進入今日點班：${esc(label)}</button>`);
+}
+// ==========================================================================
+
 let ITEMS=[
   ["triage","遮眼器/指揮棒","1/1","儀器",""],
   ["triage","睫毛夾/眼勾/眼科","4/6/1","器械",""],
@@ -837,7 +921,7 @@ function renderLogin(){
       試登入：護理長 05845／副護理長 06843／護理師 03451（登入碼皆＝員編）</div>
   </div>`;
 }
-function doLogin(){
+async function doLogin(){
   const emp=document.getElementById('empIn').value.trim();
   const pw=document.getElementById('pwIn').value.trim();
   const err=document.getElementById('loginErr');
@@ -846,7 +930,10 @@ function doLogin(){
   if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
   if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
   state.user={id:a.id,name:a.name,title:a.title,role:a.role};
+  state.todayBind={status:'loading'};
   state.screen='home';render();
+  try{ state.todayBind=await bindSchedule(); }catch(e){ state.todayBind={status:'nomatch'}; }
+  if(state.screen==='home') renderHome();
 }
 function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
 
@@ -859,7 +946,7 @@ function renderHome(){
   const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
   $app.innerHTML=`
-  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 尚未連接後端</div>
+  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
   <div class="topbar"><div class="topbar-in">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div><div class="title">🩺 急診護理站點班</div>
@@ -876,8 +963,10 @@ function renderHome(){
     </div></div>
     <div class="section-h">今日各班狀態</div>
     <div class="sum-row">${stat}</div>
+    <div class="section-h">今日班表</div>
+    ${todayBindCard()}
     <div class="section-h">作業</div>
-    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（選分區）</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     ${reviewBtn}
     <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
@@ -1517,6 +1606,7 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
+if(state.user){ state.todayBind={status:'loading'}; bindSchedule().then(b=>{state.todayBind=b;if(state.screen==='home')renderHome();}).catch(()=>{state.todayBind={status:'nomatch'};if(state.screen==='home')renderHome();}); }
 (async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed()]); render(); })();
 </script>
 </body>
