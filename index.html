@@ -149,6 +149,9 @@
 
   /* items as compact list (條列式) */
   .bulk-bar{display:flex;gap:8px;margin-bottom:12px}
+  .viewseg{display:inline-flex;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
+  .viewseg button{border:none;background:transparent;color:var(--ink-soft);font-family:inherit;font-size:14px;font-weight:700;padding:9px 15px;cursor:pointer}
+  .viewseg button.on{background:var(--brand);color:#fff}
   .item-list{display:grid;gap:6px;grid-template-columns:1fr}
   .li{background:var(--card);border:1px solid var(--line);border-radius:9px;display:flex;flex-wrap:wrap;align-items:stretch}
   .li.is-bad{border-color:var(--bad)}
@@ -485,10 +488,10 @@ function isLeaderUser(){const u=state.user;return !!(u&&(u.role==='護理長'||u
 const NIGHT_OPEN_MIN=23*60+30;        // 23:30 起可補「明天」大夜(0-8),上班前完成
 function maxRcDate(){const n=new Date();const d=new Date(n.getFullYear(),n.getMonth(),n.getDate());
   if(n.getHours()*60+n.getMinutes()>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);return d;}
-function minRcDate(){const n=new Date();const ms=new Date(n.getFullYear(),n.getMonth(),1);
-  if(isLeaderUser())return ms;                              // 護理長/副護理長:整月
+function minRcDate(){const n=new Date();
+  if(isLeaderUser())return new Date(n.getFullYear(),n.getMonth()-1,1);  // 護理長/副護理長:上月1號起(更寬,可跨月)
   const b=new Date(n.getFullYear(),n.getMonth(),n.getDate());b.setDate(b.getDate()-14);
-  return b>ms?b:ms;}                                        // 一般人員:往回14天(不早於月初)
+  return b;}                                                            // 一般人員:往回14天(可跨月,不受月份限制)
 function rebindForDate(){
   state.todayBind={status:'loading'};
   if(state.screen==='home')renderHome();
@@ -511,7 +514,7 @@ function fmtDur(sec){sec=Math.max(0,sec|0);if(sec<60)return sec+' 秒';const m=M
 function rcDatePicker(){
   const cur=curRcDate(), mn=fmtISO(minRcDate()), mx=fmtISO(maxRcDate()), today=fmtISO(new Date());
   const tag=cur===today?'今天':(cur>today?'明日 · 大夜補點':'補點');
-  const hint=isLeaderUser()?'護理長可補整月任一天':'可補今天與往回 14 天；更早日期需護理長/副護理長開啟';
+  const hint=isLeaderUser()?'護理長可補上月 1 號起任一天':'可補今天與往回 14 天（可跨月）；更早需護理長/副護理長開啟';
   return `<div class="card" style="padding:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
       <div style="font-weight:800;font-size:15px">📆 ${esc(tag)}</div>
@@ -1098,6 +1101,8 @@ function renderRollcall(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
   state.rcTiming=state.rcTiming||{}; const _tk=timingKey(); if(!state.rcTiming[_tk])state.rcTiming[_tk]={start:Date.now()};
   const acolor=areaColor(s.area);
+  const viewMode=state.listView||'list';
+  const ilStyle=viewMode==='list'?' style="grid-template-columns:1fr"':'';
   let done=0;list.forEach(o=>{if(state.checks[keyOf(o)])done++});
   const pct=list.length?Math.round(done/list.length*100):0;
   const halfTxt=state.half?` · ${state.half} 半`:'';
@@ -1127,7 +1132,7 @@ function renderRollcall(){
       <div class="cat-h"><span class="cat-ic" style="background:${cat.color}1f;color:${cat.color}">${cat.ic}</span>
         ${cat.key}<span class="cat-cnt">${cdone}/${its.length}</span></div>
       ${tools}
-      <div class="item-list">${rows}</div></div>`;
+      <div class="item-list"${ilStyle}>${rows}</div></div>`;
   });
 
   // 欠物本：獨立分類圖層（point 5）
@@ -1161,7 +1166,13 @@ function renderRollcall(){
       <button class="btn btn-primary" style="flex:1;font-size:14px;padding:11px" onclick="bulkNormal()">
         ✓ 其餘 ${remain} 項全部標示正常</button>
     </div>
-    <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 14px">先點出「異常／沒有」的項目，其餘一鍵標正常</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:-4px 2px 14px">
+      <span style="font-size:12px;color:var(--ink-soft)">先點出「異常／沒有」的項目，其餘一鍵標正常</span>
+      <div class="viewseg">
+        <button class="${viewMode==='list'?'on':''}" onclick="setListView('list')">▤ 條列</button>
+        <button class="${viewMode==='grid'?'on':''}" onclick="setListView('grid')">▦ 分散</button>
+      </div>
+    </div>
     ${blocks}
     ${owedBlock}
   </div>
@@ -1172,6 +1183,7 @@ function renderRollcall(){
   </div></div>`;
 }
 function backFromRollcall(){const s=sheetById(state.sheetId);state.screen=String(s.ops)==='2'?'half':'pick';render()}
+function setListView(v){state.listView=v;render();}
 function bulkNormal(){
   const s=sheetById(state.sheetId);
   itemsOf(s.id,state.half).forEach(o=>{const k=keyOf(o);if(!state.checks[k])state.checks[k]='ok'});
