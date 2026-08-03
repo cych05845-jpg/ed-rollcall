@@ -149,25 +149,28 @@
 
   /* items as compact list (條列式) */
   .bulk-bar{display:flex;gap:8px;margin-bottom:12px}
+  .viewseg{display:inline-flex;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--card)}
+  .viewseg button{border:none;background:transparent;color:var(--ink-soft);font-family:inherit;font-size:14px;font-weight:700;padding:9px 15px;cursor:pointer}
+  .viewseg button.on{background:var(--brand);color:#fff}
   .item-list{display:grid;gap:6px;grid-template-columns:1fr}
   .li{background:var(--card);border:1px solid var(--line);border-radius:9px;display:flex;flex-wrap:wrap;align-items:stretch}
   .li.is-bad{border-color:var(--bad)}
-  .li-tap{flex:1;display:flex;gap:10px;align-items:center;padding:9px 11px;cursor:pointer;min-width:0}
-  .dot{width:28px;height:28px;border-radius:8px;border:2px solid var(--line);flex:0 0 28px;
-    display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:transparent}
+  .li-tap{flex:1;display:flex;gap:13px;align-items:center;padding:14px 14px;cursor:pointer;min-width:0}
+  .dot{width:36px;height:36px;border-radius:9px;border:2px solid var(--line);flex:0 0 36px;
+    display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:transparent}
   .dot.ok{background:var(--ok);border-color:var(--ok);color:#fff}
   .dot.bad{background:var(--bad);border-color:var(--bad);color:#fff}
   .li-body{flex:1;min-width:0}
-  .li-name{font-weight:700;font-size:16.5px;line-height:1.35}
-  .li-qty{font-size:13px;color:var(--ink-soft);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  .tb{font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px}
+  .li-name{font-weight:700;font-size:19.5px;line-height:1.35}
+  .li-qty{font-size:15px;color:var(--ink-soft);margin-top:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .tb{font-size:12.5px;font-weight:800;padding:3px 9px;border-radius:999px}
   .t-藥品{background:rgba(224,49,49,.14);color:#e03131}.t-耗材{background:rgba(15,122,134,.15);color:#0f9aa8}
   .t-器械{background:rgba(28,126,214,.14);color:#1c7ed6}.t-儀器{background:rgba(103,65,217,.15);color:#7c5cf0}.t-其他{background:rgba(120,130,139,.16);color:#828c95}
-  .li-ctrl{display:flex;align-items:center;gap:6px;padding:0 10px}
+  .li-ctrl{display:flex;align-items:center;gap:8px;padding:0 12px}
   .flagbtn{border:1.5px solid var(--line);background:var(--card);color:var(--ink-soft);font-family:inherit;
-    font-size:13.5px;font-weight:700;padding:8px 13px;border-radius:8px;cursor:pointer;white-space:nowrap}
+    font-size:15px;font-weight:700;padding:11px 16px;border-radius:9px;cursor:pointer;white-space:nowrap}
   .flagbtn.on{background:var(--bad);border-color:var(--bad);color:#fff}
-  .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:14px;padding:5px 8px;border-radius:8px;cursor:pointer}
+  .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:17px;padding:7px 11px;border-radius:9px;cursor:pointer}
   .li-abn{flex-basis:100%;padding:10px 12px;border-top:1px dashed var(--line);background:var(--bad-soft)}
   .abn-h{font-size:11.5px;font-weight:700;color:var(--bad);margin-bottom:7px}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -380,11 +383,17 @@ function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((
 async function submitRollcall(){
   const s=sheetById(state.sheetId), list=itemsOf(s.id,state.half);
   let done=0,bad=0; list.forEach(o=>{const v=state.checks[keyOf(o)]; if(v==='ok'||v==='bad')done++; if(v==='bad')bad++;});
-  const today=new Date();
-  const payload={date:today.toISOString().slice(0,10), week:isoWeek(today),
+  const rcDate=curRcDate();
+  state.rcTiming=state.rcTiming||{}; const tk=timingKey(); const tm=state.rcTiming[tk]||{};
+  const startMs=tm.start||Date.now(), endMs=Date.now();
+  const durationSec=Math.max(0,Math.round((endMs-startMs)/1000));
+  state.rcTiming[tk]={start:startMs,end:endMs};
+  state.lastTiming={start:startMs,end:endMs,durationSec:durationSec,date:rcDate};
+  const payload={date:rcDate, week:isoWeek(parseISO(rcDate)),
     shift:state.shift||'', sheetId:s.id, sheet:s.name||'', assign:state.half||'',
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
-    done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否'};
+    done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
+    startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec};
   state.screen='done'; render();                 // 先進完成畫面(體感快)
   try{ await owedWrite('rollcall_submit',payload); }catch(e){console.error('寫入完成紀錄失敗',e);}
 }
@@ -401,6 +410,139 @@ async function aiHandover(){
   const box=document.getElementById('aiBox');box.style.display='block';box.textContent='AI 產生中…';
   try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[state.shift],issues}); }
   catch(e){ box.textContent='AI 失敗:'+e; }
+}
+// ==========================================================================
+
+// ===================== 連動排班系統(Firebase) → 依今日班表帶入分區 =====================
+const SCHED_DB='https://cych-ed-scheduling-default-rtdb.asia-southeast1.firebasedatabase.app';
+function normDept(d){return String(d||'').trim().toUpperCase().replace(/\s+/g,'');}
+// 排班科別代碼 → 點班目標(sheet=直接進表 / area=進該區表清單 / multi=複合班二選一 / skip=不需點班)
+function deptToTarget(dept){
+  const d=normDept(dept); if(!d) return null;
+  const M={
+    'CPR':{type:'area',areaId:'resus'},
+    'T':{type:'sheet',sheetId:'triage'},
+    'PT':{type:'sheet',sheetId:'peds-triage'},
+    'P':{type:'area',areaId:'peds'},
+    'R1':{type:'sheet',sheetId:'treat1'},
+    'R2':{type:'sheet',sheetId:'treat23'},
+    'R3':{type:'sheet',sheetId:'treat23'},
+    'O+ST':{type:'area',areaId:'obs'},
+    'OB':{type:'sheet',sheetId:'room-ob'},
+    'L':{type:'sheet',sheetId:'leader'},
+    'L+OB':{type:'multi',options:[{type:'sheet',sheetId:'leader',label:'Leader'},{type:'sheet',sheetId:'room-ob',label:'診間'}]},
+    'P+OB':{type:'multi',options:[{type:'area',areaId:'peds',label:'兒童'},{type:'sheet',sheetId:'room-ob',label:'診間'}]}
+  };
+  if(M[d]) return M[d];
+  if(d==='R') return {type:'skip'};   // 單純R(無分區號)→今天不需點班
+  return null;                        // 未知代碼 → 手動選區
+}
+function targetLabel(t){ if(!t)return''; if(t.type==='area')return areaById(t.areaId).name||t.areaId; if(t.type==='sheet')return sheetById(t.sheetId).name||t.sheetId; return ''; }
+function shiftOf(node,dayNum){ if(!node)return''; if(Array.isArray(node))return node[dayNum]||''; return node[String(dayNum)]||node[dayNum]||''; }
+const REST_SHIFT=/^(OFF|O|V|休|例|事|病|公|特|補|假)/i;
+async function fetchMonth(base,monthKey){
+  try{const r=await fetch(SCHED_DB+'/'+base+'/'+encodeURIComponent(monthKey)+'.json',{cache:'no-store'});return r.ok?await r.json():null;}
+  catch(e){console.error('讀排班失敗',base,e);return null;}
+}
+// 用「姓名」比對(兩系統員編/pid不同),讀今天的科別。只綁已公告(published)的班表。
+async function bindSchedule(forDate){
+  const u=state.user; if(!u) return {status:'nomatch'};
+  const now=forDate||new Date();
+  const monthKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const dayNum=now.getDate(), dayStr=String(dayNum);
+  const isAide=/助理員/.test(u.title||'');
+  const bases=isAide?['aide-schedules','schedules']:['schedules','aide-schedules'];
+  for(const base of bases){
+    const root=await fetchMonth(base,monthKey);
+    if(!root) continue;
+    if(!root.meta||root.meta.status!=='published') continue;   // 未公告不綁
+    const data=root.data||{};
+    const staffRaw=data.staff||[]; const staff=Array.isArray(staffRaw)?staffRaw:Object.values(staffRaw);
+    const me=staff.find(s=>s&&s.name===u.name); if(!me) continue;
+    const pid=me.id;
+    const fday=data.flags&&data.flags[pid]?data.flags[pid][dayStr]:null;
+    const dept=fday?fday.dept:'';
+    const shift=shiftOf(data.schedule&&data.schedule[pid],dayNum);
+    if(dept) return {status:'ok',dept,shift,target:deptToTarget(dept)};
+    if(!shift||REST_SHIFT.test(String(shift))) return {status:'off',shift};
+    return {status:'nomatch',shift};
+  }
+  return {status:'nomatch'};
+}
+function goTarget(t){
+  if(!t) return;
+  if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
+  if(t.type==='sheet'){
+    const s=sheetById(t.sheetId); if(!s.id){state.screen='areas';render();return;}
+    state.areaId=s.area; state.sheetId=s.id; state.half=null;
+    state.screen=(String(s.ops)==='2')?'half':'rollcall'; render();
+  }
+}
+
+// ---------- 補點日期(可選範圍) + 點班耗時 ----------
+function fmtISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function parseISO(s){const p=String(s||'').split('-');return new Date(+p[0],(+p[1]||1)-1,(+p[2]||1));}
+function curRcDate(){return state.rcDate||fmtISO(new Date());}
+function curRcDateObj(){return parseISO(curRcDate());}
+function isLeaderUser(){const u=state.user;return !!(u&&(u.role==='護理長'||u.role==='副護理長'));}
+const NIGHT_OPEN_MIN=23*60+30;        // 23:30 起可補「明天」大夜(0-8),上班前完成
+function maxRcDate(){const n=new Date();const d=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+  if(n.getHours()*60+n.getMinutes()>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);return d;}
+function minRcDate(){const n=new Date();
+  if(isLeaderUser())return new Date(n.getFullYear(),n.getMonth()-1,1);  // 護理長/副護理長:上月1號起(更寬,可跨月)
+  const b=new Date(n.getFullYear(),n.getMonth(),n.getDate());b.setDate(b.getDate()-14);
+  return b;}                                                            // 一般人員:往回14天(可跨月,不受月份限制)
+function rebindForDate(){
+  state.todayBind={status:'loading'};
+  if(state.screen==='home')renderHome();
+  bindSchedule(curRcDateObj()).then(b=>{
+    state.todayBind=b;
+    if(b&&b.shift&&/^[DEN]$/.test(String(b.shift)))state.shift=String(b.shift);
+    if(state.screen==='home')renderHome();
+  }).catch(()=>{state.todayBind={status:'nomatch'};if(state.screen==='home')renderHome();});
+}
+function setRcDate(v){
+  if(!v)return;
+  let d=parseISO(v);const mn=minRcDate(),mx=maxRcDate();
+  if(d<mn)d=mn; if(d>mx)d=mx;
+  state.rcDate=fmtISO(d);
+  rebindForDate();
+}
+function timingKey(){return curRcDate()+'|'+(state.sheetId||'')+'|'+(state.half||'');}
+function fmtClock(ms){const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function fmtDur(sec){sec=Math.max(0,sec|0);if(sec<60)return sec+' 秒';const m=Math.floor(sec/60),s=sec%60;return s?`${m} 分 ${s} 秒`:`${m} 分`;}
+function rcDatePicker(){
+  const cur=curRcDate(), mn=fmtISO(minRcDate()), mx=fmtISO(maxRcDate()), today=fmtISO(new Date());
+  const tag=cur===today?'今天':(cur>today?'明日 · 大夜補點':'補點');
+  const hint=isLeaderUser()?'護理長可補上月 1 號起任一天':'可補今天與往回 14 天（可跨月）；更早需護理長/副護理長開啟';
+  return `<div class="card" style="padding:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-weight:800;font-size:15px">📆 ${esc(tag)}</div>
+      <input type="date" value="${cur}" min="${mn}" max="${mx}" onchange="setRcDate(this.value)"
+        style="padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;background:var(--card);color:var(--ink)"></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      ${cur!==today?`<button class="chip" onclick="setRcDate('${today}')">回今天</button>`:''}
+      <span style="font-size:11.5px;color:var(--ink-soft)">${hint}</span></div>
+  </div>`;
+}
+// 首頁「今日班表」卡片
+function todayBindCard(){
+  const b=state.todayBind;
+  const cur=curRcDate(), today=fmtISO(new Date());
+  const dl=cur===today?'今日':(cur>today?'明日':cur.slice(5).replace('-','/'));
+  const wrap=(color,inner)=>`<div class="card" style="border-left:4px solid ${color}">${inner}</div>`;
+  if(!b||b.status==='loading') return wrap('var(--brand)','<div style="font-size:13.5px;color:var(--ink-soft)">📅 讀取班表中…</div>');
+  if(b.status==='off') return wrap('var(--ink-soft)',`<div style="font-weight:800;margin-bottom:4px">📅 ${dl}班表</div><div style="font-size:13.5px;color:var(--ink-soft)">這天為休假／無排班${b.shift?`（${esc(b.shift)}）`:''}，不需點班。若要協助點班，可用下方「手動選分區」。</div>`);
+  if(b.status==='nomatch') return wrap('var(--warn)',`<div style="font-weight:800;margin-bottom:4px">📅 ${dl}班表</div><div style="font-size:13.5px;color:var(--ink-soft)">查無這天的分區指派${b.shift?`（班別 ${esc(b.shift)}）`:''}，請用下方「手動選分區」點班。</div>`);
+  const t=b.target;
+  if(!t) return wrap('var(--warn)',`<div style="font-weight:800;margin-bottom:4px">📅 ${dl}班表：${esc(b.dept||'')}</div><div style="font-size:13.5px;color:var(--ink-soft)">此代碼尚未對應分區，請用下方「手動選分區」點班。</div>`);
+  if(t.type==='skip') return wrap('var(--ink-soft)',`<div style="font-weight:800;margin-bottom:4px">📅 ${dl}班表：${esc(b.dept)}</div><div style="font-size:13.5px;color:var(--ink-soft)">此班別不需點班。若仍要點班，可用下方「手動選分區」。</div>`);
+  if(t.type==='multi'){
+    const btns=t.options.map(o=>`<button class="btn btn-primary btn-block" style="margin-bottom:8px" onclick='goTarget(${JSON.stringify(o)})'>進入：${esc(o.label)}</button>`).join('');
+    return wrap('var(--ok)',`<div style="font-weight:800;margin-bottom:2px">📅 ${dl}指派：${esc(b.dept)}</div><div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px">複合班（一人顧兩區）${b.shift?` · 班別 ${esc(b.shift)}`:''}，請選要先點的分區：</div>${btns}`);
+  }
+  const label=targetLabel(t);
+  return wrap('var(--ok)',`<div style="font-weight:800;margin-bottom:2px">📅 ${dl}指派：${esc(b.dept)}</div><div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px">已依班表帶入 <b>${esc(label)}</b>${b.shift?` · 班別 ${esc(b.shift)}`:''}</div><button class="btn btn-primary btn-block" onclick='goTarget(${JSON.stringify(t)})'>進入點班：${esc(label)}</button>`);
 }
 // ==========================================================================
 
@@ -837,7 +979,7 @@ function renderLogin(){
       試登入：護理長 05845／副護理長 06843／護理師 03451（登入碼皆＝員編）</div>
   </div>`;
 }
-function doLogin(){
+async function doLogin(){
   const emp=document.getElementById('empIn').value.trim();
   const pw=document.getElementById('pwIn').value.trim();
   const err=document.getElementById('loginErr');
@@ -846,7 +988,13 @@ function doLogin(){
   if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
   if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
   state.user={id:a.id,name:a.name,title:a.title,role:a.role};
+  state.rcDate=fmtISO(new Date());
+  state.todayBind={status:'loading'};
   state.screen='home';render();
+  try{ state.todayBind=await bindSchedule(curRcDateObj());
+       if(state.todayBind&&state.todayBind.shift&&/^[DEN]$/.test(String(state.todayBind.shift)))state.shift=String(state.todayBind.shift);
+  }catch(e){ state.todayBind={status:'nomatch'}; }
+  if(state.screen==='home') renderHome();
 }
 function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
 
@@ -859,7 +1007,7 @@ function renderHome(){
   const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
   $app.innerHTML=`
-  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 尚未連接後端</div>
+  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
   <div class="topbar"><div class="topbar-in">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div><div class="title">🩺 急診護理站點班</div>
@@ -876,8 +1024,11 @@ function renderHome(){
     </div></div>
     <div class="section-h">今日各班狀態</div>
     <div class="sum-row">${stat}</div>
+    <div class="section-h">點班日期</div>
+    ${rcDatePicker()}
+    ${todayBindCard()}
     <div class="section-h">作業</div>
-    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（選分區）</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     ${reviewBtn}
     <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
@@ -895,7 +1046,7 @@ function renderAreas(){
   }).join('');
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">選擇分區</div><div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]}</div></div>
+    <div><div class="title">選擇分區</div><div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]}</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen wide"><div class="area-tiles">${tiles}</div></div>`;
 }
@@ -948,7 +1099,10 @@ const CAT_DEFS=[
 ];
 function renderRollcall(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
+  state.rcTiming=state.rcTiming||{}; const _tk=timingKey(); if(!state.rcTiming[_tk])state.rcTiming[_tk]={start:Date.now()};
   const acolor=areaColor(s.area);
+  const viewMode=state.listView||'list';
+  const ilStyle=viewMode==='list'?' style="grid-template-columns:1fr"':'';
   let done=0;list.forEach(o=>{if(state.checks[keyOf(o)])done++});
   const pct=list.length?Math.round(done/list.length*100):0;
   const halfTxt=state.half?` · ${state.half} 半`:'';
@@ -978,7 +1132,7 @@ function renderRollcall(){
       <div class="cat-h"><span class="cat-ic" style="background:${cat.color}1f;color:${cat.color}">${cat.ic}</span>
         ${cat.key}<span class="cat-cnt">${cdone}/${its.length}</span></div>
       ${tools}
-      <div class="item-list">${rows}</div></div>`;
+      <div class="item-list"${ilStyle}>${rows}</div></div>`;
   });
 
   // 欠物本：獨立分類圖層（point 5）
@@ -996,7 +1150,7 @@ function renderRollcall(){
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">${esc(s.name)}${halfTxt}</div>
-      <div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]} · ${esc(state.user.name)}</div></div>
+      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]} · ${esc(state.user.name)}</div></div>
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
   <div class="screen wide lvl2">
     ${banner}
@@ -1012,7 +1166,13 @@ function renderRollcall(){
       <button class="btn btn-primary" style="flex:1;font-size:14px;padding:11px" onclick="bulkNormal()">
         ✓ 其餘 ${remain} 項全部標示正常</button>
     </div>
-    <div style="font-size:12px;color:var(--ink-soft);margin:-4px 2px 14px">先點出「異常／沒有」的項目，其餘一鍵標正常</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:-4px 2px 14px">
+      <span style="font-size:12px;color:var(--ink-soft)">先點出「異常／沒有」的項目，其餘一鍵標正常</span>
+      <div class="viewseg">
+        <button class="${viewMode==='list'?'on':''}" onclick="setListView('list')">▤ 條列</button>
+        <button class="${viewMode==='grid'?'on':''}" onclick="setListView('grid')">▦ 分散</button>
+      </div>
+    </div>
     ${blocks}
     ${owedBlock}
   </div>
@@ -1023,6 +1183,7 @@ function renderRollcall(){
   </div></div>`;
 }
 function backFromRollcall(){const s=sheetById(state.sheetId);state.screen=String(s.ops)==='2'?'half':'pick';render()}
+function setListView(v){state.listView=v;render();}
 function bulkNormal(){
   const s=sheetById(state.sheetId);
   itemsOf(s.id,state.half).forEach(o=>{const k=keyOf(o);if(!state.checks[k])state.checks[k]='ok'});
@@ -1137,15 +1298,15 @@ async function oweFromRollcall(zone,item,reason){
   await owedWrite('owed_add',{zone,item,names:state.user.name,note:reason,date:today});
   await loadOwed(); if(state.screen==='rollcall')render();
 }
-function owedNorm(s){return String(s||'').replace(/[\s　]/g,'').replace(/[()（）]/g,'').toLowerCase();}
+function normName(s){return String(s||'').replace(/[\s()（）\[\]／/]/g,'').toLowerCase();}
 function owedFor(name,zoneName){
-  const b=owedNorm(name); if(!b)return [];
+  const b=normName(name); if(!b)return [];
   return OWED.filter(d=>d.status!=='已返還結案').filter(d=>{
     const z=zoneName||'',dz=d.zone||'';
-    const zok=!dz||!z||z.includes(dz)||dz.includes(z);      // 同區
+    const zok=!dz||!z||z.includes(dz)||dz.includes(z);    // 同區(橋接命名差異)
     if(!zok)return false;
-    const a=owedNorm(d.item); if(!a)return false;
-    return a===b||a.includes(b)||b.includes(a);             // 名稱正規化後互相包含才算(不再用兩字片段)
+    const a=normName(d.item); if(!a)return false;         // 名稱正規化後互相包含才標(不再用兩字片段亂標)
+    return a===b||a.includes(b)||b.includes(a);
   });
 }
 function markBadFromOwe(k){
@@ -1382,38 +1543,74 @@ function renderHistory(){
 function toggleMonth(m){state._foldMonths=state._foldMonths||{};state._foldMonths[m]=!state._foldMonths[m];render()}
 
 // ===== Leader：未完成點班 / 儀保 提醒 =====
+// ===== 簽核資料(往回一個月) =====
+let SIGNLOG=[];   // 提交寫回的完成紀錄 rollcall_log
+async function loadSignLog(){
+  if(!API_URL)return;
+  try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_log',{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))SIGNLOG=a;}
+  catch(e){console.error('讀完成紀錄失敗',e);}
+}
+async function refreshSignLog(){await loadSignLog();render();}
+function last4Weeks(){
+  const arr=[],now=new Date();
+  const base=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const dow=(base.getDay()+6)%7,thisMon=new Date(base);thisMon.setDate(base.getDate()-dow);
+  for(let i=0;i<4;i++){const mon=new Date(thisMon);mon.setDate(thisMon.getDate()-i*7);
+    const sun=new Date(mon);sun.setDate(mon.getDate()+6);
+    arr.push({key:isoWeek(mon),label:`${mon.getMonth()+1}/${mon.getDate()}–${sun.getMonth()+1}/${sun.getDate()}`,isThis:i===0});}
+  return arr;
+}
+function setSignWeek(k){state.signWeek=k;render();}
+async function doSignoff(){
+  if(!(state.user&&(state.user.role==='護理長'||state.user.role==='副護理長'))){alert('僅護理長／副護理長可簽核');return;}
+  const wk=state.signWeek;
+  toast('已簽核本週：'+wk);
+  try{ await owedWrite('rollcall_signoff',{week:wk,by:state.user.name,empId:state.user.id,at:new Date().toISOString()}); }
+  catch(e){ console.error('簽核寫入失敗',e); }
+}
 function renderLeader(){
-  // demo：掃描目前各表完成狀態，列出未完成
-  const incomplete=[];
-  SHEETS.forEach(s=>{const p=sheetProgress(s.id);
-    if(p.done<p.total)incomplete.push({name:s.name,area:areaById(s.area).name,color:areaColor(s.area),done:p.done,total:p.total});
-  });
-  const maintDue=[
-    {name:'去顫器（電擊器）',area:'急救室',item:'每班自我測試',sh:'本班未做'},
-    {name:'超音波機',area:'檢傷',item:'每月開機測試',sh:'已逾期'},
-  ];
-  const incHtml=incomplete.length?incomplete.map(i=>`<div class="rem-li">
-      <span><span class="area-dot" style="background:${i.color}"></span>${esc(i.area)} · ${esc(i.name)}</span>
-      <span class="pill-warn">${i.done}/${i.total}</span></div>`).join('')
-    :'<div class="rem-li"><span>全部點班表已完成 🎉</span></div>';
-  const maintHtml=maintDue.map(m=>`<div class="rem-li">
-      <span>${esc(m.area)} · ${esc(m.name)}<br><span style="font-size:11.5px;color:var(--ink-soft)">${m.item}</span></span>
-      <span class="pill-bad">${m.sh}</span></div>`).join('');
+  state.signWeek=state.signWeek||isoWeek(new Date());
+  const weeks=last4Weeks();
+  if(!weeks.some(w=>w.key===state.signWeek))state.signWeek=weeks[0].key;
+  const wsel=weeks.map(w=>`<option value="${w.key}" ${w.key===state.signWeek?'selected':''}>${w.label}（${w.key}）${w.isThis?' · 本週':''}</option>`).join('');
+  const hasAny=SIGNLOG.length>0;
+  const logs=SIGNLOG.filter(r=>String(r.week)===String(state.signWeek));
+  const bySheet={};logs.forEach(r=>{(bySheet[r.sheetId]=bySheet[r.sheetId]||[]).push(r);});
+  const isDoneRec=r=>(r.isDone==='是'||r.isDone===true);
+  const rowsHtml=SHEETS.map(s=>{
+    const es=bySheet[s.id]||[],n=es.length,done=es.some(isDoneRec);
+    const tag=n?(done?`<span class="pill-ok">已完成 · ${n}次</span>`:`<span class="pill-warn">部分 · ${n}次</span>`):`<span class="pill-bad">未點</span>`;
+    return `<div class="rem-li"><span><span class="area-dot" style="background:${areaColor(s.area)}"></span>${esc(areaById(s.area).name)} · ${esc(s.name)}</span>${tag}</div>`;
+  }).join('');
+  const doneCnt=SHEETS.filter(s=>(bySheet[s.id]||[]).some(isDoneRec)).length;
+  const emptyNote=hasAny?'':`<div style="font-size:12.5px;color:var(--warn);margin-top:10px;line-height:1.6">＊目前尚無完成紀錄——點班畫面「提交並簽核」的寫入接通後，這裡會依週自動顯示各區完成狀況，簽核鈕才有實際資料可簽。</div>`;
+  const maintDue=[{name:'去顫器（電擊器）',area:'急救室',item:'每班自我測試',sh:'本班未做'},{name:'超音波機',area:'檢傷',item:'每月開機測試',sh:'已逾期'}];
+  const maintHtml=maintDue.map(m=>`<div class="rem-li"><span>${esc(m.area)} · ${esc(m.name)}<br><span style="font-size:11.5px;color:var(--ink-soft)">${m.item}</span></span><span class="pill-bad">${m.sh}</span></div>`).join('');
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📋 主管審核 · 提醒</div><div class="sub">${esc(state.user.name)} · ${SHIFT_NAME[state.shift]}</div></div>
+    <div><div class="title">📋 主管簽核</div><div class="sub">${esc(state.user.name)}（${esc(state.user.title)}）</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen wide lvl2">
-    <div class="rem-card ${incomplete.length?'':'ok'}">
-      <div class="rem-h">${incomplete.length?'🔴':'✅'} 未完成點班（${incomplete.length}）</div>
-      ${incHtml}
+    <div class="card" style="padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div style="font-weight:800;font-size:15px">🗓 簽核週次</div>
+        <select onchange="setSignWeek(this.value)" style="flex:1;max-width:230px;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;font-family:inherit;background:var(--card);color:var(--ink)">${wsel}</select>
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">可往回選最近 4 週（約一個月），對該週簽核</div>
+    </div>
+    <div class="rem-card ${(hasAny&&doneCnt===SHEETS.length)?'ok':''}">
+      <div class="rem-h">📊 本週各區完成（${doneCnt}/${SHEETS.length} 張）</div>
+      ${rowsHtml}
+      ${emptyNote}
     </div>
     <div class="rem-card">
       <div class="rem-h">🛠 儀器保養待辦 / 逾期（${maintDue.length}）</div>
       ${maintHtml}
     </div>
-    <button class="btn btn-primary btn-block" onclick="alert('正式版：可一鍵推播提醒該區人員，或分區簽核。')">🔔 推播提醒相關人員</button>
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊未完成清單依目前各表狀態即時掃描；保養逾期為示意</div>
+    <button class="btn btn-primary btn-block" onclick="doSignoff()">✅ 簽核本週（${state.signWeek}）</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="refreshSignLog()">🔄 重新整理完成紀錄</button>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊完成狀況讀自提交寫回的紀錄（rollcall_log）；保養逾期為示意。</div>
   </div>`;
 }
 
@@ -1483,7 +1680,7 @@ function renderSummary(){
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">點班摘要 · ${esc(s.name)}${state.half?(' '+state.half+'半'):''}</div>
-      <div class="sub">${fmtDate(new Date())} · ${SHIFT_NAME[state.shift]}</div></div>
+      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]}</div></div>
     <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
   <div class="screen narrow">
     <div class="sum-row">
@@ -1500,12 +1697,20 @@ function renderSummary(){
 
 function renderDone(){
   const s=sheetById(state.sheetId);
+  const tm=state.lastTiming||{};
+  const timingHtml=tm.start?`<div class="card" style="max-width:340px;margin:0 auto 20px;text-align:left">
+     <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px"><span style="color:var(--ink-soft)">開始</span><b>${fmtClock(tm.start)}</b></div>
+     <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px"><span style="color:var(--ink-soft)">完成</span><b>${fmtClock(tm.end)}</b></div>
+     <div style="display:flex;justify-content:space-between;padding:7px 0 0;font-size:14px;border-top:1px dashed var(--line)"><span style="color:var(--ink-soft)">耗時</span><b style="color:var(--brand)">${fmtDur(tm.durationSec)}</b></div>
+     ${tm.date&&tm.date!==fmtISO(new Date())?`<div style="text-align:center;color:var(--warn);font-size:12.5px;margin-top:8px">補點日期：${esc(tm.date)}</div>`:''}
+   </div>`:'';
   $app.innerHTML=`
   <div class="screen"><div class="done-wrap">
     <div class="done-circle">✓</div>
     <h2 style="margin:0 0 6px">點班完成</h2>
-    <p style="color:var(--ink-soft);margin:0 0 24px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
+    <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
       ${esc(state.user.name)}（${esc(state.user.title)}）· ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} 簽核</p>
+    ${timingHtml}
     <button class="btn btn-primary btn-block" onclick="state.screen='pick';render()">回點班表清單</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
   </div></div>`;
@@ -1517,7 +1722,8 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
-(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed()]); render(); })();
+if(state.user){ state.rcDate=fmtISO(new Date()); rebindForDate(); }
+(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog()]); render(); })();
 </script>
 </body>
 </html>
