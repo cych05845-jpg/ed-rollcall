@@ -1135,16 +1135,22 @@ function renderRollcall(){
       <div class="item-list"${ilStyle}>${rows}</div></div>`;
   });
 
-  // 欠物本：獨立分類圖層（point 5）
+  // 欠物本：獨立分類圖層（本區未結，直接列出、可點開）
+  const _zoneName=(areaById(s.area).name)||'';
+  const _znOwed=owedInZone(_zoneName);
+  const _znRows=_znOwed.length
+    ? _znOwed.slice(0,20).map(o=>`<div class="owe-row">
+        <div class="owe-main"><b>${esc(o.item||'')}</b>
+          <div class="owe-sub">${esc(o.names||'')}${o.date?(' · '+esc(o.date)):''}${o.note?(' · '+esc(o.note)):''}</div></div>
+        <div class="owe-right"><div class="owe-date">${esc((o.status&&o.status!=='欠物中')?o.status:'欠物中')}</div></div></div>`).join('')
+    : '<div style="font-size:13px;color:var(--ink-soft);padding:2px">本區目前無未結欠物 🎉</div>';
   const owedBlock=`<div class="cat">
     <div class="cat-h"><span class="cat-ic" style="background:#e8590c1f;color:#e8590c">📒</span>
-      欠物本（本區）<span class="cat-cnt">0 筆未結</span></div>
-    <div class="card" style="padding:14px">
-      <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
-        本區未結欠物紀錄（借出未還／待補貨／送修／漏計價／遺失）。<br>
-        ＊點班中標記「異常／沒有」的耗材，正式版會自動帶入此欠物本。</div>
+      欠物本（本區）<span class="cat-cnt">${_znOwed.length} 筆未結</span></div>
+    <div class="card" style="padding:6px 14px 14px">
+      ${_znRows}
       <button class="btn btn-ghost btn-block" style="margin-top:12px;font-size:14px;padding:11px"
-        onclick="alert('欠物本：可新增一筆欠物、查詢未結項目、標記已補齊（正式版）。')">＋ 新增 / 查看欠物</button>
+        onclick="openZoneOwed('${esc(_zoneName)}')">📖 開啟本區欠物本 / 登記</button>
     </div></div>`;
 
   $app.innerHTML=`
@@ -1299,15 +1305,63 @@ async function oweFromRollcall(zone,item,reason){
   await loadOwed(); if(state.screen==='rollcall')render();
 }
 function normName(s){return String(s||'').replace(/[\s()（）\[\]／/]/g,'').toLowerCase();}
+function nameToks(s){return (String(s||'').toLowerCase().match(/[a-z0-9]+|[一-鿿]+/g))||[];}
+function strongTok(t){return (t.length>=3&&/[a-z]/.test(t))||/[一-鿿]{2,}/.test(t);}
+// 品項比對：正規化互含 OR 詞彙子集(短名每詞都在長名+至少一個實詞相同),順序不拘且不靠單一數字/號亂配
+function nameMatch(x,y){
+  const nx=normName(x),ny=normName(y); if(!nx||!ny)return false;
+  if(nx===ny||nx.includes(ny)||ny.includes(nx))return true;
+  const tx=nameToks(x),ty=nameToks(y);
+  const short=tx.length<=ty.length?tx:ty, long=tx.length<=ty.length?ty:tx;
+  if(!short.length)return false;
+  const setL=new Set(long);
+  if(!short.every(t=>setL.has(t)))return false;
+  return short.some(t=>strongTok(t)&&setL.has(t));
+}
+// 區域正規化：把各種寫法(第一診間/治療區/OB診間/留觀區…)收斂成同一區代碼,避免「診間⊂第一診間」亂配
+function zoneKey(s){
+  s=String(s||''); if(!s)return '';
+  if(s.indexOf('檢傷')>=0)return 'triage';
+  if(s.indexOf('兒')>=0)return 'peds';
+  if(s.indexOf('急救')>=0||s.toUpperCase().indexOf('CPR')>=0)return 'resus';
+  if(s.indexOf('治療')>=0||s.indexOf('第一診間')>=0||s.indexOf('第二診間')>=0||s.indexOf('第三診間')>=0||s.indexOf('診間一')>=0||s.indexOf('診間二')>=0||s.indexOf('診間三')>=0)return 'treat';
+  if(s.indexOf('OB')>=0||s.indexOf('婦')>=0||s==='診間'||s==='OB診間')return 'room';
+  if(s.indexOf('留觀')>=0||s.indexOf('觀察')>=0)return 'obs';
+  if(s.indexOf('負壓')>=0)return 'neg';
+  if(/leader/i.test(s))return 'leader';
+  return s;
+}
 function owedFor(name,zoneName){
   const b=normName(name); if(!b)return [];
+  const zk=zoneKey(zoneName);
   return OWED.filter(d=>d.status!=='已返還結案').filter(d=>{
-    const z=zoneName||'',dz=d.zone||'';
-    const zok=!dz||!z||z.includes(dz)||dz.includes(z);    // 同區(橋接命名差異)
-    if(!zok)return false;
-    const a=normName(d.item); if(!a)return false;         // 名稱正規化後互相包含才標(不再用兩字片段亂標)
-    return a===b||a.includes(b)||b.includes(a);
+    const dz=d.zone||'';
+    if(zoneName&&dz&&zoneKey(dz)!==zk)return false;       // 同一區才算(正規化比對,不再用寬鬆包含)
+    return nameMatch(d.item,name);                        // 詞彙比對(順序不拘、不靠單一數字/號亂配)
   });
+}
+function owedInZone(zoneName){
+  const zk=zoneKey(zoneName);
+  return OWED.filter(d=>d.status!=='已返還結案').filter(d=>{const dz=d.zone||'';return !zoneName||!dz||zoneKey(dz)===zk;});
+}
+function closeZoneOwed(){const e=document.getElementById('zoneOwed');if(e)e.remove();}
+function openZoneOwed(zoneName){
+  closeZoneOwed();
+  const list=owedInZone(zoneName);
+  const rows=list.length?list.map(o=>`<div class="loc-item"><div class="loc-item-main">
+     <b>${esc(o.item||'')}</b>${o.status&&o.status!=='欠物中'?`<span class="owe-badge">${esc(o.status)}</span>`:''}
+     <div class="sub">${esc(o.names||'')}${o.date?(' · '+esc(o.date)):''}${o.note?(' · '+esc(o.note)):''}</div></div></div>`).join('')
+     :'<div class="loc-empty">本區目前無未結欠物 🎉</div>';
+  const w=document.createElement('div');w.id='zoneOwed';w.className='loc-sheet';
+  w.onclick=e=>{if(e.target===w)closeZoneOwed();};
+  w.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>📒 欠物本 · ${esc(zoneName)}（未結 ${list.length}）</span><button class="loc-x" onclick="closeZoneOwed()">✕</button></div>
+    <div class="loc-sheet-body">${rows}</div>
+    <div style="padding:10px 16px;display:flex;gap:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="closeZoneOwed();openOwedAdd('${esc(zoneName)}')">＋ 登記欠物</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeZoneOwed();state.screen='owed';render()">看完整欠物本</button>
+    </div></div>`;
+  document.body.appendChild(w);
 }
 function markBadFromOwe(k){
   const el=document.getElementById('oweDetail');if(el)el.remove();
@@ -1569,6 +1623,25 @@ async function doSignoff(){
   try{ await owedWrite('rollcall_signoff',{week:wk,by:state.user.name,empId:state.user.id,at:new Date().toISOString()}); }
   catch(e){ console.error('簽核寫入失敗',e); }
 }
+// 統一推播提醒(v1：本裝置通知；後端FCM接通後升級為跨裝置廣播)
+function undoneSheetsOfWeek(){
+  const logs=SIGNLOG.filter(r=>String(r.week)===String(state.signWeek));
+  const bySheet={};logs.forEach(r=>{(bySheet[r.sheetId]=bySheet[r.sheetId]||[]).push(r);});
+  return SHEETS.filter(s=>!(bySheet[s.id]||[]).some(r=>(r.isDone==='是'||r.isDone===true)));
+}
+async function pushRemind(){
+  if(!('Notification' in window)){alert('此裝置／瀏覽器不支援系統通知');return;}
+  let perm=Notification.permission;
+  if(perm!=='granted') perm=await Notification.requestPermission();
+  if(perm!=='granted'){alert('尚未允許通知，請到瀏覽器設定開啟後再試');return;}
+  const undone=undoneSheetsOfWeek();
+  const body=undone.length
+    ? `尚有 ${undone.length} 區未完成：${undone.slice(0,3).map(s=>s.name).join('、')}${undone.length>3?' 等':''}，請儘快完成並簽核。`
+    : '本週點班皆已完成 🎉';
+  try{ new Notification('📋 點班提醒',{body}); }catch(e){ alert(body); }
+  toast('已在本裝置發出提醒通知');
+  // 後端接通後：改由 owedWrite('push_broadcast',{msg:body,by,at}) 觸發 FCM 推給所有已訂閱裝置
+}
 function renderLeader(){
   state.signWeek=state.signWeek||isoWeek(new Date());
   const weeks=last4Weeks();
@@ -1609,8 +1682,9 @@ function renderLeader(){
       ${maintHtml}
     </div>
     <button class="btn btn-primary btn-block" onclick="doSignoff()">✅ 簽核本週（${state.signWeek}）</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="pushRemind()">🔔 推播提醒未完成</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="refreshSignLog()">🔄 重新整理完成紀錄</button>
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊完成狀況讀自提交寫回的紀錄（rollcall_log）；保養逾期為示意。</div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊完成狀況讀自提交寫回的紀錄（rollcall_log）；保養逾期為示意。<br>＊推播目前為「本裝置通知」示範；跨裝置統一廣播將於後端 FCM 接通後啟用。</div>
   </div>`;
 }
 
