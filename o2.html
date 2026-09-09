@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>氧氣桶安全維護審核標準</title>
+<style>
+  :root{--ink:#1f2d33;--soft:#5d6c77;--line:#333;--grid:#555;--brand:#0f7a86;--bg:#eef2f4;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"PingFang TC","Microsoft JhengHei",serif;background:var(--bg);color:var(--ink);font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:14px}
+  .bar{background:linear-gradient(135deg,var(--brand),#0a5b64);color:#fff;border-radius:12px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+  .bar h1{font-size:17px;margin:0;font-weight:800}
+  .ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .ctrls select,.ctrls input{padding:8px 10px;border:none;border-radius:8px;font-size:14px;font-family:inherit}
+  .btn{padding:8px 14px;border:none;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;font-size:14px}
+  .btn-w{background:rgba(255,255,255,.2);color:#fff}
+  .form{background:#fff;margin:14px auto;padding:10mm;box-shadow:0 1px 6px rgba(20,40,55,.12);max-width:297mm}
+  .f-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .f-hosp{font-size:12px;font-weight:700;line-height:1.3}
+  .f-hosp .en{font-size:9px;color:#444;font-weight:400}
+  .f-rev{font-size:11px;color:#333}
+  .f-title{text-align:center;font-size:22px;font-weight:800;letter-spacing:3px;margin:2px 0 10px}
+  .f-title .blank{display:inline-block;min-width:90px;border-bottom:1.5px solid #333;text-align:center}
+  .crit{font-size:13px;line-height:1.9;margin:0 0 12px;padding:8px 10px;border:1px solid #999}
+  .crit b{font-weight:800}
+  table.o2{border-collapse:collapse;width:100%;table-layout:fixed}
+  table.o2 th,table.o2 td{border:1px solid var(--grid);text-align:center;font-size:12px;height:30px;padding:0}
+  table.o2 th.rowh{width:64px;font-weight:800;background:#f4f7f9}
+  table.o2 th.dateh{font-weight:700}
+  table.o2 th.sh{font-size:11px;font-weight:700;width:22px;color:#333}
+  table.o2 td.cell{cursor:pointer}
+  table.o2 td.cell:hover{background:rgba(15,122,134,.10)}
+  table.o2 td.mk{color:#0a5b64;font-weight:800;font-size:15px}
+  table.o2 td.note{cursor:pointer;font-size:11px;text-align:left;padding:2px 4px;white-space:nowrap;overflow:hidden}
+  .hint{font-size:12px;color:var(--soft);margin-top:8px}
+  @media print{
+    body{background:#fff}.bar,.hint{display:none!important}
+    .wrap{max-width:none;padding:0}.form{box-shadow:none;margin:0;max-width:none;padding:6mm}
+    @page{size:A4 landscape;margin:6mm}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <h1>🫧 氧氣桶安全維護審核標準</h1>
+    <div class="ctrls">
+      <input id="deptIn" placeholder="科別（如 急診）" style="width:120px">
+      <input type="month" id="ymSel">
+      <input id="empIn" placeholder="刷/輸入員編" inputmode="numeric" style="width:110px">
+      <input id="nameIn" placeholder="簽名(自動帶入)" style="width:110px">
+      <button class="btn btn-w" onclick="window.print()">🖨 列印</button>
+      <button class="btn btn-w" onclick="exportCSV()">⤓ 匯出CSV</button>
+    </div>
+  </div>
+  <div class="form" id="form"></div>
+  <div class="hint wrap" style="padding:0 4px">＊點格子打勾（記錄簽名者，滑鼠移上去看是誰／何時）；備註列可輸入文字。資料存本機。<br>＊評值項目文字如與貴院最新版有出入，告訴我我立即校正成一模一樣。</div>
+</div>
+<div id="modalHost"></div>
+
+<script>
+const HOSP_ZH="財團法人　嘉義基督教醫院";
+const HOSP_EN="CHIA-YI CHRISTIAN HOSPITAL";
+const REV="103.03.25 修訂";
+const SHIFTS=["N","D","E"];
+const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
+function empName(v){return ROSTER[String(v||'').trim()]||'';}
+const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
+
+const P=new URLSearchParams(location.search);
+let data=startData();
+initControls();
+render();
+
+function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
+function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
+function loadFor(dept,ym){ try{const s=localStorage.getItem('o2_'+(dept||'')+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(dept,ym); }
+function startData(){
+  const dept=P.get('dept')||'', ym=P.get('ym')||'';
+  const d=loadFor(dept,ym); d.dept=dept; if(ym)d.ym=ym;
+  if(P.get('qty')) d.qty=P.get('qty');
+  if(P.get('name')) localStorage.setItem('o2_lastName',P.get('name'));
+  return d;
+}
+function save(){try{localStorage.setItem(keyOf(),JSON.stringify(data));}catch(e){}}
+
+function initControls(){
+  const dp=document.getElementById('deptIn'); dp.value=data.dept||''; dp.onchange=()=>switchTo(dp.value.trim(),data.ym);
+  const ym=document.getElementById('ymSel'); ym.value=data.ym||''; ym.onchange=()=>switchTo(data.dept,ym.value);
+  const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('o2_lastName')||''; nm.onchange=()=>localStorage.setItem('o2_lastName',nm.value.trim());
+  const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('o2_lastName',n); } };
+}
+function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); }
+
+function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
+function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function curName(){return (document.getElementById('nameIn').value||'').trim();}
+function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
+
+function render(){
+  document.getElementById('ymSel').value=data.ym||'';
+  const days=daysInMonth(data.ym), mg=minguo(data.ym);
+  const crit=`<div class="crit"><b>評值項目：</b><br>
+    1. 氧氣桶外觀：a. 懸掛氧氣流量使用參考表、b. 有懸掛「滿」或「空」掛牌<br>
+    2. 氧氣桶功能：a. 打開氧氣桶時流量表有浮動、無破損、表接觸無漏氣、b. 關閉氧氣桶時桶壓與流量歸零、c. 壓力表保持 500psi(35kg/cm²) 以上（以下應以空桶處理）<br>
+    3. 固定存放位置</div>`;
+  let h1='<tr><th class="rowh" rowspan="2">評值項目</th>';
+  for(let d=1;d<=days;d++) h1+=`<th class="dateh" colspan="3">${d}</th>`;
+  h1+='</tr>';
+  let h2='<tr>';
+  for(let d=1;d<=days;d++) for(let si=0;si<3;si++) h2+=`<th class="sh">${SHIFTS[si]}</th>`;
+  h2+='</tr>';
+  let body='';
+  CRIT.forEach(([code])=>{
+    body+=`<tr><th class="rowh">${code}</th>`;
+    for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const m=data.marks[ck(code,d,si)];
+      body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="toggle('${code}',${d},${si})">${m?'✓':''}</td>`; }
+    body+='</tr>';
+  });
+  body+='<tr><th class="rowh">備註</th>';
+  for(let d=1;d<=days;d++){ const n=data.notes[d]||''; body+=`<td class="note" colspan="3" title="${esc(n)}" onclick="editNote(${d})">${esc(n)}</td>`; }
+  body+='</tr>';
+  document.getElementById('form').innerHTML=`
+    <div class="f-top">
+      <div class="f-hosp">${HOSP_ZH}<br><span class="en">${HOSP_EN}</span></div>
+      <div class="f-rev">${REV}</div>
+    </div>
+    <div class="f-title">護理部－<span class="blank">${esc(data.dept||'')}</span>氧氣桶安全維護審核標準</div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+      <span>${data.qty?('應有氧氣桶數量：<b>'+esc(data.qty)+'</b> 支（請確認數量與功能）'):''}</span>
+      <span>${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}</span>
+    </div>
+    ${crit}
+    <table class="o2">${h1}${h2}${body}</table>`;
+  save();
+}
+function toggle(code,day,si){
+  if(!data.ym){alert('請先選擇年月');return;}
+  const k=ck(code,day,si);
+  if(data.marks[k]) delete data.marks[k];
+  else { const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm); data.marks[k]={by:nm,at:stamp()}; }
+  save(); render();
+}
+function stamp(){const d=new Date();return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function editNote(day){
+  const cur=data.notes[day]||'';
+  document.getElementById('modalHost').innerHTML=`<div style="position:fixed;inset:0;background:rgba(15,32,43,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px" onclick="if(event.target===this)this.innerHTML=''">
+    <div style="background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px">
+      <h3 style="margin:0 0 12px">${day} 日 · 備註</h3>
+      <input id="noteIn" value="${esc(cur)}" style="width:100%;padding:11px 12px;border:1.5px solid #c9d3da;border-radius:10px;font-size:16px;font-family:inherit" autofocus>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <button class="btn" style="flex:1;background:#fff;border:1.5px solid #c9d3da" onclick="document.getElementById('modalHost').innerHTML=''">取消</button>
+        <button class="btn" style="flex:1;background:#0f7a86;color:#fff" onclick="saveNote(${day})">儲存</button>
+      </div></div></div>`;
+}
+function saveNote(day){ const v=document.getElementById('noteIn').value.trim(); if(v)data.notes[day]=v; else delete data.notes[day]; document.getElementById('modalHost').innerHTML=''; save(); render(); }
+function exportCSV(){
+  const days=daysInMonth(data.ym); const head=['評值項目'];
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++)head.push(d+SHIFTS[si]);
+  const rows=[head];
+  CRIT.forEach(([code])=>{ const r=[code]; for(let d=1;d<=days;d++)for(let si=0;si<3;si++)r.push(data.marks[ck(code,d,si)]?'V':''); rows.push(r); });
+  const nr=['備註']; for(let d=1;d<=days;d++){nr.push(data.notes[d]||'');nr.push('');nr.push('');} rows.push(nr);
+  const csv='﻿'+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=`氧氣桶審核_${data.dept||''}_${data.ym||''}.csv`;a.click();URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

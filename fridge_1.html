@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>藥品冰箱溫度查核登錄表</title>
+<style>
+  :root{--ink:#1f2d33;--soft:#5d6c77;--line:#c9d3da;--band:#e9f7ef;--red:#c0392b;--blue:#1c5fb0;--brand:#0f7a86;--bg:#eef2f4;--card:#fff;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"PingFang TC","Microsoft JhengHei",sans-serif;background:var(--bg);color:var(--ink);font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:14px}
+  .bar{background:linear-gradient(135deg,var(--brand),#0a5b64);color:#fff;border-radius:12px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+  .bar h1{font-size:17px;margin:0;font-weight:800}
+  .ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .ctrls select,.ctrls input{padding:8px 10px;border:none;border-radius:8px;font-size:14px;font-family:inherit}
+  .btn{padding:8px 14px;border:none;border-radius:8px;font-weight:700;font-family:inherit;cursor:pointer;font-size:14px}
+  .btn-w{background:rgba(255,255,255,.2);color:#fff}
+  .btn-p{background:var(--brand);color:#fff}
+  .btn-g{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
+  .sheet{background:#fff;border-radius:12px;box-shadow:0 1px 6px rgba(20,40,55,.08);padding:14px;margin-top:14px;overflow:auto}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;border-bottom:2px solid var(--ink);padding-bottom:8px}
+  .head .hosp{font-weight:800;color:var(--red)}
+  .head .ttl{font-weight:800;font-size:18px}
+  .head .meta{font-weight:700}
+  svg{display:block}
+  .cell-hit{fill:transparent;cursor:pointer}
+  .cell-hit:hover{fill:rgba(15,122,134,.10)}
+  table.sig{border-collapse:collapse;font-size:11px;table-layout:fixed}
+  table.sig td,table.sig th{border:1px solid var(--line);text-align:center;padding:2px;overflow:hidden;white-space:nowrap}
+  table.sig th{background:#f4f7f9;font-weight:700}
+  .legend{font-size:12px;color:var(--soft);line-height:1.7;margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  .legend b{color:var(--ink)}
+  .abn h3{margin:14px 0 8px;font-size:15px}
+  table.abn-t{width:100%;border-collapse:collapse;font-size:13px}
+  table.abn-t th,table.abn-t td{border:1px solid var(--line);padding:6px 8px;text-align:center}
+  table.abn-t th{background:#f4f7f9}
+  .pill{display:inline-block;font-weight:800;border-radius:6px;padding:1px 8px}
+  .pA{background:#fdf3df;color:#b5680f}.pB{background:#fbe8e8;color:var(--red)}.pC{background:#e6f6ed;color:#1f9d57}
+  .modal{position:fixed;inset:0;background:rgba(15,32,43,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal-card{background:#fff;border-radius:14px;max-width:420px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .modal-card h3{margin:0 0 12px}
+  .fld{margin-bottom:12px}
+  .fld label{display:block;font-size:13px;font-weight:700;color:var(--soft);margin-bottom:5px}
+  .fld input,.fld select{width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit}
+  .row2{display:flex;gap:10px}.row2>*{flex:1}
+  .warn{background:#fbe8e8;color:var(--red);border:1px solid #f0c0c0;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:10px}
+  .foot{display:flex;gap:10px;margin-top:6px}
+  .superv{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px}
+  .superv input{padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
+  @media print{
+    body{background:#fff}.bar,.legend .noprint,.btn{display:none!important}
+    .wrap{max-width:none;padding:0}.sheet{box-shadow:none;border-radius:0;overflow:visible}
+    @page{size:A4 landscape;margin:8mm}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <h1>🌡 藥品冰箱溫度查核登錄表</h1>
+    <div class="ctrls">
+      <select id="unitSel"></select>
+      <input id="unitCustom" placeholder="自訂單位名" style="width:130px;display:none">
+      <input type="month" id="ymSel">
+      <input id="empIn" placeholder="刷/輸入員編" inputmode="numeric" style="width:110px">
+      <input id="nameIn" placeholder="簽名(自動帶入)" style="width:110px">
+      <button class="btn btn-w" onclick="window.print()">🖨 列印</button>
+      <button class="btn btn-w" onclick="exportCSV()">⤓ 匯出CSV</button>
+    </div>
+  </div>
+  <div class="sheet" id="sheet"></div>
+</div>
+<div id="modalHost"></div>
+
+<script>
+const HOSP="嘉義基督教醫院";
+const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
+function empName(v){return ROSTER[String(v||'').trim()]||'';}
+const UNITS=["兒童檢傷 藥品冰箱（PT）","留觀 藥品冰箱","急救室 藥品冰箱","治療區 藥品冰箱"];
+const SHIFTS=["0","8","16"];
+const TMIN=0,TMAX=10,LOW=2,HIGH=8;
+const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
+// 點班系統同一後端（拍照判讀 + 溫度寫回）
+const API_URL='https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec';
+
+const P=new URLSearchParams(location.search);
+let data=startData();
+initControls();
+render();
+
+function keyOf(){return 'fridge_'+data.unit+'_'+data.ym;}
+function blank(unit,ym){return {unit,ym,readings:{},abn:{},superv:[]};}
+function loadFor(unit,ym){ try{const s=localStorage.getItem('fridge_'+unit+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(unit,ym); }
+function startData(){
+  const u=P.get('unit')||UNITS[0], ym=P.get('ym')||'';
+  const d=loadFor(u,ym); d.unit=u; if(ym)d.ym=ym;
+  if(P.get('name')) localStorage.setItem('fridge_lastName',P.get('name'));
+  return d;
+}
+function save(){try{localStorage.setItem(keyOf(),JSON.stringify(data));}catch(e){}}
+
+function initControls(){
+  const us=document.getElementById('unitSel');
+  const list=UNITS.slice(); if(data.unit&&list.indexOf(data.unit)<0)list.unshift(data.unit);
+  us.innerHTML=list.map(u=>`<option>${u}</option>`).join('')+'<option value="__custom">＋自訂…</option>';
+  us.value=data.unit||UNITS[0];
+  us.onchange=()=>{ const cu=document.getElementById('unitCustom'); if(us.value==='__custom'){cu.style.display='';cu.focus();return;} cu.style.display='none'; switchTo(us.value,data.ym); };
+  document.getElementById('unitCustom').onchange=e=>{ if(e.target.value.trim()) switchTo(e.target.value.trim(),data.ym); };
+  const ym=document.getElementById('ymSel'); ym.value=data.ym||''; ym.onchange=()=>switchTo(data.unit,ym.value);
+  const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('fridge_lastName')||''; nm.onchange=()=>localStorage.setItem('fridge_lastName',nm.value.trim());
+  const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('fridge_lastName',n); } };
+}
+function switchTo(unit,ym){ save(); data=loadFor(unit,ym||data.ym); data.unit=unit; if(ym)data.ym=ym; render(); }
+
+function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
+function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
+function yT(t){ return PADTOP + (TMAX-t)/(TMAX-TMIN)*PLOTH; }
+function xCol(idx){ return AXISW + idx*COLW + COLW/2; }
+function rkey(day,si){ return day+'_'+SHIFTS[si]; }
+function curName(){ return (document.getElementById('nameIn').value||'').trim(); }
+function clampPlot(t){ return Math.max(TMIN, Math.min(TMAX, t)); }
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ---------- 拍照自動判讀（走點班後端 task:'vision'） ----------
+function shrink(file){return new Promise(res=>{const fr=new FileReader();fr.onload=()=>{const img=new Image();img.onload=()=>{const c=document.createElement('canvas');const s=Math.min(1,1100/Math.max(img.width,img.height));c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);c.getContext('2d').drawImage(img,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',0.82));};img.src=fr.result;};fr.readAsDataURL(file);});}
+async function visionRead(file){
+  if(!file)return; const msg=document.getElementById('visionMsg'); if(msg)msg.textContent='處理照片中…';
+  const b64=await shrink(file);
+  if(!API_URL){ if(msg)msg.textContent='後端未設定,請手動輸入。'; return; }
+  if(msg)msg.textContent='AI 判讀中…';
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'vision',payload:{image:b64}})});
+    const d=await r.json(); const cur=d.cur??d.current, hi=d.hi??d.max, lo=d.lo??d.min;
+    const set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null&&v!=='')el.value=v;};
+    set('e_cur',cur); set('e_hi',hi); set('e_lo',lo);
+    if(msg)msg.textContent=`已判讀：現在 ${cur}℃　高 ${hi}℃　低 ${lo}℃ — 請確認後儲存。`;
+  }catch(e){ if(msg)msg.textContent='判讀失敗,請手動輸入。('+e+')'; }
+}
+// 溫度寫回點班後端(task:'fridge_temp')
+async function fridgeWrite(day,si){
+  if(!API_URL)return; const r=data.readings[rkey(day,si)]||{};
+  const payload={unit:data.unit,ym:data.ym,day:day,shift:SHIFTS[si],cur:r.cur,hi:r.hi,lo:r.lo,sign:r.sign,at:new Date().toISOString()};
+  try{ await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',payload:payload})}); }catch(e){console.error('冰箱溫度寫回失敗',e);}
+}
+
+function render(){
+  document.getElementById('ymSel').value=data.ym||'';
+  const days=daysInMonth(data.ym); const cols=days*3;
+  const W=AXISW+cols*COLW+8, H=PADTOP+PLOTH+18; const mg=minguo(data.ym);
+  let g='';
+  g+=`<rect x="${AXISW}" y="${yT(HIGH)}" width="${cols*COLW}" height="${yT(LOW)-yT(HIGH)}" fill="var(--band)"/>`;
+  for(let t=TMAX;t>=TMIN;t--){ const y=yT(t); const isRed=(t===HIGH||t===LOW);
+    g+=`<line x1="${AXISW}" y1="${y}" x2="${AXISW+cols*COLW}" y2="${y}" stroke="${isRed?'var(--red)':'#dde5ea'}" stroke-width="${isRed?2:1}"/>`;
+    g+=`<text x="${AXISW-6}" y="${y+4}" text-anchor="end" font-size="11" fill="#5d6c77">${t}°C</text>`;
+    if(t>TMIN){const yh=yT(t-0.5);g+=`<line x1="${AXISW}" y1="${yh}" x2="${AXISW+cols*COLW}" y2="${yh}" stroke="#eef3f6" stroke-width="1" stroke-dasharray="2 3"/>`;}
+  }
+  for(let d=0;d<=days;d++){ const x=AXISW+d*3*COLW; g+=`<line x1="${x}" y1="${PADTOP}" x2="${x}" y2="${PADTOP+PLOTH}" stroke="#9fb4c2" stroke-width="1.4"/>`; }
+  for(let c=0;c<cols;c++){ if(c%3!==0){const x=AXISW+c*COLW;g+=`<line x1="${x}" y1="${PADTOP}" x2="${x}" y2="${PADTOP+PLOTH}" stroke="#eef3f6" stroke-width="1"/>`;} }
+  for(let d=1;d<=days;d++){ const x0=AXISW+(d-1)*3*COLW;
+    g+=`<text x="${x0+1.5*COLW}" y="${PADTOP-2}" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2d33">${d}</text>`;
+    for(let si=0;si<3;si++){ g+=`<text x="${x0+si*COLW+COLW/2}" y="${PADTOP+PLOTH+12}" text-anchor="middle" font-size="9" fill="#8894a0">${SHIFTS[si]}</text>`; }
+  }
+  const pts=[];
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(r&&r.cur!=null&&r.cur!==''){ const idx=(d-1)*3+si; pts.push([xCol(idx),yT(clampPlot(+r.cur))]); } }
+  if(pts.length>1){ g+=`<polyline points="${pts.map(p=>p[0]+','+p[1]).join(' ')}" fill="none" stroke="var(--blue)" stroke-width="1.6"/>`; }
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){
+    const r=data.readings[rkey(d,si)]; if(!r)continue; const idx=(d-1)*3+si; const x=xCol(idx);
+    if(r.cur!=null&&r.cur!==''){ const bad=(+r.cur<LOW||+r.cur>HIGH); g+=`<circle cx="${x}" cy="${yT(clampPlot(+r.cur))}" r="3" fill="${bad?'var(--red)':'var(--blue)'}"/>`;
+      if(+r.cur>TMAX||+r.cur<TMIN) g+=`<text x="${x}" y="${yT(clampPlot(+r.cur))-6}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--red)">${r.cur}</text>`; }
+    if(r.hi!=null&&r.hi!=='') g+=`<text x="${x}" y="${yT(clampPlot(+r.hi))+3}" text-anchor="middle" font-size="11" font-weight="800" fill="#b5680f">V</text>`;
+    if(r.lo!=null&&r.lo!=='') g+=`<text x="${x}" y="${yT(clampPlot(+r.lo))+4}" text-anchor="middle" font-size="11" font-weight="800" fill="#1c7ed6">∧</text>`;
+  }
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const idx=(d-1)*3+si; const x=AXISW+idx*COLW; g+=`<rect class="cell-hit" x="${x}" y="${PADTOP}" width="${COLW}" height="${PLOTH}" onclick="openEntry(${d},${si})"></rect>`; }
+
+  let sig='<table class="sig"><tr><th style="width:'+AXISW+'px">簽名</th>';
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; sig+=`<td style="width:${COLW}px" title="${d}日 ${SHIFTS[si]}時">${r&&r.sign?esc(r.sign):''}</td>`; }
+  sig+='</tr></table>';
+
+  const abnRows=Object.keys(data.abn).sort().map(k=>{ const a=data.abn[k]; const [d,s]=k.split('_');
+    return `<tr><td>${d} 日 ${s} 時</td><td><span class="pill p${a.code}">${a.code}</span></td><td>${esc(a.sign||'')}</td><td>${esc(a.result||'')}</td>
+      <td><button class="btn btn-g" style="padding:4px 10px" onclick="openAbn('${d}',${SHIFTS.indexOf(s)})">編輯</button></td></tr>`; }).join('');
+  const abnHtml=`<div class="abn"><h3>異常狀況處理（溫度不在 2–8°C）</h3>
+    <table class="abn-t"><tr><th>日期時段</th><th>處理代號</th><th>簽名</th><th>結果</th><th></th></tr>
+    ${abnRows||'<tr><td colspan="5" style="color:#8894a0">目前無異常紀錄 🎉</td></tr>'}</table></div>`;
+
+  const supRows=(data.superv||[]).map((s,i)=>`<span style="border:1px solid var(--line);border-radius:8px;padding:4px 10px">${esc(s.sign)} · ${esc(s.date)} <a href="#" onclick="delSup(${i});return false" style="color:var(--red);text-decoration:none">✕</a></span>`).join('');
+  const supHtml=`<div class="superv"><b>主管查核／日期（每週一次）：</b>${supRows||'<span style="color:#8894a0">尚無</span>'}
+     <input id="supName" placeholder="主管簽名" style="width:100px"><input id="supDate" type="date" style="width:150px">
+     <button class="btn btn-p noprint" onclick="addSup()">＋ 查核</button></div>`;
+
+  document.getElementById('sheet').innerHTML=`
+    <div class="head">
+      <div class="hosp">${HOSP}</div>
+      <div class="ttl">藥品冰箱溫度查核登錄表</div>
+      <div class="meta">單位：${esc(data.unit)}　${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}</div>
+    </div>
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>
+    ${sig}${abnHtml}${supHtml}
+    <div class="legend">
+      <b>溫度登錄：</b>每班查核者需在上班前完成查檢溫度並登錄。<b>主管每週查核一次。</b><br>
+      <b>呈現方式：</b>現在溫度以 <b style="color:var(--blue)">●</b> 標示並與前一班連線；高溫 <b style="color:#b5680f">V</b>、低溫 <b style="color:#1c7ed6">∧</b>；大於 10℃ 或小於 0℃ 以數字書寫。冷藏藥品應維持 <b>2–8℃</b>。<br>
+      <b>異常代號：</b><span class="pill pA">A</span> 溫度不在 2–8℃（藥物暫移至 2–8℃ 非食物冰箱），30 分鐘內再檢查；<span class="pill pB">B</span> 30 分鐘後未恢復，已通知工務請修；<span class="pill pC">C</span> 溫度恢復正常。<br>
+      <span class="noprint" style="color:#8894a0">＊點格子輸入該班溫度；超出 2–8℃ 會要求填異常處理。資料同步寫回後端 Sheet(fridge_temp)。</span>
+    </div>`;
+  save();
+}
+
+function openEntry(day,si){
+  if(!data.ym){alert('請先選擇年月');return;}
+  const r=data.readings[rkey(day,si)]||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-card">
+    <h3>${day} 日 · ${SHIFTS[si]} 時　溫度登錄</h3>
+    <div class="fld">
+      <button class="btn btn-g" style="width:100%;padding:12px" onclick="document.getElementById('photoIn').click()">📷 拍照自動判讀（現在／高／低）</button>
+      <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none" onchange="visionRead(this.files[0])">
+      <div id="visionMsg" style="font-size:12px;color:var(--soft);margin-top:6px"></div>
+    </div>
+    <div class="fld"><label>現在溫度（°C）＊必填</label><input id="e_cur" type="number" step="0.1" inputmode="decimal" value="${r.cur??''}" autofocus></div>
+    <div class="row2">
+      <div class="fld"><label>高溫 V（選填）</label><input id="e_hi" type="number" step="0.1" value="${r.hi??''}"></div>
+      <div class="fld"><label>低溫 ∧（選填）</label><input id="e_lo" type="number" step="0.1" value="${r.lo??''}"></div>
+    </div>
+    <div class="row2">
+      <div class="fld"><label>刷/輸入員編</label><input id="e_emp" inputmode="numeric" placeholder="例：05845" oninput="document.getElementById('e_sign').value=empName(this.value)||document.getElementById('e_sign').value"></div>
+      <div class="fld"><label>簽名（自動帶入）</label><input id="e_sign" value="${esc(r.sign||curName())}"></div>
+    </div>
+    <div class="foot">
+      <button class="btn btn-g" style="flex:1" onclick="closeModal()">取消</button>
+      <button class="btn btn-p" style="flex:1" onclick="saveEntry(${day},${si})">儲存</button>
+    </div>
+  </div></div>`;
+}
+function saveEntry(day,si){
+  const cur=document.getElementById('e_cur').value.trim();
+  if(cur===''){alert('請輸入現在溫度');return;}
+  const sign=document.getElementById('e_sign').value.trim();
+  if(sign){ localStorage.setItem('fridge_lastName',sign); document.getElementById('nameIn').value=sign; }
+  data.readings[rkey(day,si)]={cur:cur, hi:document.getElementById('e_hi').value.trim(), lo:document.getElementById('e_lo').value.trim(), sign:sign};
+  save(); fridgeWrite(day,si);
+  if(+cur<LOW||+cur>HIGH){ closeModal(); openAbn(day,si,true); }
+  else { closeModal(); render(); }
+}
+function closeModal(){ document.getElementById('modalHost').innerHTML=''; render(); }
+
+function openAbn(day,si,fromEntry){
+  const k=day+'_'+SHIFTS[si]; const a=data.abn[k]||{code:'A',sign:curName(),result:''}; const r=data.readings[k]||{};
+  document.getElementById('modalHost').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-card">
+    <h3>異常狀況處理 · ${day} 日 ${SHIFTS[si]} 時</h3>
+    ${fromEntry?`<div class="warn">現在溫度 ${esc(r.cur)}℃ 不在 2–8℃ 範圍，請登錄處理。</div>`:''}
+    <div class="fld"><label>處理代號</label><select id="a_code">
+      <option value="A"${a.code==='A'?' selected':''}>A · 溫度不在2-8℃，暫移至2-8℃冰箱，30分內再檢查</option>
+      <option value="B"${a.code==='B'?' selected':''}>B · 30分後未恢復，已通知工務請修</option>
+      <option value="C"${a.code==='C'?' selected':''}>C · 溫度恢復正常</option></select></div>
+    <div class="fld"><label>簽名</label><input id="a_sign" value="${esc(a.sign||curName())}"></div>
+    <div class="fld"><label>結果／備註</label><input id="a_result" value="${esc(a.result||'')}" placeholder="例：已回到2-8℃"></div>
+    <div class="foot">
+      ${data.abn[k]?`<button class="btn btn-g" style="flex:1" onclick="delAbn('${k}')">刪除</button>`:''}
+      <button class="btn btn-p" style="flex:2" onclick="saveAbn('${k}')">儲存處理</button>
+    </div>
+  </div></div>`;
+}
+function saveAbn(k){ data.abn[k]={code:document.getElementById('a_code').value,sign:document.getElementById('a_sign').value.trim(),result:document.getElementById('a_result').value.trim()}; save(); closeModal(); }
+function delAbn(k){ delete data.abn[k]; save(); closeModal(); }
+
+function addSup(){ const n=document.getElementById('supName').value.trim(), d=document.getElementById('supDate').value; if(!n||!d){alert('請填主管簽名與日期');return;} data.superv=data.superv||[]; data.superv.push({sign:n,date:d}); save(); render(); }
+function delSup(i){ data.superv.splice(i,1); save(); render(); }
+
+function exportCSV(){
+  const days=daysInMonth(data.ym); let rows=[['日','時','現在溫度','高溫','低溫','簽名','異常代號','異常簽名','結果']];
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]||{}; const a=data.abn[d+'_'+SHIFTS[si]]||{};
+    if((r.cur!=null&&r.cur!=='')||a.code) rows.push([d,SHIFTS[si],r.cur||'',r.hi||'',r.lo||'',r.sign||'',a.code||'',a.sign||'',a.result||'']); }
+  const csv='﻿'+rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url; a.download=`藥品冰箱溫度_${data.unit}_${data.ym||''}.csv`; a.click(); URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>
