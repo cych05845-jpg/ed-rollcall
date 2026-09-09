@@ -172,7 +172,14 @@
   .flagbtn{border:1.5px solid var(--line);background:var(--card);color:var(--ink-soft);font-family:inherit;
     font-size:15px;font-weight:700;padding:11px 16px;border-radius:9px;cursor:pointer;white-space:nowrap}
   .flagbtn.on{background:var(--bad);border-color:var(--bad);color:#fff}
-  .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:17px;padding:7px 11px;border-radius:9px;cursor:pointer}
+  .locate-mini{border:1.5px dashed var(--line);background:var(--card);font-size:17px;padding:7px 11px;border-radius:9px;cursor:pointer;position:relative}
+  .locate-mini.live{border-style:solid;border-color:#2f9e44;background:#ebfbee}
+  .dot-live{position:absolute;top:3px;right:3px;width:9px;height:9px;border-radius:50%;background:#2f9e44;
+    border:1.5px solid #fff;animation:pulseDot 1.6s ease-in-out infinite}
+  @keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.35}}
+  .rt-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .rt-on{background:#2f9e44}.rt-off{background:#adb5bd}
+  .rt-legend{display:flex;gap:14px;justify-content:center;font-size:12px;color:var(--ink-soft);padding:8px 0}
   .li-abn{flex-basis:100%;padding:10px 12px;border-top:1px dashed var(--line);background:var(--bad-soft)}
   .abn-h{font-size:11.5px;font-weight:700;color:var(--bad);margin-bottom:7px}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
@@ -1293,9 +1300,13 @@ function renderRollcall(){
     let cdone=0;its.forEach(o=>{if(state.checks[keyOf(o)])cdone++});
     let tools='';
     if(cat.key==='儀器') tools=`<div class="cat-tools">
-      <span class="tool-pill" onclick="openMap('全部儀器')">📍 儀器定位</span>
+      <span class="tool-pill" onclick="openZoneLocate('${esc(areaById(s.area).name)}')">📍 本區儀器定位${(function(){
+        const zl=LOCED.filter(d=>d.locate&&String(d.zone).includes(areaById(s.area).name));
+        const lv=zl.filter(d=>{const t=rtlsOf(d);return t&&t.live;}).length;
+        return zl.length?`（${lv}/${zl.length} 回報中）`:'';})()}</span>
+      <span class="tool-pill" onclick="openMap('全部儀器')">🗺 全部儀器</span>
       <span class="tool-pill" onclick="alert('保養卡：每班/每週/每月項目（正式版依到期顯示）。')">🛠 保養卡</span></div>
-      <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊已標記 beacon 的儀器，正式版會自動帶入此清單</div>`;
+      <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊只有 devices 表「是否定位」勾選的儀器才會出現 📍；綠點＝標籤主動回報中</div>`;
     const rows=its.map(o=>renderItem(o,s)).join('');
     blocks+=`<div class="cat">
       <div class="cat-h"><span class="cat-ic" style="background:${cat.color}1f;color:${cat.color}">${cat.ic}</span>
@@ -1381,7 +1392,10 @@ function renderItem(o,s){
   const _zn=areaById(s.area)?areaById(s.area).name:'';
   const _owes=owedFor(o.name,_zn);
   const oweTag=_owes.length?`<span class="owe-tag" onclick="event.stopPropagation();showOwedDetail('${esc(o.name).replace(/'/g,"")}','${esc(_zn).replace(/'/g,"")}','${k}')">🔖 欠物中×${_owes.length}</span>`:'';
-  const dev=isDev?`<button class="locate-mini" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="定位">📍</button>`:'';
+  // ★ 只有裝了定位標籤的儀器才顯示 📍；主動回報中顯示綠點
+  const _canLoc=isDev&&hasLocator(o.name);
+  const _liveDev=_canLoc&&matchDevices(o.name).some(d=>{const s=rtlsOf(d);return s&&s.live;});
+  const dev=_canLoc?`<button class="locate-mini${_liveDev?' live':''}" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="${_liveDev?'定位（回報中）':'定位'}">📍${_liveDev?'<span class="dot-live"></span>':''}</button>`:'';
   const repairNote=isDev&&state.reason[k]==='送修'?`<div class="repair-note">🔧 將於 Leader 系統開立請修單（示意）</div>`:'';
   const abn=st==='bad'?`<div class="li-abn">
      <div class="abn-h">⚠ 異常／沒有 — 請註記</div>
@@ -1947,14 +1961,66 @@ async function loadLocator(){
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=devices',{cache:'no-store'});
     const a=await r.json();
     if(Array.isArray(a)&&a.length){
+      const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
       const mapped=a.map(d=>({
         unit:d.unit||d['單位編號']||'', code:d.code||d['財碼']||'',
         name:d.name||d['名稱']||'', cat:d.cat||d['類別']||d.name||d['名稱']||'',
-        zone:d.home_zone||d.zone||d['分區']||'', status:d.status||'—'
+        zone:d.home_zone||d.zone||d['分區']||'', status:d.status||'—',
+        // ★ 保留這兩欄：locate=這台是否有裝定位標籤(150台)，beaconId=對應 RTLS 標籤
+        beaconId:d.beaconId||d['beaconId(選填)']||'',
+        locate:(d.locate===true)||yes(d.locate)||yes(d['是否定位'])
       })).filter(d=>d.code||d.name);
       if(mapped.length) LOCED=mapped;
     }
   }catch(e){console.error('讀定位設備失敗',e);}
+}
+/* ===== RTLS 即時位置（由院內排程推進 Sheet 的 rtls 分頁）=====
+   一筆 = 一個標籤最新位置：{標籤ID, 財碼, 區域, 狀態, 更新時間}
+   RTLS_FRESH_MIN 分鐘內有回報 → 視為「主動回報中」(綠點)；逾時或查無 → 灰點。 */
+let RTLS={}, RTLS_AT='';
+const RTLS_FRESH_MIN=15;
+async function loadRtls(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rtls',{cache:'no-store'});
+    const a=await r.json(); if(!Array.isArray(a))return;
+    const m={};
+    a.forEach(function(o){
+      const tag=String(o['標籤ID']||o.tag||o.beaconId||'').trim();
+      const code=String(o['財碼']||o.code||'').trim();
+      const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
+      const rec={zone:String(o['區域']||o.zone||'').trim(),
+                 floor:String(o['樓層']||o.floor||'').trim(),
+                 online:yes(o['在線']!==undefined?o['在線']:o.online),
+                 power:String(o['電量']||o.power||'').trim(),
+                 at:String(o['更新時間']||o.at||'').trim(),
+                 raw:o};
+      if(tag) m['tag:'+tag]=rec;
+      if(code)m['code:'+code]=rec;
+      if(rec.at&&rec.at>RTLS_AT)RTLS_AT=rec.at;
+    });
+    RTLS=m;
+  }catch(e){console.error('讀 RTLS 即時位置失敗（尚未接入）',e);}
+}
+// 取得某台設備的即時狀態：{live:是否主動回報, zone, at, mins}
+function rtlsOf(d){
+  if(!d)return null;
+  const r=(d.beaconId&&RTLS['tag:'+d.beaconId])||(d.code&&RTLS['code:'+d.code])||null;
+  if(!r)return null;
+  let mins=null;
+  const t=Date.parse(String(r.at).replace(' ','T'));
+  if(!isNaN(t)) mins=Math.floor((Date.now()-t)/60000);
+  // IpsCloud 直接提供 IsOnline，優先採用；沒有才用時間新舊推算
+  const live=(r.online!==undefined)?(!!r.online&&(mins===null||mins<=RTLS_FRESH_MIN))
+                                   :(mins!==null&&mins<=RTLS_FRESH_MIN);
+  const pw=parseFloat(r.power);
+  return {live:live, zone:r.zone, floor:r.floor, at:r.at, mins:mins,
+          power:(isNaN(pw)?null:pw), lowPower:(!isNaN(pw)&&pw>0&&pw<=20)};
+}
+// 這個點班項目是否為「可定位儀器」（只有裝了標籤的才顯示 📍）
+function hasLocator(name){
+  if(!name)return false;
+  return matchDevices(name).some(d=>d.locate);
 }
 function matchDevices(name){
   if(!name||name==='全部儀器') return LOCED.slice();
@@ -1972,21 +2038,59 @@ function showLocatePanel(name){
   closeLocatePanel();
   const wrap=document.createElement('div');wrap.id='locSheet';wrap.className='loc-sheet';
   wrap.onclick=e=>{if(e.target===wrap)closeLocatePanel();};
-  const rows=list.length?list.map(d=>`
-    <div class="loc-item">
-      <div class="loc-item-main"><b>${esc(d.unit||d.name)}</b>
-        <div class="sub">${ZONE_NAME[d.zone]||d.zone||'—'}<span class="loc-st-badge">${esc(d.status||'—')}</span></div></div>
-      <button class="loc-map-btn" onclick="openDeviceMap('${(d.code||'').replace(/'/g,'')}')">地圖</button>
-    </div>`).join('')
-    :'<div class="loc-empty">尚無對應的定位設備<br><span>（在後端 devices 表填入單位編號＋財碼後顯示）</span></div>';
   wrap.innerHTML=`<div class="loc-sheet-card">
     <div class="loc-sheet-h"><span>📍 儀器定位 · ${esc(name)}</span><button class="loc-x" onclick="closeLocatePanel()">✕</button></div>
-    <div class="loc-sheet-body">${rows}</div>
-    <div class="loc-sheet-foot">輕觸「地圖」看位置;地圖中可查該台軌跡</div>
+    <div class="loc-sheet-body">${locRows(list)}</div>
+    <div class="rt-legend"><span><span class="rt-dot rt-on"></span>回報中</span><span><span class="rt-dot rt-off"></span>無訊號</span></div>
+    <div class="loc-sheet-foot">${RTLS_AT?('RTLS 最後更新：'+esc(RTLS_AT)):'RTLS 尚未接入，先顯示登記位置'}</div>
   </div>`;
   document.body.appendChild(wrap);
 }
-function openDeviceMap(code){ window.open('locator/?code='+encodeURIComponent(code),'_blank'); closeLocatePanel(); }
+// 設備列（含即時綠點／最後回報時間）
+function locRows(list){
+  const loc=list.filter(d=>d.locate), plain=list.filter(d=>!d.locate);
+  if(!list.length) return '<div class="loc-empty">尚無對應的定位設備<br><span>（在後端 devices 表填入單位編號＋財碼後顯示）</span></div>';
+  const row=d=>{
+    const s=rtlsOf(d);
+    const on=!!(s&&s.live);
+    const where=(s&&s.zone)?((ZONE_NAME[s.zone]||s.zone)+(s.floor?(' · '+s.floor):'')):(ZONE_NAME[d.zone]||d.zone||'—');
+    const when=s? (s.mins===null?esc(s.at):(s.mins<1?'剛剛':(s.mins<60?(s.mins+' 分鐘前'):(Math.floor(s.mins/60)+' 小時前'))))
+               : (d.locate?'尚無回報':'未裝定位');
+    const bat=(s&&s.power!==null)?`<span class="loc-st-badge" style="${s.lowPower?'color:#e8590c;font-weight:800':''}">${s.lowPower?'🔋 ':''}${s.power}%</span>`:'';
+    return `<div class="loc-item">
+      <div class="loc-item-main"><b>${esc(d.unit||d.name)}</b>
+        <div class="sub"><span class="rt-dot ${on?'rt-on':'rt-off'}"></span>${esc(where)}
+          <span class="loc-st-badge">${esc(when)}</span>${bat}</div></div>
+      ${d.locate?`<button class="loc-map-btn" onclick="openDeviceMap('${(d.code||'').replace(/'/g,'')}')">地圖</button>`:''}
+    </div>`;
+  };
+  let h=loc.map(row).join('');
+  if(plain.length) h+=`<div style="font-size:12px;color:var(--ink-soft);padding:10px 14px 4px">未裝定位標籤（${plain.length} 台）</div>`+plain.map(row).join('');
+  return h;
+}
+/* ★ 一區顯示：列出該分區所有可定位儀器與即時狀態 */
+function openZoneLocate(zoneKeyOrName){
+  const z=String(zoneKeyOrName||'');
+  const list=LOCED.filter(d=>d.locate&&(d.zone===z||(ZONE_NAME[d.zone]||'')===z||String(d.zone).includes(z)));
+  const live=list.filter(d=>{const s=rtlsOf(d);return s&&s.live;}).length;
+  closeLocatePanel();
+  const wrap=document.createElement('div');wrap.id='locSheet';wrap.className='loc-sheet';
+  wrap.onclick=e=>{if(e.target===wrap)closeLocatePanel();};
+  wrap.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>📍 本區儀器定位 · ${esc(ZONE_NAME[z]||z)}</span><button class="loc-x" onclick="closeLocatePanel()">✕</button></div>
+    <div style="padding:10px 16px;font-size:13px;color:var(--ink-soft)">
+      可定位儀器 <b style="color:var(--ink)">${list.length}</b> 台 · 回報中 <b style="color:#2f9e44">${live}</b> 台</div>
+    <div class="loc-sheet-body">${list.length?locRows(list):'<div class="loc-empty">本區沒有已登記的可定位儀器</div>'}</div>
+    <div class="rt-legend"><span><span class="rt-dot rt-on"></span>回報中</span><span><span class="rt-dot rt-off"></span>無訊號</span></div>
+    <div class="loc-sheet-foot">${RTLS_AT?('RTLS 最後更新：'+esc(RTLS_AT)):'RTLS 尚未接入'}</div>
+  </div>`;
+  document.body.appendChild(wrap);
+}
+function openDeviceMap(code){
+  const uid=state.user?('&uid='+encodeURIComponent(state.user.id)):'';
+  window.open('locator/?code='+encodeURIComponent(code)+uid,'_blank');
+  closeLocatePanel();
+}
 function closeLocatePanel(){const e=document.getElementById('locSheet');if(e)e.remove();}
 function renderMap(){
   const s=sheetById(state.sheetId);const area=areaById(s.area);
@@ -2394,7 +2498,13 @@ if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=fmtISO(new Date()); rebindForDate(); }
 (async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog(),loadItemReports(),
-  loadFridgeLog(),loadO2Log(),loadPerms()]); render(); })();
+  loadFridgeLog(),loadO2Log(),loadPerms(),loadRtls()]); render(); })();
+// RTLS 每 2 分鐘自動刷新一次（僅在點班/首頁時，避免無謂流量）
+setInterval(function(){
+  if(!state.user)return;
+  if(state.screen!=='rollcall'&&state.screen!=='home')return;
+  loadRtls().then(function(){ if(state.screen==='rollcall'||state.screen==='home')render(); }).catch(function(){});
+},120000);
 </script>
 </body>
 </html>
