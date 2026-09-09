@@ -151,7 +151,7 @@ async function fridgeWrite(day,si){
 function render(){
   document.getElementById('ymSel').value=data.ym||'';
   const days=daysInMonth(data.ym); const cols=days*3;
-  const W=AXISW+cols*COLW+8, H=PADTOP+PLOTH+18; const mg=minguo(data.ym);
+  const W=AXISW+cols*COLW+8, H=PADTOP+PLOTH+80; const mg=minguo(data.ym);
   let g='';
   g+=`<rect x="${AXISW}" y="${yT(HIGH)}" width="${cols*COLW}" height="${yT(LOW)-yT(HIGH)}" fill="var(--band)"/>`;
   for(let t=TMAX;t>=TMIN;t--){ const y=yT(t); const isRed=(t===HIGH||t===LOW);
@@ -177,9 +177,15 @@ function render(){
   }
   for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const idx=(d-1)*3+si; const x=AXISW+idx*COLW; g+=`<rect class="cell-hit" x="${x}" y="${PADTOP}" width="${COLW}" height="${PLOTH}" onclick="openEntry(${d},${si})"></rect>`; }
 
-  let sig='<table class="sig"><tr><th style="width:'+AXISW+'px">簽名</th>';
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; sig+=`<td style="width:${COLW}px" title="${d}日 ${SHIFTS[si]}時">${r&&r.sign?esc(r.sign):''}</td>`; }
-  sig+='</tr></table>';
+  // 簽名畫進同一張圖表:每欄正下方直書,與溫度點(●)對齊,不會位移
+  g+=`<line x1="${AXISW}" y1="${PADTOP+PLOTH+16}" x2="${AXISW+cols*COLW}" y2="${PADTOP+PLOTH+16}" stroke="#dde5ea"/>`;
+  g+=`<text x="${AXISW-6}" y="${PADTOP+PLOTH+34}" text-anchor="end" font-size="10" fill="#5d6c77">簽名</text>`;
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(!r||!r.sign)continue;
+    const x=xCol((d-1)*3+si); const nm=String(r.sign); let ts='';
+    for(let ci=0;ci<Math.min(nm.length,4);ci++){ ts+=`<tspan x="${x}" dy="${ci===0?0:11}">${esc(nm[ci])}</tspan>`; }
+    g+=`<text x="${x}" y="${PADTOP+PLOTH+28}" text-anchor="middle" font-size="10" fill="#23313b">${ts}</text>`;
+  }
+  const sig='';
 
   const abnRows=Object.keys(data.abn).sort().map(k=>{ const a=data.abn[k]; const [d,s]=k.split('_');
     return `<tr><td>${d} 日 ${s} 時</td><td><span class="pill p${a.code}">${a.code}</span></td><td>${esc(a.sign||'')}</td><td>${esc(a.result||'')}</td>
