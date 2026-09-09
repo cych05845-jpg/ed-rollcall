@@ -135,10 +135,16 @@ async function visionRead(file){
   if(msg)msg.textContent='AI 判讀中…';
   try{
     const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'vision',payload:{image:b64}})});
-    const d=await r.json(); const cur=d.cur??d.current, hi=d.hi??d.max, lo=d.lo??d.min;
+    const raw=await r.text(); let d={}; try{d=JSON.parse(raw);}catch(_){}
+    if(d.error){ if(msg)msg.textContent='後端回報：'+d.error+'（請手動輸入）'; return; }
+    const cur=d.cur??d.current, hi=d.hi??d.max, lo=d.lo??d.min;
+    if(cur==null&&hi==null&&lo==null){
+      if(msg)msg.textContent='後端有回應但沒讀到數字，請手動輸入。後端回傳：'+raw.slice(0,180);
+      return;
+    }
     const set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null&&v!=='')el.value=v;};
     set('e_cur',cur); set('e_hi',hi); set('e_lo',lo);
-    if(msg)msg.textContent=`已判讀：現在 ${cur}℃　高 ${hi}℃　低 ${lo}℃ — 請確認後儲存。`;
+    if(msg)msg.textContent=`已判讀：現在 ${cur??'—'}℃　高 ${hi??'—'}℃　低 ${lo??'—'}℃ — 請確認後儲存。`;
   }catch(e){
     const em=String(e&&e.message||e);
     if(/Failed to fetch|NetworkError|Load failed/i.test(em)){
