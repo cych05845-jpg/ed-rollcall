@@ -469,6 +469,12 @@ async function bindSchedule(forDate){
   }
   return {status:'nomatch'};
 }
+// ---- 附加查核表(藥品冰箱溫度 / 氧氣桶審核) 接點 ----
+const FRIDGE_SHEETS={'peds-triage':'兒童檢傷 藥品冰箱（PT）','obs-1':'留觀 藥品冰箱','obs-2':'留觀 藥品冰箱','obs-cart':'留觀 藥品冰箱'};
+const O2_SHEETS={'treat23':{dept:'治療二、三',qty:10},'peds-area':{dept:'兒科',qty:2},'obs-1':{dept:'留觀',qty:5},'obs-2':{dept:'留觀',qty:5},'obs-cart':{dept:'留觀',qty:5}};
+function curYM(){return (curRcDate()||'').slice(0,7);}
+function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');window.open(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'_blank');}
+function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');window.open(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'_blank');}
 function goTarget(t){
   if(!t) return;
   if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
@@ -959,7 +965,7 @@ function render(){
   if(!state.user)state.screen='login';
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
-    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed}[state.screen]||renderLogin)();
+    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -1005,7 +1011,8 @@ function renderHome(){
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
   const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="state.screen='leader';render()">📋 主管審核 · 未完成提醒</button>`:'';
+     onclick="state.screen='leader';render()">📋 主管簽核 · 完成總表</button>
+     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="openRecords()">📜 簽核／點班紀錄</button>`:'';
   $app.innerHTML=`
   <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
   <div class="topbar"><div class="topbar-in">
@@ -1032,6 +1039,12 @@ function renderHome(){
     ${reviewBtn}
     <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
+    <div class="section-h">附加查核表</div>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openFridge('兒童檢傷 藥品冰箱（PT）')">🌡 冰箱溫度 · 兒童檢傷</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openFridge('留觀 藥品冰箱')">🌡 冰箱溫度 · 留觀</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openO2('治療二、三',10)">🫧 氧氣桶 · 治療二三（10 支）</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openO2('兒科',2)">🫧 氧氣桶 · 兒科（2 支）</button>
+    <button class="btn btn-ghost btn-block" onclick="openO2('留觀',5)">🫧 氧氣桶 · 留觀（5 支）</button>
   </div>`;
 }
 
@@ -1137,6 +1150,13 @@ function renderRollcall(){
 
   // 欠物本：獨立分類圖層（本區未結，直接列出、可點開）
   const _zoneName=(areaById(s.area).name)||'';
+  const _fr=FRIDGE_SHEETS[s.id], _o2=O2_SHEETS[s.id];
+  const extraChecks=(_fr||_o2)?`<div class="card" style="padding:12px 14px;margin-bottom:14px;border-left:4px solid var(--brand)">
+      <div style="font-weight:800;font-size:13px;color:var(--ink-soft);margin-bottom:8px">📋 本區附加查核</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${_fr?`<span class="tool-pill" onclick="openFridge('${_fr}')">🌡 藥品冰箱溫度</span>`:''}
+        ${_o2?`<span class="tool-pill" onclick="openO2('${_o2.dept}',${_o2.qty})">🫧 氧氣桶審核（應 ${_o2.qty} 支）</span>`:''}
+      </div></div>`:'';
   const _znOwed=owedInZone(_zoneName);
   const _znRows=_znOwed.length
     ? _znOwed.slice(0,20).map(o=>`<div class="owe-row">
@@ -1160,6 +1180,7 @@ function renderRollcall(){
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
   <div class="screen wide lvl2">
     ${banner}
+    ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
       <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(state.shift)}）點班結果</div>
       <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
@@ -1606,6 +1627,42 @@ async function loadSignLog(){
   catch(e){console.error('讀完成紀錄失敗',e);}
 }
 async function refreshSignLog(){await loadSignLog();render();}
+let SIGNOFFLOG=[];   // 後端週簽核紀錄 rollcall_signoff
+async function loadSignoffs(){
+  if(!API_URL)return;
+  try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_signoff',{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))SIGNOFFLOG=a;}
+  catch(e){console.error('讀簽核紀錄失敗',e);}
+}
+function p2(n){return String(n).padStart(2,'0');}
+function fmtDTLocal(d){return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes());}
+function fmtLocalFromISO(iso){const d=new Date(iso);return isNaN(d.getTime())?'':fmtDTLocal(d).replace('T',' ');}
+function recDone(r){return !!(r&&(r.isDone==='是'||r.isDone===true));}
+async function openRecords(){ state.screen='records'; render(); await Promise.all([loadSignoffs(),loadSignLog()]); if(state.screen==='records')renderRecords(); }
+function renderRecords(){
+  const map={};
+  (SIGNOFFLOG||[]).forEach(r=>{map[(r.week||r['週次']||'')+'|'+(r.empId||r['員編']||r.by||r['簽核人']||'')]=r;});
+  (state.signoffs||[]).forEach(r=>{map[(r.week||'')+'|'+(r.empId||r.by||'')]=r;});
+  const signs=Object.values(map).sort((a,b)=>String(b.at||b['簽核時間']||'').localeCompare(String(a.at||a['簽核時間']||'')));
+  const signHtml=signs.length?signs.map(r=>`<div class="hist-day"><div class="hist-date">🗓 ${esc(r.week||r['週次']||'')}${(r.weekLabel||r['週範圍'])?(' · '+esc(r.weekLabel||r['週範圍'])):''}</div>
+     <div class="hd-row"><span>簽核人</span><span>${esc(r.by||r['簽核人']||'')}${(r.empId||r['員編'])?(' · '+esc(r.empId||r['員編'])):''}</span></div>
+     <div class="hd-row"><span>簽核時間</span><span>${esc(r.atText||fmtLocalFromISO(r.at)||r['簽核時間']||'')}</span></div></div>`).join('')
+     :'<div class="card" style="text-align:center;color:var(--ink-soft);padding:18px">尚無週簽核紀錄</div>';
+  const logs=(SIGNLOG||[]).slice().sort((a,b)=>String(b.submittedAt||b.date||b['日期']||'').localeCompare(String(a.submittedAt||a.date||a['日期']||'')));
+  const logHtml=logs.length?logs.slice(0,200).map(r=>`<div class="hist-shift"><span>${esc(r.date||r['日期']||'')} · ${SHIFT_NAME[r.shift||r['班別']]||esc(r.shift||r['班別']||'')} · ${esc(r.sheet||r['點班表']||r.sheetId||'')}${(r.assign||r['分工'])?(' '+esc(r.assign||r['分工'])+'半'):''}</span><span>${esc(r.name||r['姓名']||'')} · ${r.done||r['完成項數']||0}/${r.total||r['總項數']||0}${recDone(r)?' ✓':''}</span></div>`).join('')
+     :'<div class="card" style="text-align:center;color:var(--ink-soft);padding:18px;line-height:1.7">尚無人員點班紀錄。<br><span style="font-size:12px">＊點班「提交並簽核」寫入(rollcall_log)接通後,這裡會列出每筆的日期／班別／表／人員／完成度。</span></div>';
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📜 簽核／點班紀錄</div><div class="sub">HN 週簽核 ＋ 人員點班</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide lvl2">
+    <div class="section-h">HN 週班表簽核紀錄（${signs.length}）</div>
+    ${signHtml}
+    <div class="section-h" style="margin-top:16px">人員點班完成紀錄（${logs.length}）</div>
+    ${logHtml}
+    <button class="btn btn-ghost btn-block" style="margin-top:14px" onclick="openRecords()">🔄 重新整理</button>
+  </div>`;
+}
 function last4Weeks(){
   const arr=[],now=new Date();
   const base=new Date(now.getFullYear(),now.getMonth(),now.getDate());
@@ -1619,9 +1676,16 @@ function setSignWeek(k){state.signWeek=k;render();}
 async function doSignoff(){
   if(!(state.user&&(state.user.role==='護理長'||state.user.role==='副護理長'))){alert('僅護理長／副護理長可簽核');return;}
   const wk=state.signWeek;
-  toast('已簽核本週：'+wk);
-  try{ await owedWrite('rollcall_signoff',{week:wk,by:state.user.name,empId:state.user.id,at:new Date().toISOString()}); }
-  catch(e){ console.error('簽核寫入失敗',e); }
+  const el=document.getElementById('signAt');
+  const atLocal=(el&&el.value)?el.value:fmtDTLocal(new Date());
+  const atD=new Date(atLocal); const atISO=isNaN(atD.getTime())?new Date().toISOString():atD.toISOString();
+  const wl=(last4Weeks().find(w=>w.key===wk)||{}).label||'';
+  const rec={week:wk,weekLabel:wl,by:state.user.name,empId:state.user.id,at:atISO,atText:atLocal.replace('T',' ')};
+  state.signoffs=(state.signoffs||[]).filter(r=>!(r.week===wk&&r.empId===rec.empId));
+  state.signoffs.push(rec); store.save();
+  toast('已簽核 '+wk+'（'+rec.atText+'）');
+  try{ await owedWrite('rollcall_signoff',rec); }catch(e){ console.error('簽核寫入失敗',e); }
+  render();
 }
 // 統一推播提醒(v1：本裝置通知；後端FCM接通後升級為跨裝置廣播)
 function undoneSheetsOfWeek(){
@@ -1681,7 +1745,12 @@ function renderLeader(){
       <div class="rem-h">🛠 儀器保養待辦 / 逾期（${maintDue.length}）</div>
       ${maintHtml}
     </div>
+    <div class="card" style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div style="font-weight:700;font-size:14px">🖊 簽核時間（可修改）</div>
+      <input type="datetime-local" id="signAt" value="${fmtDTLocal(new Date())}" style="flex:1;max-width:230px;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)">
+    </div>
     <button class="btn btn-primary btn-block" onclick="doSignoff()">✅ 簽核本週（${state.signWeek}）</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openRecords()">📜 查看簽核／點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="pushRemind()">🔔 推播提醒未完成</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="refreshSignLog()">🔄 重新整理完成紀錄</button>
     <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px">＊完成狀況讀自提交寫回的紀錄（rollcall_log）；保養逾期為示意。<br>＊推播目前為「本裝置通知」示範；跨裝置統一廣播將於後端 FCM 接通後啟用。</div>
