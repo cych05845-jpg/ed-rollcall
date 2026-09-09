@@ -92,6 +92,8 @@
   .tool-pill{font-size:13.5px;font-weight:700;padding:9px 15px;border-radius:10px;border:1.5px solid var(--brand);
     background:var(--brand-soft);color:var(--brand);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .tool-pill:active{opacity:.7}
+  .tool-pill.done{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+  .btn-ghost.done{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
   /* status banner (3rd level completion) — prominent */
   .status-banner{display:flex;align-items:center;gap:14px;padding:18px 18px;border-radius:14px;margin-bottom:16px;font-weight:800;font-size:18px}
   .status-banner.todo{background:var(--warn-soft);color:var(--warn);border:2px solid var(--warn)}
@@ -476,6 +478,11 @@ function curYM(){return (curRcDate()||'').slice(0,7);}
 function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'🌡 藥品冰箱溫度 · '+unit);}
 function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
 function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
+// 用本機紀錄判斷「今天這一區」冰箱/氧氣是否已登錄,回傳簽名者(空=未完成)
+function fridgeDoneToday(unit){ try{const s=localStorage.getItem('fridge_'+unit+'_'+curYM());if(!s)return '';const d=JSON.parse(s);const day=new Date().getDate();for(const k in (d.readings||{})){if(+String(k).split('_')[0]===day)return d.readings[k].sign||'已登錄';}return '';}catch(e){return '';} }
+function o2DoneToday(dept){ try{const s=localStorage.getItem('o2_'+dept+'_'+curYM());if(!s)return '';const d=JSON.parse(s);const day=new Date().getDate();for(const k in (d.marks||{})){if(+String(k).split('_')[1]===day)return d.marks[k].by||'已登錄';}return '';}catch(e){return '';} }
+function fridgeHomeBtn(label,unit){const by=fridgeDoneToday(unit);return `<button class="btn btn-ghost btn-block ${by?'done':''}" style="margin-bottom:8px" onclick="openFridge('${unit}')">🌡 ${label}${by?' · ✓ 已完成（'+esc(by)+'）':''}</button>`;}
+function o2HomeBtn(label,dept,qty){const by=o2DoneToday(dept);return `<button class="btn btn-ghost btn-block ${by?'done':''}" style="margin-bottom:8px" onclick="openO2('${dept}',${qty})">🫧 ${label}${by?' · ✓ 已完成（'+esc(by)+'）':''}</button>`;}
 function renderEmbed(){
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
@@ -483,6 +490,7 @@ function renderEmbed(){
     <button class="back" onclick="state.screen=(state.embedBack||'home');render()">← 返回點班</button></div></div>
   <iframe src="${esc(state.embedUrl||'')}" style="width:100%;height:calc(100vh - 58px);border:none;display:block;background:#eef2f4"></iframe>`;
 }
+window.addEventListener('message',function(e){ if(e&&e.data&&e.data.cmd==='embedBack'){ state.screen=(state.embedBack||'home'); render(); } });
 function goTarget(t){
   if(!t) return;
   if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
@@ -1048,11 +1056,11 @@ function renderHome(){
     <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     <div class="section-h">附加查核表</div>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openFridge('兒童檢傷 藥品冰箱（PT）')">🌡 冰箱溫度 · 兒童檢傷</button>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openFridge('留觀 藥品冰箱')">🌡 冰箱溫度 · 留觀</button>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openO2('治療二、三',10)">🫧 氧氣桶 · 治療二三（10 支）</button>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:8px" onclick="openO2('兒科',2)">🫧 氧氣桶 · 兒科（2 支）</button>
-    <button class="btn btn-ghost btn-block" onclick="openO2('留觀',5)">🫧 氧氣桶 · 留觀（5 支）</button>
+    ${fridgeHomeBtn('冰箱溫度 · 兒童檢傷','兒童檢傷 藥品冰箱（PT）')}
+    ${fridgeHomeBtn('冰箱溫度 · 留觀','留觀 藥品冰箱')}
+    ${o2HomeBtn('氧氣桶 · 治療二三（10 支）','治療二、三',10)}
+    ${o2HomeBtn('氧氣桶 · 兒科（2 支）','兒科',2)}
+    ${o2HomeBtn('氧氣桶 · 留觀（5 支）','留觀',5)}
   </div>`;
 }
 
@@ -1159,11 +1167,12 @@ function renderRollcall(){
   // 欠物本：獨立分類圖層（本區未結，直接列出、可點開）
   const _zoneName=(areaById(s.area).name)||'';
   const _fr=FRIDGE_SHEETS[s.id], _o2=O2_SHEETS[s.id];
-  const extraChecks=(_fr||_o2)?`<div class="card" style="padding:12px 14px;margin-bottom:14px;border-left:4px solid var(--brand)">
+  const _frBy=_fr?fridgeDoneToday(_fr):'', _o2By=_o2?o2DoneToday(_o2.dept):'';
+  const extraChecks=(_fr||_o2)?`<div class="card" style="padding:12px 14px;margin-bottom:14px;border-left:4px solid ${(_fr&&!_frBy)||(_o2&&!_o2By)?'var(--brand)':'var(--ok)'}">
       <div style="font-weight:800;font-size:13px;color:var(--ink-soft);margin-bottom:8px">📋 本區附加查核</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        ${_fr?`<span class="tool-pill" onclick="openFridge('${_fr}')">🌡 藥品冰箱溫度</span>`:''}
-        ${_o2?`<span class="tool-pill" onclick="openO2('${_o2.dept}',${_o2.qty})">🫧 氧氣桶審核（應 ${_o2.qty} 支）</span>`:''}
+        ${_fr?`<span class="tool-pill ${_frBy?'done':''}" onclick="openFridge('${_fr}')">🌡 藥品冰箱溫度${_frBy?' · ✓ 已完成（'+esc(_frBy)+'）':''}</span>`:''}
+        ${_o2?`<span class="tool-pill ${_o2By?'done':''}" onclick="openO2('${_o2.dept}',${_o2.qty})">🫧 氧氣桶審核（應 ${_o2.qty} 支）${_o2By?' · ✓ 已完成（'+esc(_o2By)+'）':''}</span>`:''}
       </div></div>`:'';
   const _znOwed=owedInZone(_zoneName);
   const _znRows=_znOwed.length

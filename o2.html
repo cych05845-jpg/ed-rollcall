@@ -34,9 +34,23 @@
   table.o2 td.mk{color:#0a5b64;font-weight:800;font-size:15px}
   table.o2 td.note{cursor:pointer;font-size:11px;text-align:left;padding:2px 4px;white-space:nowrap;overflow:hidden}
   .hint{font-size:12px;color:var(--soft);margin-top:8px}
+  .qc{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#eef6f7;border:1px solid #bfe0e3;border-radius:10px;padding:10px 12px;margin:0 0 12px}
+  .qc select{padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:16px;font-family:inherit}
+  .qc .go{background:var(--brand);color:#fff;border:none;font-weight:800;padding:11px 16px;border-radius:9px;cursor:pointer;font-size:15px}
+  .wknav{display:flex;gap:10px;align-items:center;justify-content:center;margin:6px 0 12px}
+  .wknav button{border:1.5px solid var(--line);background:#fff;border-radius:8px;padding:7px 16px;font-family:inherit;font-weight:700;cursor:pointer;font-size:14px}
+  .wknav button:disabled{opacity:.4}
+  .o2scroll{overflow-x:auto}
+  .screenview table.o2 td.cell{height:36px}
+  .screenview table.o2 th.sh{width:auto}
+  .printview{display:none}
+  .weekpage .f-top,.weekpage .f-title,.weekpage .crit{margin-top:0}
   @media print{
-    body{background:#fff}.bar,.hint{display:none!important}
-    .wrap{max-width:none;padding:0}.form{box-shadow:none;margin:0;max-width:none;padding:6mm}
+    body{background:#fff}.bar,.hint,.qc,.wknav,.screenview{display:none!important}
+    .wrap{max-width:none;padding:0}.form{box-shadow:none;margin:0;max-width:none;padding:4mm}
+    .printview{display:block!important}
+    .weekpage{page-break-after:always}
+    .weekpage:last-child{page-break-after:auto}
     @page{size:A4 landscape;margin:6mm}
   }
 </style>
@@ -44,7 +58,10 @@
 <body>
 <div class="wrap">
   <div class="bar">
-    <h1>🫧 氧氣桶安全維護審核標準</h1>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-w" onclick="goBack()" title="返回">←</button>
+      <h1>🫧 氧氣桶安全維護審核標準</h1>
+    </div>
     <div class="ctrls">
       <input id="deptIn" placeholder="科別（如 急診）" style="width:120px">
       <input type="month" id="ymSel">
@@ -60,6 +77,7 @@
 <div id="modalHost"></div>
 
 <script>
+function goBack(){ try{ if(window.parent&&window.parent!==window){ window.parent.postMessage({cmd:'embedBack'},'*'); return; } }catch(e){} if(history.length>1) history.back(); else location.href='index.html'; }
 const HOSP_ZH="財團法人　嘉義基督教醫院";
 const HOSP_EN="CHIA-YI CHRISTIAN HOSPITAL";
 const REV="103.03.25 修訂";
@@ -105,41 +123,70 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','
 function curName(){return (document.getElementById('nameIn').value||'').trim();}
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
 
-function render(){
-  document.getElementById('ymSel').value=data.ym||'';
-  const days=daysInMonth(data.ym), mg=minguo(data.ym);
-  const crit=`<div class="crit"><b>評值項目：</b><br>
-    1. 氧氣桶外觀：a. 懸掛氧氣流量使用參考表、b. 有懸掛「滿」或「空」掛牌<br>
-    2. 氧氣桶功能：a. 打開氧氣桶時流量表有浮動、無破損、表接觸無漏氣、b. 關閉氧氣桶時桶壓與流量歸零、c. 壓力表保持 500psi(35kg/cm²) 以上（以下應以空桶處理）<br>
-    3. 固定存放位置</div>`;
-  let h1='<tr><th class="rowh" rowspan="2">評值項目</th>';
-  for(let d=1;d<=days;d++) h1+=`<th class="dateh" colspan="3">${d}</th>`;
-  h1+='</tr>';
-  let h2='<tr>';
-  for(let d=1;d<=days;d++) for(let si=0;si<3;si++) h2+=`<th class="sh">${SHIFTS[si]}</th>`;
-  h2+='</tr>';
-  let body='';
-  CRIT.forEach(([code])=>{
-    body+=`<tr><th class="rowh">${code}</th>`;
-    for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const m=data.marks[ck(code,d,si)];
-      body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="toggle('${code}',${d},${si})">${m?'✓':''}</td>`; }
-    body+='</tr>';
-  });
-  body+='<tr><th class="rowh">備註</th>';
-  for(let d=1;d<=days;d++){ const n=data.notes[d]||''; body+=`<td class="note" colspan="3" title="${esc(n)}" onclick="editNote(${d})">${esc(n)}</td>`; }
-  body+='</tr>';
-  document.getElementById('form').innerHTML=`
-    <div class="f-top">
+let wkIdx=null;
+function monthChunks(){ const days=daysInMonth(data.ym); const a=[]; for(let s=1;s<=days;s+=7){const c=[];for(let d=s;d<=Math.min(s+6,days);d++)c.push(d);a.push(c);} return a; }
+function defaultWk(){ const t=new Date(),ym=data.ym; if(ym){const[y,m]=ym.split('-').map(Number); if(t.getFullYear()===y&&t.getMonth()+1===m)return Math.floor((t.getDate()-1)/7);} return 0; }
+function headBlock(mg){
+  return `<div class="f-top">
       <div class="f-hosp">${HOSP_ZH}<br><span class="en">${HOSP_EN}</span></div>
-      <div class="f-rev">${REV}</div>
-    </div>
+      <div class="f-rev">${REV}</div></div>
     <div class="f-title">護理部－<span class="blank">${esc(data.dept||'')}</span>氧氣桶安全維護審核標準</div>
     <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
       <span>${data.qty?('應有氧氣桶數量：<b>'+esc(data.qty)+'</b> 支（請確認數量與功能）'):''}</span>
-      <span>${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}</span>
+      <span>${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}</span></div>
+    <div class="crit"><b>評值項目：</b><br>
+      1. 氧氣桶外觀：a. 懸掛氧氣流量使用參考表、b. 有懸掛「滿」或「空」掛牌<br>
+      2. 氧氣桶功能：a. 打開氧氣桶時流量表有浮動、無破損、表接觸無漏氣、b. 關閉氧氣桶時桶壓與流量歸零、c. 壓力表保持 500psi(35kg/cm²) 以上（以下應以空桶處理）<br>
+      3. 固定存放位置</div>`;
+}
+function chunkTable(daysArr){
+  let h1='<tr><th class="rowh" rowspan="2">評值項目</th>';
+  daysArr.forEach(d=> h1+=`<th class="dateh" colspan="3">${d}</th>`); h1+='</tr>';
+  let h2='<tr>'; daysArr.forEach(()=>{ for(let si=0;si<3;si++) h2+=`<th class="sh">${SHIFTS[si]}</th>`; }); h2+='</tr>';
+  let body='';
+  CRIT.forEach(([code])=>{ body+=`<tr><th class="rowh">${code}</th>`;
+    daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const m=data.marks[ck(code,d,si)];
+      body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="toggle('${code}',${d},${si})">${m?'✓':''}</td>`; } });
+    body+='</tr>'; });
+  body+='<tr><th class="rowh">備註</th>';
+  daysArr.forEach(d=>{ const n=data.notes[d]||''; body+=`<td class="note" colspan="3" title="${esc(n)}" onclick="editNote(${d})">${esc(n)}</td>`; });
+  body+='</tr>';
+  return `<table class="o2">${h1}${h2}${body}</table>`;
+}
+function gotoWk(i){ const c=monthChunks(); if(i<0||i>=c.length)return; wkIdx=i; render(); }
+function quickDone(){
+  if(!data.ym){alert('請先選年月');return;}
+  const day=+document.getElementById('qcDay').value, sh=document.getElementById('qcShift').value, si=SHIFTS.indexOf(sh);
+  const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm);
+  CRIT.forEach(([code])=>{ const k=ck(code,day,si); if(!data.marks[k]){ data.marks[k]={by:nm,at:stamp()}; o2Write(code,day,si); } });
+  save(); render();
+}
+function render(){
+  document.getElementById('ymSel').value=data.ym||'';
+  const days=daysInMonth(data.ym), mg=minguo(data.ym);
+  const chunks=monthChunks();
+  if(wkIdx===null||wkIdx>=chunks.length) wkIdx=Math.min(defaultWk(),Math.max(0,chunks.length-1));
+  const t=new Date();
+  const defDay=(()=>{const ym=data.ym;if(ym){const[y,m]=ym.split('-').map(Number);if(t.getFullYear()===y&&t.getMonth()+1===m)return t.getDate();}return chunks.length?chunks[wkIdx][0]:1;})();
+  const defShift=(()=>{const h=t.getHours();return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N';})();
+  const dayOpts=Array.from({length:days},(_,i)=>`<option ${(i+1)===defDay?'selected':''}>${i+1}</option>`).join('');
+  const shOpts=SHIFTS.map(s=>`<option ${s===defShift?'selected':''}>${s}</option>`).join('');
+  const qc=`<div class="qc"><b>快速完成</b>　日 <select id="qcDay">${dayOpts}</select>　班 <select id="qcShift">${shOpts}</select>
+     <button class="go" onclick="quickDone()">✅ 本班全部正常（一鍵打勾）</button>
+     <span style="font-size:12px;color:var(--soft)">有異常的項目再單獨點掉那一格</span></div>`;
+  const cur=chunks.length?chunks[wkIdx]:[];
+  const wknav=`<div class="wknav"><button onclick="gotoWk(${wkIdx-1})" ${wkIdx<=0?'disabled':''}>◀ 上週</button>
+     <b>第 ${wkIdx+1} 週　${cur.length?(cur[0]+'–'+cur[cur.length-1]+' 日'):''}</b>
+     <button onclick="gotoWk(${wkIdx+1})" ${wkIdx>=chunks.length-1?'disabled':''}>下週 ▶</button></div>`;
+  const printAll=chunks.map((c,i)=>`<div class="weekpage">${headBlock(mg)}<div style="text-align:center;font-weight:700;margin:2px 0 6px">第 ${i+1} 週（${c[0]}–${c[c.length-1]} 日）</div>${chunkTable(c)}</div>`).join('');
+  document.getElementById('form').innerHTML=`
+    <div class="screenview">
+      ${headBlock(mg)}
+      ${qc}
+      ${wknav}
+      <div class="o2scroll">${chunkTable(cur)}</div>
     </div>
-    ${crit}
-    <table class="o2">${h1}${h2}${body}</table>`;
+    <div class="printview">${printAll}</div>`;
   save();
 }
 function toggle(code,day,si){
