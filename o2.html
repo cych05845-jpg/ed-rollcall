@@ -97,6 +97,7 @@ const P=new URLSearchParams(location.search);
 let data=startData();
 initControls();
 render();
+syncFromServer();
 
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
@@ -116,13 +117,31 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('o2_lastName')||''; nm.onchange=()=>localStorage.setItem('o2_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('o2_lastName',n); } };
 }
-function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); }
+function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); syncFromServer(); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function curName(){return (document.getElementById('nameIn').value||'').trim();}
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
+/* 從後端載入本科別本月已勾選的紀錄，與本機合併 → 換裝置看到的都一樣。 */
+async function syncFromServer(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check',{cache:'no-store'});
+    const a=await r.json(); if(!Array.isArray(a))return;
+    let n=0;
+    a.forEach(function(o){
+      const dept=String(o['科別']||o.dept||''), ym=String(o['年月']||o.ym||'');
+      if(dept!==String(data.dept)||ym!==String(data.ym))return;
+      const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||''), crit=String(o['項目']||o.crit||'');
+      const si=SHIFTS.indexOf(sh); if(!day||si<0||!crit)return;
+      data.marks[ck(crit,day,si)]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };
+      n++;
+    });
+    if(n){ save(); render(); }
+  }catch(e){ console.error('同步後端氧氣紀錄失敗（先用本機資料）',e); }
+}
 
 var wkIdx=null;
 function monthChunks(){ const days=daysInMonth(data.ym); const a=[]; for(let s=1;s<=days;s+=7){const c=[];for(let d=s;d<=Math.min(s+6,days);d++)c.push(d);a.push(c);} return a; }

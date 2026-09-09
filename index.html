@@ -345,6 +345,78 @@ const ACCOUNTS=[
   {id:"12706",name:"陳盈利",title:"技術員",role:"點班人員",active:true},
   {id:"15896",name:"龔鈺雯",title:"事務員",role:"點班人員",active:true}
 ];
+
+/* ========== 權限模型（單一事實來源）==========
+   ★ 要調整誰有權限，只改下面這兩行員編名單，其他都不用動。
+   角色：
+     護理長 / 副護理長  → 全權（管項目、結案、看月結）
+     財管組長 CAISHI_LEAD → 管點班項目、欠物結案、月結統計
+     財管組負責人 CAISHI  → 欠物結案、月結統計（每月清點）
+     當班 leader（小組長以上）→ 歸還見證人
+     一般點班人員         → 登記欠物、回報項目有誤
+*/
+const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
+const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
+const WITNESS_TITLES  = ["小組長","護理長","副護理長"];   // 預設可見證的職稱
+
+/* ★ 權限由護理長／副護理長在 App 內「👥 權限設定」指派，存後端 staff_perm 表，跨裝置一致。
+   PERMS[員編] = {lead:財管組長, caishi:財管組負責人, witness:見證資格}
+   有設定過的以設定為準；沒設定過的沿用上面的預設與職稱判斷。 */
+let PERMS={};
+async function loadPerms(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=staff_perm',{cache:'no-store'});
+    const a=await r.json(); if(!Array.isArray(a))return;
+    const m={}; const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
+    a.forEach(function(o){
+      const id=String(o['員編']||o.id||'').trim(); if(!id)return;
+      m[id]={lead:yes(o['財管組長']||o.lead), caishi:yes(o['財管負責人']||o.caishi), witness:yes(o['見證資格']||o.witness)};
+    });
+    PERMS=m;
+  }catch(e){console.error('讀權限設定失敗，改用預設',e);}
+}
+function permOf(id){ return PERMS[String(id)]||null; }
+
+function acctOf(u){ if(!u)return null; return ACCOUNTS.find(a=>a.id===u.id)||null; }
+function isBoss(u){ u=u||state.user; if(!u)return false; return u.role==='護理長'||u.role==='副護理長'; }
+function isCaishiLead(u){ u=u||state.user; if(!u)return false;
+  const p=permOf(u.id); if(p)return !!p.lead;
+  if(CAISHI_LEAD_IDS.indexOf(u.id)>=0)return true;
+  const a=acctOf(u); return !!(a&&(a.caishiLead||(a.note&&String(a.note).includes('財管組長'))));
+}
+function isCaishi(u){ u=u||state.user; if(!u)return false;
+  if(isCaishiLead(u))return true;
+  const p=permOf(u.id); if(p)return !!p.caishi;
+  if(CAISHI_IDS.indexOf(u.id)>=0)return true;
+  const a=acctOf(u); return !!(a&&(a.caishi||(a.note&&String(a.note).includes('財管'))));
+}
+function isWitnessRank(u){ if(!u)return false;
+  const a=acctOf(u)||u;
+  const p=permOf(a.id); if(p&&p.witness)return true;          // 額外授予見證資格
+  return WITNESS_TITLES.indexOf(String(a.title||''))>=0;      // 預設：小組長以上
+}
+// 統一能力入口：can('owed.close') / can('items.edit') …
+function can(cap,u){ u=u||state.user; if(!u)return false;
+  switch(cap){
+    case 'owed.add':      return true;                          // 全員可登記
+    case 'owed.close':    return isBoss(u)||isCaishi(u);        // 結案（仍須見證）
+    case 'owed.editAny':  return isBoss(u)||isCaishiLead(u);    // 改別人的欠物
+    case 'owed.monthly':  return isBoss(u)||isCaishi(u);        // 每月清點統計
+    case 'items.edit':    return isBoss(u)||isCaishiLead(u);    // 管理點班項目
+    case 'items.report':  return true;                          // 全員可回報項目有誤
+    case 'witness':       return isWitnessRank(u);              // 當歸還見證人
+    case 'perm.manage':   return isBoss(u);                     // 指派權限（僅 HN／AHN）
+    default: return false;
+  }
+}
+function roleLabel(u){ u=u||state.user; if(!u)return '';
+  if(isBoss(u))return u.role;
+  if(isCaishiLead(u))return '財管組長';
+  if(isCaishi(u))return '財管組負責人';
+  const a=acctOf(u); return (a&&a.title)||'點班人員';
+}
+
 const AREAS=[
   {id:"triage",name:"檢傷",color:"#099268",sort:1},
   {id:"peds",name:"兒童",color:"#C2255C",sort:2},
@@ -371,14 +443,35 @@ const SHEETS=[
   {id:"leader",name:"Leader",area:"leader",sort:1,ops:1}
 ];
 // ===================== 後端(Google Sheet + AI,單一來源) =====================
-const API_URL='https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec';   // 點班清單來源 + AI 後端;留空=用內建清單、AI停用
+const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';   // 點班清單來源 + AI 後端;留空=用內建清單、AI停用
 async function loadItems(){
   if(!API_URL)return;
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=items',{cache:'no-store'});
     const rows=await r.json();
-    if(Array.isArray(rows)&&rows.length) ITEMS=rows.map(x=>Array.isArray(x)?x:[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'']);
+    if(Array.isArray(rows)&&rows.length) ITEMS=rows.map(x=>Array.isArray(x)?x
+      :[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'',(x.active===false||x.active==='FALSE'||x.active==='停用')?'停用':'']);
   }catch(e){console.error('讀點班清單失敗,改用內建清單',e);}
+}
+// 項目回報（一般人員反映項目有誤 → 財管組長處理）
+let ITEM_REPORTS=[];
+async function loadItemReports(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=item_report',{cache:'no-store'});
+    const a=await r.json();
+    if(Array.isArray(a)) ITEM_REPORTS=a.map(o=>({
+      id:o.id||o['ID']||('R'+Math.random().toString(36).slice(2,8)),
+      sheet:o.sheet||o['分區']||'', item:o.item||o['項目']||'',
+      issue:o.issue||o['問題']||'', by:o.by||o['回報人']||'',
+      at:o.at||o['時間']||'', status:o.status||o['狀態']||'待處理'
+    })).filter(o=>o.status!=='已處理');
+  }catch(e){console.error('讀項目回報失敗',e);}
+}
+async function itemsWrite(task,payload){
+  if(!API_URL){alert('尚未設定後端 API_URL');return {ok:false};}
+  try{const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});return await r.json();}
+  catch(e){return {ok:false,error:String(e)};}
 }
 function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((d.getDay()+6)%7));const w1=new Date(d.getFullYear(),0,4);return d.getFullYear()+'-W'+String(1+Math.round(((d-w1)/86400000-3+((w1.getDay()+6)%7))/7)).padStart(2,'0');}
 // 點班提交 → 寫回後端完成紀錄(週五簽核/找未完成的地基)
@@ -479,8 +572,44 @@ function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name
 function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
 function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
 // 用本機紀錄判斷「今天這一區」冰箱/氧氣是否已登錄,回傳簽名者(空=未完成)
-function fridgeDoneToday(unit){ try{const s=localStorage.getItem('fridge_'+unit+'_'+curYM());if(!s)return '';const d=JSON.parse(s);const day=new Date().getDate();for(const k in (d.readings||{})){if(+String(k).split('_')[0]===day)return d.readings[k].sign||'已登錄';}return '';}catch(e){return '';} }
-function o2DoneToday(dept){ try{const s=localStorage.getItem('o2_'+dept+'_'+curYM());if(!s)return '';const d=JSON.parse(s);const day=new Date().getDate();for(const k in (d.marks||{})){if(+String(k).split('_')[1]===day)return d.marks[k].by||'已登錄';}return '';}catch(e){return '';} }
+/* 附加查核完成狀態：以「後端紀錄」為準（跨裝置一致），連不到後端才退回本機快取。
+   日與月都取自點班日期(curRcDate)，補點過去日期也不會對錯。 */
+function rcYMD(){
+  const s=(typeof curRcDate==='function'&&curRcDate())||new Date().toISOString().slice(0,10);
+  return { ym:String(s).slice(0,7), day:String(+String(s).slice(8,10)) };
+}
+function fridgeDoneToday(unit){
+  const t=rcYMD();
+  try{
+    for(let i=(FRIDGELOG||[]).length-1;i>=0;i--){ const r=FRIDGELOG[i]||{};
+      if(String(r['單位']||r.unit||'')===String(unit)
+      && String(r['年月']||r.ym||'')===t.ym
+      && String(+(r['日']||r.day||0))===t.day)
+        return String(r['簽名']||r.sign||'已登錄');
+    }
+  }catch(e){}
+  try{ const s=localStorage.getItem('fridge_'+unit+'_'+t.ym); if(!s)return '';
+    const d=JSON.parse(s);
+    for(const k in (d.readings||{})){ if(String(+String(k).split('_')[0])===t.day) return d.readings[k].sign||'已登錄'; }
+  }catch(e){}
+  return '';
+}
+function o2DoneToday(dept){
+  const t=rcYMD();
+  try{
+    for(let i=(O2LOG||[]).length-1;i>=0;i--){ const r=O2LOG[i]||{};
+      if(String(r['科別']||r.dept||'')===String(dept)
+      && String(r['年月']||r.ym||'')===t.ym
+      && String(+(r['日']||r.day||0))===t.day)
+        return String(r['簽名']||r.by||'已登錄');
+    }
+  }catch(e){}
+  try{ const s=localStorage.getItem('o2_'+dept+'_'+t.ym); if(!s)return '';
+    const d=JSON.parse(s);
+    for(const k in (d.marks||{})){ if(String(+String(k).split('_')[1])===t.day) return d.marks[k].by||'已登錄'; }
+  }catch(e){}
+  return '';
+}
 function fridgeHomeBtn(label,unit){const by=fridgeDoneToday(unit);return `<button class="btn btn-ghost btn-block ${by?'done':''}" style="margin-bottom:8px" onclick="openFridge('${unit}')">🌡 ${label}${by?' · ✓ 已完成（'+esc(by)+'）':''}</button>`;}
 function o2HomeBtn(label,dept,qty){const by=o2DoneToday(dept);return `<button class="btn btn-ghost btn-block ${by?'done':''}" style="margin-bottom:8px" onclick="openO2('${dept}',${qty})">🫧 ${label}${by?' · ✓ 已完成（'+esc(by)+'）':''}</button>`;}
 function renderEmbed(){
@@ -490,7 +619,13 @@ function renderEmbed(){
     <button class="back" onclick="state.screen=(state.embedBack||'home');render()">← 返回點班</button></div></div>
   <iframe src="${esc(state.embedUrl||'')}" style="width:100%;height:calc(100vh - 58px);border:none;display:block;background:#eef2f4"></iframe>`;
 }
-window.addEventListener('message',function(e){ if(e&&e.data&&e.data.cmd==='embedBack'){ state.screen=(state.embedBack||'home'); render(); } });
+window.addEventListener('message',function(e){
+  if(e&&e.data&&e.data.cmd==='embedBack'){
+    state.screen=(state.embedBack||'home'); render();
+    // 從冰箱/氧氣表返回後，重新抓後端紀錄，完成狀態才會即時更新（且跨裝置一致）
+    Promise.all([loadFridgeLog(),loadO2Log()]).then(function(){ render(); }).catch(function(){});
+  }
+});
 function goTarget(t){
   if(!t) return;
   if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
@@ -950,8 +1085,8 @@ const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','�
 
 // item key & filtering
 function itemsOf(sheetId,half){
-  return ITEMS.map((it,i)=>({i,sheet:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4]}))
-              .filter(o=>o.sheet===sheetId && (!half || o.assign===half));
+  return ITEMS.map((it,i)=>({i,sheet:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4],off:it[5]==='停用'}))
+              .filter(o=>o.sheet===sheetId && !o.off && (!half || o.assign===half));
 }
 function keyOf(o){return o.sheet+'|'+o.i}
 
@@ -981,7 +1116,8 @@ function render(){
   if(!state.user)state.screen='login';
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
-    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed}[state.screen]||renderLogin)();
+    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed,
+    owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -1026,9 +1162,13 @@ function renderHome(){
   const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
-  const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+  const reviewBtn=(isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="openLeader()">📋 主管簽核 · 完成總表</button>
-     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="openRecords()">📜 簽核／點班紀錄</button>`:'';
+     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="openRecords()">📜 簽核／點班紀錄</button>`:'')
+   + (can('items.edit')?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+     onclick="openItemsAdmin()">🧾 點班項目管理${ITEM_REPORTS.length?(' · '+ITEM_REPORTS.length+' 則待處理'):''}</button>`:'')
+   + (can('perm.manage')?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+     onclick="openPermAdmin()">👥 權限設定（財管組・見證資格）</button>`:'');
   $app.innerHTML=`
   <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
   <div class="topbar"><div class="topbar-in">
@@ -1279,7 +1419,9 @@ async function loadOwed(){
         zone:o.zone||o['分區']||'', date:o.date||o['日期']||'',
         item:o.item||o['物品']||'', names:o.names||o['名單']||'',
         status:o.status||o['狀態']||'欠物中', way:o.way||o['處理方式']||'',
-        closer:o.closer||o['結案人']||'', note:o.note||o['備註']||''
+        closer:o.closer||o['結案人']||'', note:o.note||o['備註']||'',
+        by:o.by||o['登記人']||'', byId:o.byId||o['登記員編']||'',
+        witness:o.witness||o['見證人']||'', at:o.at||o['時間']||''
       })).filter(o=>o.item && o.status!=='已返還結案');
       if(mapped.length) OWED=mapped;
     }
@@ -1291,12 +1433,15 @@ async function owedWrite(task,payload){
   try{const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});return await r.json();}
   catch(e){return {ok:false,error:String(e)};}
 }
-// 結案權限:護理長/副護理長 或 帳號標記財管
-function canCloseOwed(){
-  const u=state.user; if(!u)return false;
-  if(u.role==='護理長'||u.role==='副護理長')return true;
-  const a=ACCOUNTS.find(x=>x.id===u.id);
-  return !!(a&&(a.caishi||(a.note&&String(a.note).includes('財管'))));
+// 結案權限（改走統一權限模型）：護理長/副護理長 或 財管組負責人/組長
+function canCloseOwed(){ return can('owed.close'); }
+// 這筆欠物本人是否可自行修改（未結案前）
+function canEditOwed(o){
+  if(!o||!state.user)return false;
+  if(can('owed.editAny'))return true;
+  if(o.status&&o.status!=='欠物中')return false;
+  const me=normName(state.user.name);
+  return normName(o.names).includes(me)||normName(o.by||'')===me;
 }
 const OWE_ZONES=['檢傷','急救室','治療','留觀區','第一診間','兒童','負壓室'];
 function openOwedAdd(zone){
@@ -1321,18 +1466,62 @@ async function submitOwedAdd(){
         n=document.getElementById('ow_n').value.trim(), r=document.getElementById('ow_r').value.trim();
   if(!i){alert('請輸入物品');return;}
   const today=new Date().toISOString().slice(0,10);
-  OWED.push({id:'tmp'+Date.now(),zone:z,date:today,item:i,names:n,status:'欠物中',way:'',closer:'',note:r});
+  const by=state.user?state.user.name:'', byId=state.user?state.user.id:'';
+  OWED.push({id:'tmp'+Date.now(),zone:z,date:today,item:i,names:n,status:'欠物中',way:'',closer:'',note:r,by:by,byId:byId});
   closeOwedAdd();renderOwed();
-  await owedWrite('owed_add',{zone:z,item:i,names:n,note:r,date:today});
+  await owedWrite('owed_add',{zone:z,item:i,names:n,note:r,date:today,by:by,byId:byId,at:new Date().toISOString()});
   await loadOwed();renderOwed();
 }
-async function owedCloseUI(id){
-  if(!canCloseOwed()){alert('只有護理長/副護理長或財管負責人可結案');return;}
-  const way=prompt('處理方式：輸入「歸還」或「報失賠償」','歸還');
-  if(way===null)return;
+// 歸還結案：財管組負責人/護理長操作 ＋ 必須刷「當班 leader」員編見證
+function owedCloseUI(id){
+  if(!canCloseOwed()){alert('結案權限僅限護理長／副護理長／財管組負責人。\n請洽財管組負責人辦理歸還。');return;}
+  const o=OWED.find(x=>x.id===id); if(!o){alert('找不到這筆欠物');return;}
+  closeOwedClose();
+  const w=document.createElement('div');w.id='oweClose';w.className='loc-sheet';
+  w.onclick=e=>{if(e.target===w)closeOwedClose();};
+  w.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>📦 歸還結案</span><button class="loc-x" onclick="closeOwedClose()">✕</button></div>
+    <div class="loc-sheet-body" style="padding:14px 16px">
+      <div class="card" style="padding:10px 12px;margin-bottom:10px">
+        <b>${esc(o.item||'')}</b>
+        <div class="owe-sub">${esc(o.zone||'')} · ${esc(o.names||'')} · 登記 ${esc(o.date||'')}</div>
+      </div>
+      <label class="owe-f">處理方式
+        <select id="oc_way"><option>歸還</option><option>報失賠償</option><option>報廢</option></select></label>
+      <label class="owe-f">見證人員編（當班 leader 刷卡）
+        <input id="oc_wid" inputmode="numeric" placeholder="請當班 leader 刷/輸入員編"
+               oninput="owedWitnessLookup()"></label>
+      <div id="oc_wname" style="font-size:13px;font-weight:700;margin:-4px 2px 10px;color:var(--ink-soft)">尚未見證</div>
+      <label class="owe-f">備註<input id="oc_note" placeholder="選填"></label>
+      <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitOwedClose('${o.id}')">確認結案</button>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;text-align:center">
+        ＊須由當班 leader（小組長以上）刷員編見證，見證人與時間會一併記錄。</div>
+    </div></div>`;
+  document.body.appendChild(w);
+}
+function closeOwedClose(){const e=document.getElementById('oweClose');if(e)e.remove();}
+let _owedWitness=null;
+function owedWitnessLookup(){
+  const v=(document.getElementById('oc_wid').value||'').trim();
+  const el=document.getElementById('oc_wname');
+  const a=ACCOUNTS.find(x=>x.id===v);
+  if(!a){_owedWitness=null;el.textContent=v?'查無此員編':'尚未見證';el.style.color='var(--ink-soft)';return;}
+  if(!isWitnessRank(a)){_owedWitness=null;
+    el.textContent=`${a.name}（${a.title}）— 非小組長以上，不可見證`;el.style.color='var(--bad,#E03131)';return;}
+  _owedWitness=a;el.textContent=`✓ 見證人：${a.name}（${a.title}）`;el.style.color='var(--ok,#0f7a86)';
+}
+async function submitOwedClose(id){
+  if(!_owedWitness){alert('請先請當班 leader（小組長以上）刷員編見證');return;}
+  const way=document.getElementById('oc_way').value;
+  const note=document.getElementById('oc_note').value.trim();
+  const at=new Date().toISOString();
+  closeOwedClose();
   OWED=OWED.filter(o=>o.id!==id);renderOwed();
-  await owedWrite('owed_close',{id,status:'已返還結案',way:way||'',closer:state.user.name});
+  await owedWrite('owed_close',{id,status:'已返還結案',way:way,closer:state.user.name,
+    closerId:state.user.id,witness:_owedWitness.name,witnessId:_owedWitness.id,note:note,at:at});
+  _owedWitness=null;
   await loadOwed();renderOwed();
+  toast('已結案，見證人已記錄');
 }
 // 點班內一鍵記欠物
 async function oweFromRollcall(zone,item,reason){
@@ -1435,24 +1624,322 @@ function renderOwed(){
     const rows=its.map(o=>{
       const badge=o.status&&o.status!=='欠物中'?`<span class="owe-badge">${esc(o.status)}</span>`:'';
       const closeBtn=can?`<button class="owe-close" onclick="owedCloseUI('${o.id}')">蓋回結案</button>`:'';
+      const editBtn=(!can&&canEditOwed(o))?`<button class="owe-close" style="background:none;border:1.5px solid var(--line);color:var(--ink)" onclick="openOwedEdit('${o.id}')">修改</button>`:'';
+      const byTxt=o.by?(' · 登記：'+esc(o.by)):'';
       return `<div class="owe-row">
         <div class="owe-main"><b>${esc(o.item||'')}</b>${badge}
-          <div class="owe-sub">${esc(o.names||'')}${o.note?(' · '+esc(o.note)):''}</div></div>
-        <div class="owe-right"><div class="owe-date">${esc(o.date||'')}</div>${closeBtn}</div></div>`;
+          <div class="owe-sub">${esc(o.names||'')}${o.note?(' · '+esc(o.note)):''}${byTxt}</div></div>
+        <div class="owe-right"><div class="owe-date">${esc(o.date||'')}</div>${closeBtn}${editBtn}</div></div>`;
     }).join('');
     return `<div class="owe-sec">
       <div class="owe-zone" style="border-color:${c}"><span class="area-dot" style="background:${c}"></span>${esc(z)}<span class="owe-n">${its.length} 筆</span></div>
       <div class="card" style="padding:4px 12px">${rows}</div></div>`;
   }).join('');
+  const monthBtn=can2('owed.monthly')?`<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="openOwedMonthly()">📊 每月清點統計</button>`:'';
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📦 欠物本</div><div class="sub">未結 ${active.length} 筆 · 依分區</div></div>
+    <div><div class="title">📦 欠物本</div><div class="sub">未結 ${active.length} 筆 · 依分區 · 你的身分：${esc(roleLabel())}</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen narrow">
     <button class="btn btn-primary btn-block" style="margin-bottom:12px" onclick="openOwedAdd()">＋ 登記欠物</button>
+    ${monthBtn}
     ${secs||'<div class="card" style="text-align:center;color:var(--ink-soft);padding:20px">目前無未結欠物 🎉</div>'}
-    ${can?'':'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊蓋回結案需護理長/副護理長或財管負責人</div>'}
+    ${can?'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊結案時須由當班 leader（小組長以上）刷員編見證</div>'
+         :'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊你可登記與修改自己的欠物；歸還結案請洽財管組負責人，並由當班 leader 見證</div>'}
   </div>`;
+}
+function can2(c){ return can(c); }
+
+// ── 本人修改自己登記的欠物（未結案前）──
+function openOwedEdit(id){
+  const o=OWED.find(x=>x.id===id); if(!o)return;
+  if(!canEditOwed(o)){alert('只能修改自己登記且尚未結案的欠物');return;}
+  closeOwedAdd();
+  const zopts=OWE_ZONES.map(z=>`<option ${z===o.zone?'selected':''}>${z}</option>`).join('');
+  const w=document.createElement('div');w.id='oweAdd';w.className='loc-sheet';
+  w.onclick=e=>{if(e.target===w)closeOwedAdd();};
+  w.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>✏️ 修改欠物</span><button class="loc-x" onclick="closeOwedAdd()">✕</button></div>
+    <div class="loc-sheet-body" style="padding:14px 16px">
+      <label class="owe-f">分區<select id="ow_z">${zopts}</select></label>
+      <label class="owe-f">物品<input id="ow_i" value="${esc(o.item||'')}"></label>
+      <label class="owe-f">名單<input id="ow_n" value="${esc(o.names||'')}"></label>
+      <label class="owe-f">備註<input id="ow_r" value="${esc(o.note||'')}"></label>
+      <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitOwedEdit('${o.id}')">儲存修改</button>
+    </div></div>`;
+  document.body.appendChild(w);
+}
+async function submitOwedEdit(id){
+  const o=OWED.find(x=>x.id===id); if(!o)return;
+  const z=document.getElementById('ow_z').value, i=document.getElementById('ow_i').value.trim(),
+        n=document.getElementById('ow_n').value.trim(), r=document.getElementById('ow_r').value.trim();
+  if(!i){alert('請輸入物品');return;}
+  o.zone=z;o.item=i;o.names=n;o.note=r;
+  closeOwedAdd();renderOwed();
+  await owedWrite('owed_edit',{id:id,zone:z,item:i,names:n,note:r,
+    editor:state.user.name,editorId:state.user.id,at:new Date().toISOString()});
+  await loadOwed();renderOwed();
+  toast('已更新');
+}
+
+// ── 財管組每月清點統計 ──
+function openOwedMonthly(){
+  if(!can('owed.monthly')){alert('僅限財管組負責人／護理長查看');return;}
+  state.screen='owedMonthly'; state.owedMonth=state.owedMonth||new Date().toISOString().slice(0,7);
+  render();
+}
+function renderOwedMonthly(){
+  const ym=state.owedMonth||new Date().toISOString().slice(0,7);
+  const inMonth=o=>String(o.date||'').slice(0,7)===ym;
+  const rows=OWED.filter(inMonth);
+  const byZone={},byPerson={};
+  rows.forEach(o=>{
+    byZone[o.zone||'未分區']=(byZone[o.zone||'未分區']||0)+1;
+    String(o.names||'未填').split(/[、,，\s]+/).filter(Boolean).forEach(n=>{byPerson[n]=(byPerson[n]||0)+1;});
+  });
+  const tbl=(obj,h)=>{
+    const ks=Object.keys(obj).sort((a,b)=>obj[b]-obj[a]);
+    if(!ks.length)return `<div class="card" style="padding:14px;text-align:center;color:var(--ink-soft)">本月無資料</div>`;
+    return `<div class="card" style="padding:0;overflow:hidden">
+      <div style="padding:10px 14px;font-weight:800;border-bottom:1px solid var(--line)">${h}</div>
+      ${ks.map(k=>`<div style="display:flex;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line)">
+        <span>${esc(k)}</span><b>${obj[k]} 筆</b></div>`).join('')}</div>`;
+  };
+  const mAdd=(d)=>{const [y,m]=ym.split('-').map(Number);const nd=new Date(y,m-1+d,1);
+    return nd.getFullYear()+'-'+String(nd.getMonth()+1).padStart(2,'0');};
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📊 每月清點統計</div><div class="sub">財管組 · 未結欠物</div></div>
+    <button class="back" onclick="state.screen='owed';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-bottom:12px">
+      <button class="btn btn-ghost" onclick="state.owedMonth='${mAdd(-1)}';render()">◀ 上月</button>
+      <b style="font-size:16px">${esc(ym)}</b>
+      <button class="btn btn-ghost" onclick="state.owedMonth='${mAdd(1)}';render()">下月 ▶</button>
+    </div>
+    <div class="card" style="padding:14px;text-align:center;margin-bottom:12px">
+      <div style="font-size:28px;font-weight:800">${rows.length}</div>
+      <div style="color:var(--ink-soft);font-size:13px">本月未結欠物筆數</div></div>
+    ${tbl(byZone,'依分區')}
+    <div style="height:12px"></div>
+    ${tbl(byPerson,'依人員')}
+    <button class="btn btn-ghost btn-block" style="margin-top:12px" onclick="exportOwedCSV('${ym}')">⤓ 匯出本月清單 CSV</button>
+  </div>`;
+}
+function exportOwedCSV(ym){
+  const rows=OWED.filter(o=>String(o.date||'').slice(0,7)===ym);
+  const head=['日期','分區','物品','名單','狀態','登記人','備註'];
+  const body=rows.map(o=>[o.date,o.zone,o.item,o.names,o.status,o.by||'',o.note||'']);
+  const csv=[head].concat(body).map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download='欠物本_'+ym+'.csv';a.click();
+}
+
+/* ==================== 權限設定（僅護理長／副護理長）====================
+   HN/AHN 在這裡指派誰是財管組長、財管組負責人、誰有見證資格。
+   存到後端 staff_perm 表，所有裝置立即一致，人員異動不用改程式。 */
+function openPermAdmin(){
+  if(!can('perm.manage')){alert('權限設定僅限護理長／副護理長');return;}
+  state.screen='permAdmin'; state.permQ=''; render();
+  loadPerms().then(()=>{ if(state.screen==='permAdmin')renderPermAdmin(); });
+}
+function effPerm(a){
+  const p=permOf(a.id);
+  return {
+    lead:    p?!!p.lead    : (CAISHI_LEAD_IDS.indexOf(a.id)>=0),
+    caishi:  p?!!p.caishi  : (CAISHI_IDS.indexOf(a.id)>=0),
+    witness: p&&p.witness  ? true : (WITNESS_TITLES.indexOf(String(a.title||''))>=0)
+  };
+}
+function renderPermAdmin(){
+  const q=(state.permQ||'').trim();
+  let list=ACCOUNTS.filter(a=>a.active!==false);
+  if(q) list=list.filter(a=>a.name.includes(q)||String(a.id).includes(q)||String(a.title||'').includes(q));
+  // 已被指派的排最前面，方便檢視
+  list=list.slice().sort((a,b)=>{
+    const pa=effPerm(a),pb=effPerm(b);
+    const sa=(pa.lead?4:0)+(pa.caishi?2:0), sb=(pb.lead?4:0)+(pb.caishi?2:0);
+    return sb-sa || a.name.localeCompare(b.name,'zh-Hant');
+  });
+  const chip=(on,label,fn)=>`<button onclick="${fn}" style="font-size:12px;font-weight:700;padding:6px 10px;border-radius:8px;cursor:pointer;
+      border:1.5px solid ${on?'var(--ok,#0f7a86)':'var(--line)'};background:${on?'var(--ok-soft,#e6f6ed)':'transparent'};
+      color:${on?'var(--ok,#0f7a86)':'var(--ink-soft)'}">${on?'✓ ':''}${label}</button>`;
+  const rows=list.slice(0,80).map(a=>{
+    const p=effPerm(a);
+    const isHN=(a.role==='護理長'||a.role==='副護理長');
+    const byTitle=WITNESS_TITLES.indexOf(String(a.title||''))>=0;   // 職稱自帶見證資格
+    return `<div class="owe-row" style="align-items:center">
+      <div class="owe-main"><b>${esc(a.name)}</b>
+        <div class="owe-sub">${esc(a.title||'')} · ${esc(a.id)}${isHN?' · 主管（全權，不需設定）':''}</div></div>
+      <div class="owe-right" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        ${isHN?'<span style="font-size:12px;color:var(--ink-soft)">—</span>':
+          chip(p.lead,'財管組長',`togglePerm('${a.id}','lead')`)
+          +chip(p.caishi,'財管負責人',`togglePerm('${a.id}','caishi')`)
+          +(byTitle
+            ? `<span style="font-size:12px;font-weight:700;padding:6px 10px;border-radius:8px;border:1.5px dashed var(--line);color:var(--ink-soft)" title="因職稱自動具備，不需指派">✓ 見證（${esc(a.title)}）</span>`
+            : chip(p.witness,'見證',`togglePerm('${a.id}','witness')`))}
+      </div></div>`;
+  }).join('');
+  const nLead=ACCOUNTS.filter(a=>effPerm(a).lead&&a.role!=='護理長'&&a.role!=='副護理長').map(a=>a.name);
+  const nCai =ACCOUNTS.filter(a=>{const p=effPerm(a);return p.caishi&&!p.lead&&a.role!=='護理長'&&a.role!=='副護理長';}).map(a=>a.name);
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">👥 權限設定</div><div class="sub">護理長／副護理長專用 · 指派後所有裝置立即生效</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="card" style="padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:13px;line-height:1.9">
+        <b>財管組長</b>：管點班項目、欠物結案、月結統計<br>
+        <b>財管負責人</b>：欠物結案、月結統計（每月清點）<br>
+        <b>見證</b>：可當歸還見證人（小組長以上預設就有，這裡可額外授予）
+      </div>
+      <div style="margin-top:10px;font-size:12.5px;color:var(--ink-soft)">
+        目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
+        目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b></div>
+    </div>
+    <label class="owe-f">搜尋姓名／員編／職稱
+      <input id="pm_q" value="${esc(q)}" placeholder="例：蔡 或 12346"
+        oninput="state.permQ=this.value;renderPermAdmin();document.getElementById('pm_q').focus()"></label>
+    <div class="card" style="padding:4px 12px;margin-top:10px">${rows||'<div style="padding:12px;color:var(--ink-soft);font-size:13px">查無符合人員</div>'}</div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;text-align:center">
+      ＊護理長／副護理長本身就是全權，不需要也不能在此調整。最多顯示 80 筆，請用搜尋縮小範圍。</div>
+  </div>`;
+}
+async function togglePerm(id,field){
+  const a=ACCOUNTS.find(x=>x.id===id); if(!a)return;
+  const cur=effPerm(a);
+  const next={lead:cur.lead,caishi:cur.caishi,witness:cur.witness};
+  next[field]=!next[field];
+  if(field==='lead'&&next.lead)next.caishi=true;        // 組長本來就含負責人權限
+  if(field==='caishi'&&!next.caishi)next.lead=false;    // 取消負責人 → 組長也一併取消
+  PERMS[id]=next; renderPermAdmin();
+  const r=await itemsWrite('perm_set',{id:id,name:a.name,lead:next.lead,caishi:next.caishi,witness:next.witness,
+    editor:state.user.name,at:new Date().toISOString()});
+  if(r&&r.ok===false){ toast('儲存失敗，請檢查後端連線'); }
+  else toast(a.name+'：權限已更新');
+}
+
+/* ==================== 點班項目管理（護理長／副護理長／財管組長）==================== */
+function openItemsAdmin(){
+  if(!can('items.edit')){alert('項目管理僅限護理長／副護理長／財管組長');return;}
+  state.screen='itemsAdmin';
+  state.iaSheet=state.iaSheet||SHEETS[0].id;
+  render(); loadItemReports().then(()=>{ if(state.screen==='itemsAdmin')renderItemsAdmin(); });
+}
+function renderItemsAdmin(){
+  const sid=state.iaSheet||SHEETS[0].id;
+  const sh=SHEETS.find(s=>s.id===sid)||SHEETS[0];
+  const list=ITEMS.map((it,i)=>({i,sheet:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4],off:it[5]==='停用'}))
+                  .filter(o=>o.sheet===sid);
+  const opts=SHEETS.map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.name)}</option>`).join('');
+  const rows=list.length?list.map(o=>`
+    <div class="owe-row" style="${o.off?'opacity:.45':''}">
+      <div class="owe-main"><b>${esc(o.name)}</b>${o.off?'<span class="owe-badge">停用</span>':''}
+        <div class="owe-sub">標準 ${esc(o.qty||'')} · ${esc(o.type||'')}${o.assign?(' · 分工 '+esc(o.assign)):''}</div></div>
+      <div class="owe-right">
+        <button class="owe-close" style="background:none;border:1.5px solid var(--line);color:var(--ink)" onclick="openItemEdit(${o.i})">修改</button>
+        <button class="owe-close" onclick="toggleItemOff(${o.i})">${o.off?'啟用':'停用'}</button>
+      </div></div>`).join('')
+    : '<div style="font-size:13px;color:var(--ink-soft);padding:10px 2px">此分區尚無項目</div>';
+  const reps=ITEM_REPORTS.length?`
+    <div class="cat" style="margin-top:16px">
+      <div class="cat-h"><span class="cat-ic" style="background:#e0313117;color:#E03131">🚩</span>
+        待處理回報<span class="cat-cnt">${ITEM_REPORTS.length} 則</span></div>
+      <div class="card" style="padding:6px 12px">
+        ${ITEM_REPORTS.map(r=>`<div class="owe-row">
+          <div class="owe-main"><b>${esc(r.item||'(未指定項目)')}</b>
+            <div class="owe-sub">${esc(r.sheet||'')} · ${esc(r.issue||'')} · 回報：${esc(r.by||'')}</div></div>
+          <div class="owe-right"><button class="owe-close" onclick="resolveItemReport('${r.id}')">已處理</button></div>
+        </div>`).join('')}
+      </div></div>`:'';
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">🧾 點班項目管理</div><div class="sub">${esc(roleLabel())} · 可新增／修改／停用</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <label class="owe-f">分區<select id="ia_sheet" onchange="state.iaSheet=this.value;renderItemsAdmin()">${opts}</select></label>
+    <button class="btn btn-primary btn-block" style="margin:10px 0 12px" onclick="openItemEdit(-1)">＋ 新增項目到「${esc(sh.name)}」</button>
+    <div class="card" style="padding:4px 12px">${rows}</div>
+    ${reps}
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;text-align:center">
+      ＊停用的項目不會出現在點班表，但歷史紀錄保留。修改會寫回後端 items 表。</div>
+  </div>`;
+}
+function openItemEdit(idx){
+  const isNew=(idx<0);
+  const it=isNew?[state.iaSheet||SHEETS[0].id,'','','器械','','']:ITEMS[idx];
+  const opts=SHEETS.map(s=>`<option value="${s.id}" ${s.id===it[0]?'selected':''}>${esc(s.name)}</option>`).join('');
+  const types=['器械','儀器','耗材','藥品','其他'].map(t=>`<option ${t===it[3]?'selected':''}>${t}</option>`).join('');
+  const asg=['','A','B'].map(a=>`<option value="${a}" ${a===(it[4]||'')?'selected':''}>${a||'不分工'}</option>`).join('');
+  const w=document.createElement('div');w.id='itEdit';w.className='loc-sheet';
+  w.onclick=e=>{if(e.target===w)closeItemEdit();};
+  w.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>${isNew?'＋ 新增項目':'✏️ 修改項目'}</span><button class="loc-x" onclick="closeItemEdit()">✕</button></div>
+    <div class="loc-sheet-body" style="padding:14px 16px">
+      <label class="owe-f">分區<select id="it_s">${opts}</select></label>
+      <label class="owe-f">項目名稱<input id="it_n" value="${esc(it[1]||'')}" placeholder="例：喉頭鏡 大彎片"></label>
+      <label class="owe-f">標準數量<input id="it_q" value="${esc(it[2]||'')}" placeholder="例：1 或 4/6/1"></label>
+      <label class="owe-f">類型<select id="it_t">${types}</select></label>
+      <label class="owe-f">A/B 分工<select id="it_a">${asg}</select></label>
+      <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitItemEdit(${idx})">${isNew?'新增':'儲存'}</button>
+    </div></div>`;
+  document.body.appendChild(w);
+}
+function closeItemEdit(){const e=document.getElementById('itEdit');if(e)e.remove();}
+async function submitItemEdit(idx){
+  const s=document.getElementById('it_s').value, n=document.getElementById('it_n').value.trim(),
+        q=document.getElementById('it_q').value.trim(), t=document.getElementById('it_t').value,
+        a=document.getElementById('it_a').value;
+  if(!n){alert('請輸入項目名稱');return;}
+  const isNew=(idx<0);
+  const row=[s,n,q,t,a,isNew?'':(ITEMS[idx][5]||'')];
+  if(isNew)ITEMS.push(row); else ITEMS[idx]=row;
+  closeItemEdit(); state.iaSheet=s; renderItemsAdmin();
+  await itemsWrite('item_upsert',{sheetId:s,name:n,qty:q,type:t,assign:a,
+    active:(row[5]==='停用'?false:true),oldName:isNew?'':undefined,
+    editor:state.user.name,editorId:state.user.id,at:new Date().toISOString()});
+  toast(isNew?'已新增項目':'已儲存修改');
+}
+async function toggleItemOff(idx){
+  const it=ITEMS[idx]; if(!it)return;
+  const now=(it[5]==='停用');
+  it[5]=now?'':'停用';
+  renderItemsAdmin();
+  await itemsWrite('item_upsert',{sheetId:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4],
+    active:now, editor:state.user.name,editorId:state.user.id,at:new Date().toISOString()});
+  toast(now?'已啟用':'已停用');
+}
+/* ── 一般人員：回報項目有誤 ── */
+function openItemReport(sheetId,itemName){
+  const w=document.createElement('div');w.id='itRep';w.className='loc-sheet';
+  w.onclick=e=>{if(e.target===w)closeItemReport();};
+  const opts=SHEETS.map(s=>`<option value="${s.id}" ${s.id===sheetId?'selected':''}>${esc(s.name)}</option>`).join('');
+  w.innerHTML=`<div class="loc-sheet-card">
+    <div class="loc-sheet-h"><span>🚩 回報項目有誤</span><button class="loc-x" onclick="closeItemReport()">✕</button></div>
+    <div class="loc-sheet-body" style="padding:14px 16px">
+      <label class="owe-f">分區<select id="rp_s">${opts}</select></label>
+      <label class="owe-f">項目<input id="rp_i" value="${esc(itemName||'')}" placeholder="哪一個項目有問題"></label>
+      <label class="owe-f">問題說明<input id="rp_x" placeholder="例：標準數量應為 2、此項目已停用、名稱錯字"></label>
+      <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitItemReport()">送出給財管組長</button>
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;text-align:center">
+        ＊送出後由財管組負責人／組長確認並修正，護理長也看得到。</div>
+    </div></div>`;
+  document.body.appendChild(w);
+}
+function closeItemReport(){const e=document.getElementById('itRep');if(e)e.remove();}
+async function submitItemReport(){
+  const s=document.getElementById('rp_s').value, i=document.getElementById('rp_i').value.trim(),
+        x=document.getElementById('rp_x').value.trim();
+  if(!x){alert('請簡述問題');return;}
+  closeItemReport(); toast('已送出，感謝回報');
+  await itemsWrite('item_report',{sheet:s,item:i,issue:x,
+    by:state.user.name,byId:state.user.id,at:new Date().toISOString(),status:'待處理'});
+  await loadItemReports();
+}
+async function resolveItemReport(id){
+  ITEM_REPORTS=ITEM_REPORTS.filter(r=>r.id!==id); renderItemsAdmin();
+  await itemsWrite('item_report_close',{id:id,handler:state.user.name,at:new Date().toISOString()});
 }
 async function loadLocator(){
   if(!API_URL)return;
@@ -1874,6 +2361,7 @@ function renderSummary(){
     <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
     <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
     <button class="btn btn-primary btn-block" onclick="submitRollcall()">提交並簽核</button>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openItemReport(state.sheetId,'')">🚩 回報項目有誤（送財管組長）</button>
   </div>`;
 }
 
@@ -1905,7 +2393,8 @@ state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=fmtISO(new Date()); rebindForDate(); }
-(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog()]); render(); })();
+(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog(),loadItemReports(),
+  loadFridgeLog(),loadO2Log(),loadPerms()]); render(); })();
 </script>
 </body>
 </html>
