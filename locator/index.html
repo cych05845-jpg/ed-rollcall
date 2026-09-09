@@ -303,22 +303,55 @@ const ICON={'油壓推床':'🛏','IV Pump 輸液幫浦':'💧','生理監視器
 let seed=42; function rnd(){seed=(seed*9301+49297)%233280;return seed/233280;}
 
 // ===================== 資料來源（之後接創鈺,只改這一段） =====================
+// 點班系統後端（單一事實來源，與 index/fridge/o2 同一個部署）
+const API_BASE='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
+
 const CONFIG={
-  source:'demo',              // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料(創鈺)
-  masterUrl:'https://script.google.com/macros/s/AKfycbxbyjhW1nnaZYwc0gN3cjZuaSQ6GDnZfcsH4bQViR3-Z04h8rcG4_LklynnT4QrUmpx8Q/exec?table=devices', // 設備主檔(共用資訊):同 repo 的相對路徑;讀不到就用內建示意
-  feedUrl:'',                 // 即時清單端點:創鈺 API,或 Apps Script proxy 的 /exec 網址
-  trackUrl:'',                // 軌跡端點(可留空):創鈺軌跡 API,需帶 ?code=財碼&from=&to=
-  refreshSec:15,              // feed 模式自動刷新秒數
+  // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料
+  // 已切成 feed：rtls 表沒資料時 mergeLive 會自動退回主檔的配置區，不會空白
+  source:'feed',
+  masterUrl:API_BASE+'?table=devices',   // 設備主檔（與點班系統共用同一張 devices 表）
+  // ★ 即時來源不是直接打創鈺！rtls.cych.org.tw 是院內網域且為 http，
+  //    瀏覽器（https 的 GitHub Pages）連不到也會被混合內容擋。
+  //    改由院內排程 rtls_relay.py 每 2 分鐘推進 Sheet 的 rtls 分頁，這裡讀那張表。
+  feedUrl:API_BASE+'?table=rtls',
+  trackUrl:'',                // 軌跡端點(可留空)
+  refreshSec:60,              // rtls 由院內每 2 分鐘推一次，前端 60 秒刷新已足夠
 };
 
-// 座標校正:創鈺地圖座標 → 本平面圖(0~1)。等創鈺給該樓層座標範圍再填。
-// 留 null = 不用座標,改用「區域」放點(永遠可用)。
-// 例: {minX:0,maxX:1553,minY:0,maxY:700,flipY:true}
+// 座標校正:創鈺地圖座標 → 本平面圖(0~1)。
+// ★ 維持 null：IpsCloud 的 GET /api/v1/position（設備狀態列表）只回傳 Location 區域字串，
+//   不含座標；要拿經緯度需逐台打 /position/{userKey}，150 台成本過高。
+//   因此採「區域散布」放點——這正是本設計原本就備好的路徑。
 const CALIB=null;
 
-// 創鈺代碼 → 本系統代碼 的對照表（拿到創鈺實際值後填這兩張）
-const ZONE_ALIAS={ /* 例: '第一觀察':'guan1','急救室':'resus','負壓':'neg','檢傷':'triage' */ };
-const STATUS_ALIAS={ /* 例: 'online':'in','offline':'off' */ };
+// 創鈺(IpsCloud) 代碼 → 本系統代碼 對照表
+// IpsCloud 的 Location 若直接回中文區域名，這裡就能對上；實際值出來後再補。
+const ZONE_ALIAS={
+  '第一觀察區':'guan1','第一觀察':'guan1','留觀1':'guan1','留觀區-1':'guan1',
+  '第二觀察區':'guan2','第二觀察':'guan2','留觀2':'guan2','留觀區-2':'guan2',
+  '急救室':'resus','急救區':'resus',
+  '檢傷區':'triage','檢傷':'triage',
+  '治療區':'treat','治療':'treat',
+  '兒科區':'peds','兒童區':'peds','兒童':'peds','兒童檢傷':'triage',
+  '負壓室':'neg','負壓':'neg'
+};
+const STATUS_ALIAS={ 'online':'in','offline':'off','Online':'in','Offline':'off' };
+
+// ★ 主檔管理（新增/刪除/匯入）權限：護理長、副護理長，加上後端 staff_perm 指派的財管組長
+const ADMIN_IDS=['05845','06843'];      // 護理長、副護理長
+let PERM_LEADS=[];                       // 由 staff_perm 載入的財管組長員編
+let adminUser=null;                      // 通過驗證的管理者
+async function loadPermLeads(){
+  try{
+    const r=await fetchT(API_BASE+'?table=staff_perm',{cache:'no-store'},8000);
+    const a=await r.json(); if(!Array.isArray(a))return;
+    const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
+    PERM_LEADS=a.filter(o=>yes(o['財管組長'])).map(o=>String(o['員編']||'').trim()).filter(Boolean);
+  }catch(e){ /* 讀不到就只認 ADMIN_IDS */ }
+}
+function canAdmin(id){ id=String(id||'').trim();
+  return ADMIN_IDS.indexOf(id)>=0 || PERM_LEADS.indexOf(id)>=0; }
 function mapZone(v){return ZONE_ALIAS[v]||v;}     // 對不到就原樣帶入,方便看出哪個沒對到
 function mapStatus(v){return STATUS_ALIAS[v]||'in';}
 function minsAgo(t){if(!t)return 0;const d=new Date(t);return isNaN(d)?0:Math.max(0,Math.round((Date.now()-d)/60000));}
@@ -330,26 +363,41 @@ function projectXY(rx,ry){
   return [Math.max(0,Math.min(1,px)),Math.max(0,Math.min(1,py))];
 }
 
-// 把創鈺回傳的「一筆」轉成本系統欄位（右側欄位名待創鈺確認後微調）
+/* 把一筆即時資料轉成本系統欄位。
+   來源＝Sheet 的 rtls 分頁（由院內 rtls_relay.py 從 IpsCloud
+   GET /api/v1/position 的 StatusViewModel 轉存），欄位對應：
+     標籤ID ← TagMac          財碼 ← UserKey（儀器以財碼註冊為 UserType=Device）
+     區域   ← Location        樓層 ← MapName
+     在線   ← IsOnline        電量 ← TagPower      更新時間 ← LastUpdateTime
+   同時保留直接吃 IpsCloud 原生欄位的能力，方便日後改為直連。 */
 function adaptRow(r){
+  const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
+  const online = (r['在線']!==undefined) ? yes(r['在線'])
+               : (r.IsOnline!==undefined ? !!r.IsOnline
+               : (r.isOnline!==undefined ? !!r.isOnline : true));
+  // 請修／外借／攜出是「我們的」流程狀態，創鈺沒有，之後由點班系統的欄位補進來
   let st='in';
-  if(r.repair||r.repairing||r.underRepair) st='repair';      // 請修旗標
-  else if(r.borrow||r.borrowed||r.lent)    st='borrow';      // 借出旗標
-  else if(r.away||r.checkout)              st='away';        // 攜出
-  else if(r.online===false||r.offline)     st='off';         // 離線
-  else st=mapStatus(r.status ?? r.tagStatus ?? 'in');
+  if(r.repair||r.repairing||r.underRepair) st='repair';
+  else if(r.borrow||r.borrowed||r.lent)    st='borrow';
+  else if(r.away||r.checkout)              st='away';
+  else if(!online)                          st='off';        // 標籤離線
+  else st=mapStatus(r.status ?? 'in');
+  const bat=parseFloat(r['電量'] ?? r.TagPower ?? r.tagPower ?? r.battery);
   return {
-    code:   r.id ?? r.assetNo ?? r.code,                     // ID-財碼（主鍵★）
-    name:   r.name ?? r.devName,                             // 名稱
-    cat:    r.category ?? r.cat ?? r.name ?? r.devName,      // 類別(分組用)
+    code:   String(r['財碼'] ?? r.UserKey ?? r.userKey ?? r.code ?? '').trim(),  // 主鍵★＝財碼
+    tag:    String(r['標籤ID'] ?? r.TagMac ?? r.tagMac ?? '').trim(),
+    name:   r.name ?? r.devName,
+    cat:    r.category ?? r.cat ?? r.name ?? r.devName,
     brand:  r.brand ?? '',
-    home:   mapZone(r.homeZone ?? r.home ?? ''),             // 配置區
-    zone:   mapZone(r.area ?? r.areaName ?? r.zone ?? ''),   // 即時區域 ★
-    rx:     r.x ?? r.posX ?? null,                           // 座標X(創鈺地圖座標,需CALIB校正)
-    ry:     r.y ?? r.posY ?? null,                           // 座標Y
+    home:   mapZone(r.homeZone ?? r.home ?? ''),                               // 配置區(來自主檔)
+    zone:   mapZone(r['區域'] ?? r.Location ?? r.location ?? r.Region ?? ''),   // 即時區域 ★
+    floor:  r['樓層'] ?? r.MapName ?? r.mapName ?? '',
+    rx:     r.Longitude ?? r.x ?? null,      // 列表端點不給座標，維持 null → 走區域散布
+    ry:     r.Latitude  ?? r.y ?? null,
     status: st,
-    battery:r.battery ?? 100,
-    lastSeen:minsAgo(r.lastTime ?? r.updated ?? r.ts),
+    online: online,
+    battery:isNaN(bat)?100:bat,
+    lastSeen:minsAgo(r['更新時間'] ?? r.LastUpdateTime ?? r.lastUpdateTime),
   };
 }
 
@@ -376,10 +424,14 @@ async function loadMaster(){
       if(res.ok){
         const arr=await res.json();
         if(Array.isArray(arr)&&arr.length){
+          const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
           return arr.map(m=>({
             unit:m.unit||'', code:String(m.code), name:m.name, cat:m.cat||m.name, brand:m.brand||'',
             home:mapZone(m.home_zone||m.home||'treat'), needRollcall:m.need_rollcall!==false,
-            zone:mapZone(m.home_zone||m.home||'treat'), status:'in', battery:100, lastSeen:0, rx:null, ry:null
+            // ★ 只有 devices 表勾選「是否定位」的（約150台）才會有標籤回報
+            locate:(m.locate===true)||yes(m.locate), beaconId:m.beaconId||'',
+            zone:mapZone(m.home_zone||m.home||'treat'), status:'in', online:false,
+            battery:100, lastSeen:0, rx:null, ry:null
           }));
         }
       }
@@ -394,8 +446,8 @@ async function loadLive(){
   try{
     const res=await fetchT(CONFIG.feedUrl,{cache:'no-store'},8000);
     const raw=await res.json();
-    const live=(Array.isArray(raw)?raw:(raw.items||[])).map(adaptRow).filter(e=>e.code);
-    const map={}; live.forEach(e=>map[e.code]=e); return map;
+    const live=(Array.isArray(raw)?raw:(raw.items||raw.Payload||[])).map(adaptRow).filter(e=>e.code||e.tag);
+    const map={}; live.forEach(e=>{ if(e.code)map[e.code]=e; if(e.tag)map['tag:'+e.tag]=e; }); return map;
   }catch(err){console.error('即時資料讀取失敗',err);return null;}
 }
 
@@ -403,8 +455,16 @@ async function loadLive(){
 function mergeLive(live){
   EQUIP=MASTER.map(m=>{
     const e={...m};
-    const L=live&&live[m.code];
-    if(L){e.zone=L.zone||m.home; e.status=L.status; e.rx=L.rx; e.ry=L.ry; e.battery=L.battery; e.lastSeen=L.lastSeen;}
+    // 即時資料可用財碼或標籤MAC對上（財碼優先，因為儀器以財碼註冊為 UserType=Device）
+    const L=live&&(live[m.code]||(m.beaconId&&live['tag:'+m.beaconId]));
+    if(L){
+      e.zone=L.zone||m.home; e.status=L.status; e.online=L.online;
+      e.rx=L.rx; e.ry=L.ry; e.battery=L.battery; e.lastSeen=L.lastSeen;
+      if(L.floor)e.floor=L.floor;
+    }else if(m.locate){
+      // 有裝標籤卻查無回報 → 標離線，不要假裝它乖乖待在配置區
+      e.status='off'; e.online=false;
+    }
     return e;
   });
   deriveMoved(); assignCoords();
@@ -570,7 +630,32 @@ function switchView(v){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.view===v));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
   document.getElementById('v-'+v).classList.add('on');
-  if(v==='list')renderList();if(v==='data')renderDataView();if(v==='admin')renderAdmin();
+  if(v==='list')renderList();if(v==='data')renderDataView();
+  if(v==='admin'){ adminUser?renderAdmin():renderAdminGate(); }
+}
+// ★ 主檔管理需驗證身分：護理長／副護理長／財管組長（刷員編）
+function renderAdminGate(){
+  const v=document.getElementById('v-admin');
+  v.innerHTML=`<div style="max-width:420px;margin:40px auto;padding:22px;border:1px solid var(--line);border-radius:12px;background:#fff">
+    <div style="font-weight:800;font-size:16px;margin-bottom:6px">🔒 主檔管理需要權限</div>
+    <div style="font-size:13px;color:#5d6c77;line-height:1.8;margin-bottom:14px">
+      新增／刪除／匯入設備主檔會影響全院點班，僅限<b>護理長、副護理長、財管組長</b>操作。<br>
+      其他人員仍可正常使用地圖、盤點與查詢。</div>
+    <input id="adm_id" inputmode="numeric" placeholder="刷／輸入員編"
+      style="width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:16px"
+      onkeydown="if(event.key==='Enter')tryAdmin()">
+    <div id="adm_msg" style="font-size:12.5px;color:#c0392b;min-height:18px;margin:8px 2px"></div>
+    <button onclick="tryAdmin()" style="width:100%;padding:11px;border:none;border-radius:9px;
+      background:var(--brand,#0f7a86);color:#fff;font-weight:800;font-size:15px;cursor:pointer">驗證</button>
+  </div>`;
+  setTimeout(()=>{const el=document.getElementById('adm_id');if(el)el.focus();},50);
+}
+function tryAdmin(){
+  const id=(document.getElementById('adm_id').value||'').trim();
+  const msg=document.getElementById('adm_msg');
+  if(!id){msg.textContent='請輸入員編';return;}
+  if(!canAdmin(id)){msg.textContent='此員編沒有主檔管理權限，請洽護理長或財管組長';return;}
+  adminUser=id; renderAdmin();
 }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchView(t.dataset.view));
 
@@ -856,12 +941,16 @@ async function boot(){
   MASTER=DEMO_EQUIP.map(o=>({...o}));
   mergeLive(null);
   bootDeepLink();
-  // 背景載入真實主檔(+即時),好了再重畫
+  // 背景載入真實主檔(+即時)與權限名單,好了再重畫
   try{
-    MASTER=await loadMaster();
+    const [master,,] = await Promise.all([loadMaster(), loadPermLeads()]);
+    MASTER=master;
     const live=await loadLive();
     mergeLive(live);
     bootDeepLink();
+    // 從點班系統帶進來的員編（openDeviceMap 會附 ?uid=），有權限就免再刷一次
+    const uid=new URLSearchParams(location.search).get('uid');
+    if(uid&&canAdmin(uid))adminUser=uid;
   }catch(e){console.error('載入真實資料失敗,維持示意',e);}
   if(CONFIG.source==='feed'&&CONFIG.refreshSec){
     setInterval(refreshLive,CONFIG.refreshSec*1000);
