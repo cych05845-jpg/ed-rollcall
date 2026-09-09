@@ -139,7 +139,42 @@ async function visionRead(file){
     const set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null&&v!=='')el.value=v;};
     set('e_cur',cur); set('e_hi',hi); set('e_lo',lo);
     if(msg)msg.textContent=`已判讀：現在 ${cur}℃　高 ${hi}℃　低 ${lo}℃ — 請確認後儲存。`;
-  }catch(e){ if(msg)msg.textContent='判讀失敗,請手動輸入。('+e+')'; }
+  }catch(e){
+    const em=String(e&&e.message||e);
+    if(/Failed to fetch|NetworkError|Load failed/i.test(em)){
+      if(msg)msg.textContent='連不到後端（不是 AI 判讀問題）。請點下方「🔧 測試後端連線」查明原因，或先手動輸入。';
+    }else{
+      if(msg)msg.textContent='判讀失敗,請手動輸入。('+em+')';
+    }
+  }
+}
+// 後端連線自我診斷:分別測 GET(讀) 與 POST(寫/判讀),把確切結果印出來
+async function testBackend(){
+  const d=document.getElementById('diagMsg'); if(!d)return;
+  d.style.color='#5d6c77'; d.textContent='測試中…';
+  let out='';
+  // 1) GET 測試(讀取權限 + 部署是否開放 Anyone)
+  try{
+    const r=await fetch(API_URL+'?table=fridge_temp',{method:'GET'});
+    const t=await r.text();
+    let ok=false; try{ JSON.parse(t); ok=true; }catch(_){}
+    out+='① 讀取(GET)：HTTP '+r.status+(ok?' ✓ 回傳JSON正常':' ⚠ 回傳不是JSON（可能被導到登入頁＝部署權限不是「任何人」）')+'\n';
+  }catch(e){ out+='① 讀取(GET)：✗ '+String(e&&e.message||e)+'\n'; }
+  // 2) POST 測試(用 1px 小圖,只驗證能不能連上;若成功會看到JSON或AI錯誤,代表連線正常)
+  const px='data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAT8AH//Z';
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'vision',payload:{image:px}})});
+    const t=await r.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
+    if(j){
+      if(j.error){ out+='② 寫入/判讀(POST)：✓ 連線正常，但後端回報：'+j.error; }
+      else{ out+='② 寫入/判讀(POST)：✓ 連線正常（後端有回應）。表示「Failed to fetch」時多半是當下網路不穩，再拍一次即可。'; }
+    }else{
+      out+='② 寫入/判讀(POST)：⚠ HTTP '+r.status+'，回傳不是JSON：'+t.slice(0,80);
+    }
+  }catch(e){
+    out+='② 寫入/判讀(POST)：✗ '+String(e&&e.message||e)+'\n→ 若這裡是「Failed to fetch」但①正常，通常是 GS 需要「重新部署為新版本」，或部署權限要設成「任何人」。';
+  }
+  d.textContent=out;
 }
 // 溫度寫回點班後端(task:'fridge_temp')
 async function fridgeWrite(day,si){
@@ -225,6 +260,8 @@ function openEntry(day,si){
       <button class="btn btn-g" style="width:100%;padding:12px" onclick="document.getElementById('photoIn').click()">📷 拍照自動判讀（現在／高／低）</button>
       <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none" onchange="visionRead(this.files[0])">
       <div id="visionMsg" style="font-size:12px;color:var(--soft);margin-top:6px"></div>
+      <button type="button" onclick="testBackend()" style="background:none;border:none;color:#0f7a86;font-size:12px;text-decoration:underline;padding:4px 0;cursor:pointer">🔧 測試後端連線（判讀失敗時點這）</button>
+      <div id="diagMsg" style="font-size:12px;color:var(--soft);white-space:pre-wrap;margin-top:2px"></div>
     </div>
     <div class="fld"><label>現在溫度（°C）＊必填</label><input id="e_cur" type="number" step="0.1" inputmode="decimal" value="${r.cur??''}" autofocus></div>
     <div class="row2">
