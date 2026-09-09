@@ -93,6 +93,7 @@ let data=startData();
 initControls();
 render();
 syncFromServer();
+syncBanner();
 
 function keyOf(){return 'fridge_'+data.unit+'_'+data.ym;}
 function blank(unit,ym){return {unit,ym,readings:{},abn:{},superv:[]};}
@@ -208,10 +209,45 @@ async function testBackend(){
   d.textContent=out;
 }
 // 溫度寫回點班後端(task:'fridge_temp')
+/* 寫回後端。★ 會確認後端真的回 ok，失敗就把該筆標記為「未上傳」並在畫面示警，
+   避免「本機看起來存好了、其實沒進 Sheet」這種最危險的情況。 */
 async function fridgeWrite(day,si){
-  if(!API_URL)return; const r=data.readings[rkey(day,si)]||{};
+  if(!API_URL)return;
+  const k=rkey(day,si), r=data.readings[k]||{};
   const payload={unit:data.unit,ym:data.ym,day:day,shift:SHIFTS[si],cur:r.cur,hi:r.hi,lo:r.lo,sign:r.sign,at:new Date().toISOString()};
-  try{ await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',payload:payload})}); }catch(e){console.error('冰箱溫度寫回失敗',e);}
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',payload:payload})});
+    const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
+    if(j&&j.ok){ if(data.readings[k])delete data.readings[k]._unsync; }
+    else { if(data.readings[k])data.readings[k]._unsync=true; }
+  }catch(e){
+    console.error('冰箱溫度寫回失敗',e);
+    if(data.readings[k])data.readings[k]._unsync=true;
+  }
+  save(); syncBanner();
+}
+// 未上傳筆數的示警橫幅 ＋ 一鍵重試
+function unsyncList(){ const a=[]; for(const k in (data.readings||{})) if(data.readings[k]._unsync) a.push(k); return a; }
+function syncBanner(){
+  const n=unsyncList().length;
+  let el=document.getElementById('syncBar');
+  if(!n){ if(el)el.remove(); return; }
+  if(!el){ el=document.createElement('div'); el.id='syncBar';
+    el.style.cssText='background:#fbe8e8;color:#c0392b;border:1px solid #f0c0c0;border-radius:10px;'
+      +'padding:10px 14px;margin:10px 0;font-size:13.5px;font-weight:700;display:flex;'
+      +'gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap';
+    const w=document.querySelector('.wrap'); const sh=document.getElementById('sheet');
+    if(w&&sh)w.insertBefore(el,sh); else if(w)w.appendChild(el);
+  }
+  el.innerHTML=`<span>⚠ 有 ${n} 筆只存在這台裝置，尚未上傳到後端（別台看不到）</span>
+    <button onclick="retrySync()" style="border:none;background:#c0392b;color:#fff;font-weight:800;
+      padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">重試上傳</button>`;
+}
+async function retrySync(){
+  const ks=unsyncList(); if(!ks.length)return;
+  for(const k of ks){ const p=String(k).split('_'); await fridgeWrite(+p[0], SHIFTS.indexOf(p[1])); }
+  syncBanner();
+  alert(unsyncList().length?'仍有資料上傳失敗，請點「🔧 測試後端連線」查原因':'全部已上傳成功');
 }
 
 function render(){

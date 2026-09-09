@@ -87,10 +87,43 @@ const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
+/* 寫回後端並確認後端真的回 ok；失敗就標記未上傳並示警。 */
 async function o2Write(code,day,si){
   if(!API_URL)return;
+  const k=ck(code,day,si);
   const payload={dept:data.dept,ym:data.ym,day:day,shift:SHIFTS[si],crit:code,qty:data.qty||'',by:curName(),at:new Date().toISOString()};
-  try{ await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check',payload:payload})}); }catch(e){console.error('氧氣寫回失敗',e);}
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check',payload:payload})});
+    const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
+    if(j&&j.ok){ if(data.marks[k])delete data.marks[k]._unsync; }
+    else { if(data.marks[k])data.marks[k]._unsync=true; }
+  }catch(e){
+    console.error('氧氣寫回失敗',e);
+    if(data.marks[k])data.marks[k]._unsync=true;
+  }
+  save(); syncBanner();
+}
+function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
+function syncBanner(){
+  const n=unsyncList().length;
+  let el=document.getElementById('syncBar');
+  if(!n){ if(el)el.remove(); return; }
+  if(!el){ el=document.createElement('div'); el.id='syncBar';
+    el.style.cssText='background:#fbe8e8;color:#c0392b;border:1px solid #f0c0c0;border-radius:10px;'
+      +'padding:10px 14px;margin:10px 0;font-size:13.5px;font-weight:700;display:flex;'
+      +'gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap';
+    const w=document.querySelector('.wrap'); const fm=document.getElementById('form');
+    if(w&&fm)w.insertBefore(el,fm); else if(w)w.appendChild(el);
+  }
+  el.innerHTML=`<span>⚠ 有 ${n} 筆只存在這台裝置，尚未上傳到後端（別台看不到）</span>
+    <button onclick="retrySync()" style="border:none;background:#c0392b;color:#fff;font-weight:800;
+      padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">重試上傳</button>`;
+}
+async function retrySync(){
+  const ks=unsyncList(); if(!ks.length)return;
+  for(const k of ks){ const p=String(k).split('_'); await o2Write(p[0], +p[1], SHIFTS.indexOf(p[2])); }
+  syncBanner();
+  alert(unsyncList().length?'仍有資料上傳失敗，請回冰箱表點「🔧 測試後端連線」查原因':'全部已上傳成功');
 }
 
 const P=new URLSearchParams(location.search);
@@ -98,6 +131,7 @@ let data=startData();
 initControls();
 render();
 syncFromServer();
+syncBanner();
 
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
