@@ -496,8 +496,25 @@ async function submitRollcall(){
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
     startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec};
-  state.screen='done'; render();                 // 先進完成畫面(體感快)
-  try{ await owedWrite('rollcall_submit',payload); }catch(e){console.error('寫入完成紀錄失敗',e);}
+  state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
+  await pushRollcall(payload);
+}
+/* ★ 確認後端真的寫進去了。失敗時在完成畫面顯示紅色警示＋重試，
+   避免「畫面說完成、Sheet 裡沒有」——這是最危險的情況。 */
+async function pushRollcall(payload){
+  let ok=false;
+  try{ const r=await owedWrite('rollcall_submit',payload); ok=!!(r&&r.ok); }
+  catch(e){ console.error('寫入完成紀錄失敗',e); }
+  state.rcSaved=ok;
+  if(ok) state.rcPending=null; else store.save();   // 失敗就把這筆留在本機等重送
+  if(state.screen==='done') render();
+  return ok;
+}
+async function retryRollcall(){
+  if(!state.rcPending)return;
+  toast('重新上傳中…');
+  const ok=await pushRollcall(state.rcPending);
+  toast(ok?'已上傳成功':'仍然失敗，請檢查後端連線');
 }
 async function askAI(task,payload){
   if(!API_URL){alert('尚未設定後端 API_URL');return '';}
@@ -574,7 +591,12 @@ async function bindSchedule(forDate){
 // ---- 附加查核表(藥品冰箱溫度 / 氧氣桶審核) 接點 ----
 const FRIDGE_SHEETS={'peds-triage':'兒童檢傷 藥品冰箱（PT）','obs-1':'留觀 藥品冰箱','obs-2':'留觀 藥品冰箱','obs-cart':'留觀 藥品冰箱'};
 const O2_SHEETS={'treat23':{dept:'治療二、三',qty:10},'peds-area':{dept:'兒科',qty:2},'obs-1':{dept:'留觀',qty:5},'obs-2':{dept:'留觀',qty:5},'obs-cart':{dept:'留觀',qty:5}};
-function curYM(){return (curRcDate()||'').slice(0,7);}
+// ★ 一定要回傳有效年月；空字串會讓冰箱/氧氣表寫入空的「年月」而永遠同步不到
+function curYM(){
+  const s=(curRcDate()||'').slice(0,7);
+  if(/^\d{4}-\d{2}$/.test(s))return s;
+  const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
 function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'🌡 藥品冰箱溫度 · '+unit);}
 function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
 function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
@@ -2020,16 +2042,29 @@ function rtlsOf(d){
 // 這個點班項目是否為「可定位儀器」（只有裝了標籤的才顯示 📍）
 function hasLocator(name){
   if(!name)return false;
-  return matchDevices(name).some(d=>d.locate);
+  return matchDevicesStrict(name).some(d=>d.locate);
 }
+/* ★ 嚴格比對：整個「類別」或「名稱」要完整出現在項目名稱裡（或反過來），
+   不再把名稱拆成兩字片段亂配 —— 那會讓「檢傷」「電子」「兒科」這種常見詞誤判，
+   跟先前欠物本比對錯誤是同一類問題。決定要不要顯示 📍 一律走這支。 */
+function normDev(s){ return String(s||'').replace(/[\s()（）\[\]／/+＋,、.。號－\-0-9]/g,'').toLowerCase(); }
+function matchDevicesStrict(name){
+  if(!name) return [];
+  if(name==='全部儀器') return LOCED.slice();
+  const n=normDev(name);
+  return LOCED.filter(d=>{
+    for(const f of [d.cat,d.name]){
+      const v=normDev(f);
+      if(v.length>=2 && (n.includes(v)||v.includes(n))) return true;
+    }
+    return !!(d.unit && String(d.unit).length>=3 && name.includes(d.unit));
+  });
+}
+// 瀏覽用（點開面板時可放寬，但仍不做兩字片段亂配）
 function matchDevices(name){
   if(!name||name==='全部儀器') return LOCED.slice();
-  let r=LOCED.filter(d=>(d.cat&&(name.includes(d.cat)||d.cat.includes(name)))||(d.name&&(name.includes(d.name)||d.name.includes(name)))||(d.unit&&name.includes(d.unit)));
-  if(r.length) return r;
-  for(let i=0;i<name.length-1;i++){const g=name.substr(i,2);
-    const m=LOCED.filter(d=>(d.cat&&d.cat.includes(g))||(d.name&&d.name.includes(g)));
-    if(m.length) return m;}
-  return [];
+  const r=matchDevicesStrict(name);
+  return r.length?r:[];
 }
 // 點 📍 → 跳浮動速查表(編號·狀態·區域),點「地圖」再開全螢幕定位
 function openMap(name){ showLocatePanel(name); }
@@ -2249,10 +2284,15 @@ function recDone(r){return !!(r&&(r.isDone==='是'||r.isDone===true));}
 async function openRecords(){ state.screen='records'; render(); await Promise.all([loadSignoffs(),loadSignLog()]); if(state.screen==='records')renderRecords(); }
 function renderRecords(){
   const map={};
+  // ★ 後端為準；本機只補「後端還沒有」的那幾筆，並標示未上傳（不再蓋掉後端）
   (SIGNOFFLOG||[]).forEach(r=>{map[(r.week||r['週次']||'')+'|'+(r.empId||r['員編']||r.by||r['簽核人']||'')]=r;});
-  (state.signoffs||[]).forEach(r=>{map[(r.week||'')+'|'+(r.empId||r.by||'')]=r;});
+  (state.signoffs||[]).forEach(r=>{
+    const k=(r.week||'')+'|'+(r.empId||r.by||'');
+    if(!map[k]) map[k]=Object.assign({},r,{_unsync:true});
+  });
   const signs=Object.values(map).sort((a,b)=>String(b.at||b['簽核時間']||'').localeCompare(String(a.at||a['簽核時間']||'')));
-  const signHtml=signs.length?signs.map(r=>`<div class="hist-day"><div class="hist-date">🗓 ${esc(r.week||r['週次']||'')}${(r.weekLabel||r['週範圍'])?(' · '+esc(r.weekLabel||r['週範圍'])):''}</div>
+  const signHtml=signs.length?signs.map(r=>`<div class="hist-day" ${r._unsync?'style="border-left:4px solid #c0392b"':''}><div class="hist-date">🗓 ${esc(r.week||r['週次']||'')}${(r.weekLabel||r['週範圍'])?(' · '+esc(r.weekLabel||r['週範圍'])):''}${r._unsync?' <span style="color:#c0392b;font-size:12px">⚠ 未上傳</span>':''}</div>
+     ${r._unsync?`<div style="padding:6px 0"><button class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="retrySignoff('${esc(r.week||'')}','${esc(r.empId||'')}')">重試上傳</button></div>`:''}
      <div class="hd-row"><span>簽核人</span><span>${esc(r.by||r['簽核人']||'')}${(r.empId||r['員編'])?(' · '+esc(r.empId||r['員編'])):''}</span></div>
      <div class="hd-row"><span>簽核時間</span><span>${esc(r.atText||fmtLocalFromISO(r.at)||r['簽核時間']||'')}</span></div></div>`).join('')
      :'<div class="card" style="text-align:center;color:var(--ink-soft);padding:18px">尚無週簽核紀錄</div>';
@@ -2289,11 +2329,27 @@ async function doSignoff(){
   const atD=new Date(atLocal); const atISO=isNaN(atD.getTime())?new Date().toISOString():atD.toISOString();
   const wl=(last4Weeks().find(w=>w.key===wk)||{}).label||'';
   const rec={week:wk,weekLabel:wl,by:state.user.name,empId:state.user.id,at:atISO,atText:atLocal.replace('T',' ')};
+  // ★ 先寫後端，確認成功才算數；失敗才留本機並標記未上傳
+  let ok=false;
+  try{ const r=await owedWrite('rollcall_signoff',rec); ok=!!(r&&r.ok); }
+  catch(e){ console.error('簽核寫入失敗',e); }
+  rec._unsync=!ok;
   state.signoffs=(state.signoffs||[]).filter(r=>!(r.week===wk&&r.empId===rec.empId));
   state.signoffs.push(rec); store.save();
-  toast('已簽核 '+wk+'（'+rec.atText+'）');
-  try{ await owedWrite('rollcall_signoff',rec); }catch(e){ console.error('簽核寫入失敗',e); }
+  if(ok){ toast('已簽核 '+wk+'（'+rec.atText+'）'); await loadSignoffs(); }
+  else  { alert('簽核未能存到後端，目前只在這台裝置。\n請檢查連線後在「簽核／點班紀錄」重試。'); }
   render();
+}
+// 重送未上傳的簽核
+async function retrySignoff(week,empId){
+  const rec=(state.signoffs||[]).find(r=>r.week===week&&r.empId===empId);
+  if(!rec)return;
+  let ok=false;
+  try{ const r=await owedWrite('rollcall_signoff',rec); ok=!!(r&&r.ok); }catch(e){}
+  rec._unsync=!ok; store.save();
+  toast(ok?'已上傳成功':'仍然失敗，請檢查後端連線');
+  if(ok)await loadSignoffs();
+  if(state.screen==='records')renderRecords(); else render();
 }
 // 統一推播提醒(v1：本裝置通知；後端FCM接通後升級為跨裝置廣播)
 function undoneSheetsOfWeek(){
@@ -2478,10 +2534,21 @@ function renderDone(){
      <div style="display:flex;justify-content:space-between;padding:7px 0 0;font-size:14px;border-top:1px dashed var(--line)"><span style="color:var(--ink-soft)">耗時</span><b style="color:var(--brand)">${fmtDur(tm.durationSec)}</b></div>
      ${tm.date&&tm.date!==fmtISO(new Date())?`<div style="text-align:center;color:var(--warn);font-size:12.5px;margin-top:8px">補點日期：${esc(tm.date)}</div>`:''}
    </div>`:'';
+  // 上傳狀態：null=進行中、true=已存後端、false=失敗（只在本機）
+  const syncHtml = state.rcSaved===false
+    ? `<div class="card" style="max-width:340px;margin:0 auto 16px;background:#fbe8e8;border:1px solid #f0c0c0;color:#c0392b">
+         <div style="font-weight:800;font-size:14px;margin-bottom:6px">⚠ 這筆點班尚未存到後端</div>
+         <div style="font-size:12.5px;line-height:1.7;margin-bottom:10px">目前只留在這台裝置，主管簽核與其他人看不到。</div>
+         <button class="btn btn-block" style="background:#c0392b;color:#fff;border:none" onclick="retryRollcall()">重試上傳</button>
+       </div>`
+    : (state.rcSaved===true
+       ? `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ok,#2f9e44);font-weight:700">✓ 已存入後端，各裝置同步</div>`
+       : `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ink-soft)">上傳中…</div>`);
   $app.innerHTML=`
   <div class="screen"><div class="done-wrap">
     <div class="done-circle">✓</div>
     <h2 style="margin:0 0 6px">點班完成</h2>
+    ${syncHtml}
     <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
       ${esc(state.user.name)}（${esc(state.user.title)}）· ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} 簽核</p>
     ${timingHtml}

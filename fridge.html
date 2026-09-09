@@ -98,9 +98,12 @@ syncBanner();
 function keyOf(){return 'fridge_'+data.unit+'_'+data.ym;}
 function blank(unit,ym){return {unit,ym,readings:{},abn:{},superv:[]};}
 function loadFor(unit,ym){ try{const s=localStorage.getItem('fridge_'+unit+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(unit,ym); }
+function thisYM(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
 function startData(){
-  const u=P.get('unit')||UNITS[0], ym=P.get('ym')||'';
-  const d=loadFor(u,ym); d.unit=u; if(ym)d.ym=ym;
+  // ★ 年月一定要有值。空字串會讓寫入的「年月」是空的、而且同步時永遠比對不到，
+  //   造成本機看得到、別台看不到 —— 這是先前記錄不一致的真正原因。
+  const u=P.get('unit')||UNITS[0], ym=(P.get('ym')||'').trim()||thisYM();
+  const d=loadFor(u,ym); d.unit=u; d.ym=ym;
   if(P.get('name')) localStorage.setItem('fridge_lastName',P.get('name'));
   return d;
 }
@@ -133,7 +136,10 @@ async function syncFromServer(){
     const a=await r.json(); if(!Array.isArray(a))return;
     let n=0;
     a.forEach(function(o){
-      const unit=String(o['單位']||o.unit||''), ym=String(o['年月']||o.ym||'');
+      const unit=String(o['單位']||o.unit||'');
+      let ym=String(o['年月']||o.ym||'').trim();
+      // 舊資料若「年月」是空的（先前的 bug 寫進去的），改用「寫入時間」推回月份，才不會變孤兒
+      if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
       if(unit!==String(data.unit)||ym!==String(data.ym))return;
       const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||'');
       const si=SHIFTS.indexOf(sh); if(!day||si<0)return;
@@ -145,8 +151,22 @@ async function syncFromServer(){
       };
       n++;
     });
-    if(n){ save(); render(); }
-  }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e); }
+    serverCount=n; save(); render(); srvBadge();
+  }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e); serverCount=-1; srvBadge(); }
+}
+// 後端筆數徽章：一眼看出「Sheet 裡到底有幾筆」，不用再猜
+let serverCount=null;
+function srvBadge(){
+  let el=document.getElementById('srvBadge');
+  if(!el){ el=document.createElement('div'); el.id='srvBadge';
+    el.style.cssText='font-size:12.5px;padding:6px 12px;margin:8px 0;border-radius:8px;display:inline-block';
+    const w=document.querySelector('.wrap'), sh=document.getElementById('sheet');
+    if(w&&sh)w.insertBefore(el,sh); }
+  const local=Object.keys(data.readings||{}).length;
+  if(serverCount===-1){ el.style.cssText+=';background:#fbe8e8;color:#c0392b;font-weight:700';
+    el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）'; return; }
+  el.style.cssText+=';background:#e6f6ed;color:#1f7a43;font-weight:700';
+  el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 筆 · 本機 '+local+' 筆 · 本月 '+(data.ym||'');
 }
 function curName(){ return (document.getElementById('nameIn').value||'').trim(); }
 function clampPlot(t){ return Math.max(TMIN, Math.min(TMAX, t)); }
@@ -355,9 +375,16 @@ function saveEntry(day,si){
   const sign=document.getElementById('e_sign').value.trim();
   if(sign){ localStorage.setItem('fridge_lastName',sign); document.getElementById('nameIn').value=sign; }
   data.readings[rkey(day,si)]={cur:cur, hi:document.getElementById('e_hi').value.trim(), lo:document.getElementById('e_lo').value.trim(), sign:sign};
-  save(); fridgeWrite(day,si);
-  if(+cur<LOW||+cur>HIGH){ closeModal(); openAbn(day,si,true); }
-  else { closeModal(); render(); }
+  save();
+  // ★ 等後端真的回 ok 才算存好；沒成功會在畫面留下紅色「未上傳」橫幅可重試
+  const btn=document.querySelector('.modal-card .btn-p'); if(btn){btn.textContent='儲存中…';btn.disabled=true;}
+  fridgeWrite(day,si).then(function(){
+    const r=data.readings[rkey(day,si)]||{};
+    if(r._unsync) alert('⚠ 這筆溫度目前只存在這台裝置，尚未上傳到後端。\n請點畫面上的「重試上傳」，或用「🔧 測試後端連線」查原因。');
+    if(+cur<LOW||+cur>HIGH){ closeModal(); openAbn(day,si,true); }
+    else { closeModal(); render(); }
+    syncBanner();
+  });
 }
 function closeModal(){ document.getElementById('modalHost').innerHTML=''; render(); }
 

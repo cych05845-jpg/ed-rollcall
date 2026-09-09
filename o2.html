@@ -136,9 +136,11 @@ syncBanner();
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
 function loadFor(dept,ym){ try{const s=localStorage.getItem('o2_'+(dept||'')+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(dept,ym); }
+function thisYM(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
 function startData(){
-  const dept=P.get('dept')||'', ym=P.get('ym')||'';
-  const d=loadFor(dept,ym); d.dept=dept; if(ym)d.ym=ym;
+  // ★ 年月不可為空，否則寫入與同步都會對不起來（同 fridge.html）
+  const dept=P.get('dept')||'', ym=(P.get('ym')||'').trim()||thisYM();
+  const d=loadFor(dept,ym); d.dept=dept; d.ym=ym;
   if(P.get('qty')) d.qty=P.get('qty');
   if(P.get('name')) localStorage.setItem('o2_lastName',P.get('name'));
   return d;
@@ -166,7 +168,9 @@ async function syncFromServer(){
     const a=await r.json(); if(!Array.isArray(a))return;
     let n=0;
     a.forEach(function(o){
-      const dept=String(o['科別']||o.dept||''), ym=String(o['年月']||o.ym||'');
+      const dept=String(o['科別']||o.dept||'');
+      let ym=String(o['年月']||o.ym||'').trim();
+      if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
       if(dept!==String(data.dept)||ym!==String(data.ym))return;
       const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||''), crit=String(o['項目']||o.crit||'');
       const si=SHIFTS.indexOf(sh); if(!day||si<0||!crit)return;
