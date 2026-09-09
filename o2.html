@@ -159,6 +159,14 @@ function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function curName(){return (document.getElementById('nameIn').value||'').trim();}
+// ★ 年月正規化：Sheet 可能把「2026-09」存成日期，讀回來會是 2026-09-01 之類。
+// 一律取前 7 碼 yyyy-MM，兩邊比對才會一致。
+function ymOf(v){
+  var s=String(v==null?'':v).trim();
+  var m=s.match(/^(\d{4})[-\/](\d{1,2})/);
+  if(m) return m[1]+'-'+('0'+m[2]).slice(-2);
+  return s;
+}
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
 /* 從後端載入本科別本月已勾選的紀錄，與本機合併 → 換裝置看到的都一樣。 */
 async function syncFromServer(){
@@ -169,9 +177,9 @@ async function syncFromServer(){
     let n=0;
     a.forEach(function(o){
       const dept=String(o['科別']||o.dept||'');
-      let ym=String(o['年月']||o.ym||'').trim();
+      let ym=ymOf(o['年月']||o.ym||'');
       if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
-      if(dept!==String(data.dept)||ym!==String(data.ym))return;
+      if(dept!==String(data.dept)||ym!==ymOf(data.ym))return;
       const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||''), crit=String(o['項目']||o.crit||'');
       const si=SHIFTS.indexOf(sh); if(!day||si<0||!crit)return;
       data.marks[ck(crit,day,si)]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };

@@ -603,6 +603,14 @@ function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.em
 // 用本機紀錄判斷「今天這一區」冰箱/氧氣是否已登錄,回傳簽名者(空=未完成)
 /* 附加查核完成狀態：以「後端紀錄」為準（跨裝置一致），連不到後端才退回本機快取。
    日與月都取自點班日期(curRcDate)，補點過去日期也不會對錯。 */
+// ★ 年月正規化：Sheet 可能把「2026-09」存成日期，讀回來會是 2026-09-01 之類。
+// 一律取前 7 碼 yyyy-MM，兩邊比對才會一致。
+function ymOf(v){
+  var s=String(v==null?'':v).trim();
+  var m=s.match(/^(\d{4})[-\/](\d{1,2})/);
+  if(m) return m[1]+'-'+('0'+m[2]).slice(-2);
+  return s;
+}
 function rcYMD(){
   const s=(typeof curRcDate==='function'&&curRcDate())||new Date().toISOString().slice(0,10);
   return { ym:String(s).slice(0,7), day:String(+String(s).slice(8,10)) };
@@ -612,7 +620,7 @@ function fridgeDoneToday(unit){
   try{
     for(let i=(FRIDGELOG||[]).length-1;i>=0;i--){ const r=FRIDGELOG[i]||{};
       if(String(r['單位']||r.unit||'')===String(unit)
-      && String(r['年月']||r.ym||'')===t.ym
+      && ymOf(r['年月']||r.ym||'')===t.ym
       && String(+(r['日']||r.day||0))===t.day)
         return String(r['簽名']||r.sign||'已登錄');
     }
@@ -628,7 +636,7 @@ function o2DoneToday(dept){
   try{
     for(let i=(O2LOG||[]).length-1;i>=0;i--){ const r=O2LOG[i]||{};
       if(String(r['科別']||r.dept||'')===String(dept)
-      && String(r['年月']||r.ym||'')===t.ym
+      && ymOf(r['年月']||r.ym||'')===t.ym
       && String(+(r['日']||r.day||0))===t.day)
         return String(r['簽名']||r.by||'已登錄');
     }
