@@ -473,8 +473,16 @@ async function bindSchedule(forDate){
 const FRIDGE_SHEETS={'peds-triage':'兒童檢傷 藥品冰箱（PT）','obs-1':'留觀 藥品冰箱','obs-2':'留觀 藥品冰箱','obs-cart':'留觀 藥品冰箱'};
 const O2_SHEETS={'treat23':{dept:'治療二、三',qty:10},'peds-area':{dept:'兒科',qty:2},'obs-1':{dept:'留觀',qty:5},'obs-2':{dept:'留觀',qty:5},'obs-cart':{dept:'留觀',qty:5}};
 function curYM(){return (curRcDate()||'').slice(0,7);}
-function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');window.open(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'_blank');}
-function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');window.open(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'_blank');}
+function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'🌡 藥品冰箱溫度 · '+unit);}
+function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
+function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
+function renderEmbed(){
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div class="title" style="font-size:15px">${esc(state.embedTitle||'附加查核')}</div>
+    <button class="back" onclick="state.screen=(state.embedBack||'home');render()">← 返回點班</button></div></div>
+  <iframe src="${esc(state.embedUrl||'')}" style="width:100%;height:calc(100vh - 58px);border:none;display:block;background:#eef2f4"></iframe>`;
+}
 function goTarget(t){
   if(!t) return;
   if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
@@ -965,7 +973,7 @@ function render(){
   if(!state.user)state.screen='login';
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
-    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords}[state.screen]||renderLogin)();
+    history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -1011,7 +1019,7 @@ function renderHome(){
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
   const reviewBtn=isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="state.screen='leader';render()">📋 主管簽核 · 完成總表</button>
+     onclick="openLeader()">📋 主管簽核 · 完成總表</button>
      <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="openRecords()">📜 簽核／點班紀錄</button>`:'';
   $app.innerHTML=`
   <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
@@ -1706,6 +1714,19 @@ async function pushRemind(){
   toast('已在本裝置發出提醒通知');
   // 後端接通後：改由 owedWrite('push_broadcast',{msg:body,by,at}) 觸發 FCM 推給所有已訂閱裝置
 }
+let FRIDGELOG=[], O2LOG=[];
+async function loadFridgeLog(){ if(!API_URL)return; try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp',{cache:'no-store'}); const a=await r.json(); if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
+async function loadO2Log(){ if(!API_URL)return; try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check',{cache:'no-store'}); const a=await r.json(); if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
+async function openLeader(){ state.screen='leader'; render(); try{ await Promise.all([loadSignLog(),loadFridgeLog(),loadO2Log()]); }catch(e){} if(state.screen==='leader')renderLeader(); }
+function inSignWeek_(ym,day){ if(!ym||!day)return false; const p=String(ym).split('-'); const d=new Date(+p[0],(+p[1]||1)-1,+day); return isoWeek(d)===state.signWeek; }
+function extraHas_(kind,re){
+  const log=kind==='fridge'?FRIDGELOG:O2LOG;
+  return (log||[]).some(r=>{ const ym=r['年月']||r.ym||''; const day=r['日']||r.day||''; if(!inSignWeek_(ym,day))return false;
+    const key=kind==='fridge'?(r['單位']||r.unit||''):(r['科別']||r.dept||''); return re.test(String(key)); });
+}
+function extraRow_(label,done,onclick){
+  return `<div class="rem-li"><span>${label} ${done?'<span class="pill-ok">本週已登錄</span>':'<span class="pill-bad">尚無</span>'}</span><button class="btn btn-ghost" style="padding:5px 12px" onclick="${onclick}">查核</button></div>`;
+}
 function renderLeader(){
   state.signWeek=state.signWeek||isoWeek(new Date());
   const weeks=last4Weeks();
@@ -1740,6 +1761,15 @@ function renderLeader(){
       <div class="rem-h">📊 本週各區完成（${doneCnt}/${SHEETS.length} 張）</div>
       ${rowsHtml}
       ${emptyNote}
+    </div>
+    <div class="rem-card">
+      <div class="rem-h">🌡🫧 附加查核（本週）</div>
+      ${extraRow_('🌡 冰箱溫度 · 兒童檢傷', extraHas_('fridge',/兒童檢傷|PT/), "openFridge('兒童檢傷 藥品冰箱（PT）')")}
+      ${extraRow_('🌡 冰箱溫度 · 留觀', extraHas_('fridge',/留觀/), "openFridge('留觀 藥品冰箱')")}
+      ${extraRow_('🫧 氧氣桶 · 治療二三', extraHas_('o2',/治療/), "openO2('治療二、三',10)")}
+      ${extraRow_('🫧 氧氣桶 · 兒科', extraHas_('o2',/兒科|兒童/), "openO2('兒科',2)")}
+      ${extraRow_('🫧 氧氣桶 · 留觀', extraHas_('o2',/留觀/), "openO2('留觀',5)")}
+      <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">＊「本週已登錄」讀自後端(fridge_temp／o2_check);點「查核」開表複查。</div>
     </div>
     <div class="rem-card">
       <div class="rem-h">🛠 儀器保養待辦 / 逾期（${maintDue.length}）</div>
