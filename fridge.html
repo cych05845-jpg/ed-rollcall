@@ -133,7 +133,8 @@ async function syncFromServer(){
   if(!API_URL)return;
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp',{cache:'no-store'});
-    const a=await r.json(); if(!Array.isArray(a))return;
+    const a=await r.json();
+    if(!Array.isArray(a)){ serverCount=-1; srvBadge(); console.error('後端回傳不是陣列',a); return; }
     let n=0;
     a.forEach(function(o){
       const unit=String(o['單位']||o.unit||'');
@@ -227,6 +228,48 @@ async function testBackend(){
     out+='② 寫入/判讀(POST)：✗ '+String(e&&e.message||e)+'\n→ 若這裡是「Failed to fetch」但①正常，通常是 GS 需要「重新部署為新版本」，或部署權限要設成「任何人」。';
   }
   d.textContent=out;
+}
+/* ★ 寫入自我測試：寫一筆測試列 → 立刻讀回來 → 指出到底卡在哪一段。
+   這能區分「寫不進去」和「寫進去了但讀不到」，不用再靠猜。 */
+async function writeSelfTest(){
+  const d=document.getElementById('diagMsg'); if(!d)return;
+  d.style.color='#5d6c77'; d.textContent='測試中…';
+  const unit=data.unit, ym=data.ym, day=99, shift='0';   // 99日＝測試用，不會影響正式資料
+  let out='單位：'+unit+'\n年月：'+ym+'\n\n';
+  // 1) 寫
+  let wrote=null;
+  try{
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',
+      payload:{unit:unit,ym:ym,day:day,shift:shift,cur:'9.9',hi:'',lo:'',sign:'寫入測試',at:new Date().toISOString()}})});
+    const t=await r.text(); try{wrote=JSON.parse(t);}catch(_){}
+    out+='① 寫入：HTTP '+r.status+'　回應 '+(t.slice(0,90)||'(空)')+'\n';
+  }catch(e){ out+='① 寫入：✗ '+String(e&&e.message||e)+'\n'; d.textContent=out; return; }
+  if(!(wrote&&wrote.ok)){
+    out+='→ 後端沒有回 ok，代表寫入被拒。多半是 GS 沒有「重新部署為新版本」。';
+    d.textContent=out; return;
+  }
+  // 2) 讀
+  await new Promise(r=>setTimeout(r,1200));   // 給 Sheet 一點寫入時間
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp&_='+Date.now(),{cache:'no-store'});
+    const t=await r.text(); let a=null; try{a=JSON.parse(t);}catch(_){}
+    if(!Array.isArray(a)){ out+='② 讀回：⚠ 不是陣列 → '+t.slice(0,140)
+      +'\n→ 若寫著「找不到工作表」，代表寫入其實沒建立分頁。'; d.textContent=out; return; }
+    out+='② 讀回：整張表共 '+a.length+' 筆\n';
+    const mine=a.filter(o=>String(o['單位']||'')===unit);
+    out+='   其中本單位 '+mine.length+' 筆\n';
+    const test=a.filter(o=>String(o['簽名']||'')==='寫入測試');
+    out+='   找到剛寫的測試列：'+(test.length?'✓ 有':'✗ 沒有')+'\n';
+    if(test.length){
+      const t0=test[test.length-1];
+      out+='   該列年月＝「'+String(t0['年月']||'(空)')+'」　本頁年月＝「'+ym+'」\n';
+      out+=(String(t0['年月']||'')===ym?'→ 寫入與讀取都正常，資料鏈是通的。':
+        '→ ★年月對不上！這就是同步不到的原因。');
+    }else{
+      out+='→ 後端說寫入成功，但讀不到 → 可能寫到了另一個試算表，\n   請確認 Apps Script 是綁在正確的 Google Sheet 上。';
+    }
+    d.textContent=out;
+  }catch(e){ out+='② 讀回：✗ '+String(e&&e.message||e); d.textContent=out; }
 }
 // 溫度寫回點班後端(task:'fridge_temp')
 /* 寫回後端。★ 會確認後端真的回 ok，失敗就把該筆標記為「未上傳」並在畫面示警，
@@ -351,7 +394,8 @@ function openEntry(day,si){
       <input type="file" id="photoCam" accept="image/*" capture="environment" style="display:none" onchange="visionRead(this.files[0])">
       <input type="file" id="photoIn" accept="image/*" style="display:none" onchange="visionRead(this.files[0])">
       <div id="visionMsg" style="font-size:12px;color:var(--soft);margin-top:6px"></div>
-      <button type="button" onclick="testBackend()" style="background:none;border:none;color:#0f7a86;font-size:12px;text-decoration:underline;padding:4px 0;cursor:pointer">🔧 測試後端連線（判讀失敗時點這）</button>
+      <button type="button" onclick="testBackend()" style="background:none;border:none;color:#0f7a86;font-size:12px;text-decoration:underline;padding:4px 0;cursor:pointer">🔧 測試後端連線</button>
+      <button type="button" onclick="writeSelfTest()" style="background:none;border:none;color:#c0392b;font-size:12px;text-decoration:underline;padding:4px 0 4px 12px;cursor:pointer">🧪 寫入自我測試（資料存不進去時點這）</button>
       <div id="diagMsg" style="font-size:12px;color:var(--soft);white-space:pre-wrap;margin-top:2px"></div>
     </div>
     <div class="fld"><label>現在溫度（°C）＊必填</label><input id="e_cur" type="number" step="0.1" inputmode="decimal" value="${r.cur??''}" autofocus></div>
