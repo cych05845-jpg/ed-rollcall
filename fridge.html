@@ -257,8 +257,12 @@ function openEntry(day,si){
   document.getElementById('modalHost').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-card">
     <h3>${day} 日 · ${SHIFTS[si]} 時　溫度登錄</h3>
     <div class="fld">
-      <button class="btn btn-g" style="width:100%;padding:12px" onclick="document.getElementById('photoIn').click()">📷 拍照自動判讀（現在／高／低）</button>
-      <input type="file" id="photoIn" accept="image/*" capture="environment" style="display:none" onchange="visionRead(this.files[0])">
+      <div class="row2">
+        <button class="btn btn-g" style="flex:1;padding:12px" onclick="document.getElementById('photoCam').click()">📷 拍照判讀</button>
+        <button class="btn btn-g" style="flex:1;padding:12px" onclick="document.getElementById('photoIn').click()">🖼 選圖判讀</button>
+      </div>
+      <input type="file" id="photoCam" accept="image/*" capture="environment" style="display:none" onchange="visionRead(this.files[0])">
+      <input type="file" id="photoIn" accept="image/*" style="display:none" onchange="visionRead(this.files[0])">
       <div id="visionMsg" style="font-size:12px;color:var(--soft);margin-top:6px"></div>
       <button type="button" onclick="testBackend()" style="background:none;border:none;color:#0f7a86;font-size:12px;text-decoration:underline;padding:4px 0;cursor:pointer">🔧 測試後端連線（判讀失敗時點這）</button>
       <div id="diagMsg" style="font-size:12px;color:var(--soft);white-space:pre-wrap;margin-top:2px"></div>
