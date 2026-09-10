@@ -369,7 +369,62 @@ const ACCOUNTS=[
 */
 /* ★ 前端版本印記：上傳後首頁最下方會顯示這串。
    看到的不是這串就代表瀏覽器還在用舊檔（需強制重新整理／清站台資料）。 */
-const APP_VER='2026-09-10-b8';
+/* ★ 單張讀取的共用小工具 */
+async function getJSON(q){
+  const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q+'&_='+Date.now(),{cache:'no-store'});
+  return await r.json();
+}
+
+/* ★★★ 批次讀取：一支請求把多張表一起帶回來。
+   為什麼要做：Apps Script 一次來回大約 1~3 秒。
+   原本開啟 App 要發 10 個請求、每 20 秒的自動更新要發 4 個 ——
+   等於開一次 App 要等 10 個來回，這就是「取入跟更新耗時較久」的主因。
+   現在 10 → 1、4 → 1。每張表還可以指定只要最近幾天，回傳量也一起降。
+
+   spec 寫法：[['items'],['rollcall_log',7],['fridge_temp',30]]
+   後端不支援 ?tables= 時（GS 還沒更新）會自動退回逐張抓，功能不會壞。 */
+let BUNDLE_OK=true;
+async function loadBundle(spec){
+  const apply={
+    items:       a=>loadItems(a),
+    devices:     a=>loadLocator(a),
+    owed:        a=>loadOwed(a),
+    rollcall_log:a=>loadSignLog(null,a),
+    item_report: a=>loadItemReports(a),
+    fridge_temp: a=>loadFridgeLog(null,a),
+    o2_check:    a=>loadO2Log(null,a),
+    staff_perm:  a=>loadPerms(a),
+    rtls:        a=>loadRtls(a),
+    rollcall_active:a=>loadActive(a),
+    rollcall_issue: a=>loadIssues(a),
+    rollcall_signoff:a=>loadSignoffs(a)
+  };
+  const fallback=()=>Promise.all(spec.map(x=>{
+    const f=apply[x[0]]; if(!f)return Promise.resolve();
+    // 退回模式：各自發請求（帶天數）
+    if(x[0]==='rollcall_log')return loadSignLog(x[1]);
+    if(x[0]==='fridge_temp') return loadFridgeLog(x[1]);
+    if(x[0]==='o2_check')    return loadO2Log(x[1]);
+    return f(null);
+  }));
+  if(!BUNDLE_OK) return fallback();
+  try{
+    const q='tables='+encodeURIComponent(spec.map(x=>x[1]?(x[0]+':'+x[1]):x[0]).join(','));
+    const j=await getJSON(q);
+    if(!j||typeof j!=='object'||Array.isArray(j)||!j._version){
+      BUNDLE_OK=false;                      // 後端還是舊版 → 之後都走逐張抓
+      console.warn('後端不支援批次讀取（?tables=），改為逐張抓。請更新 GS 並重新部署。');
+      return fallback();
+    }
+    await Promise.all(spec.map(x=>{
+      const f=apply[x[0]]; const rows=j[x[0]];
+      if(!f||!Array.isArray(rows))return Promise.resolve();
+      return f(rows);
+    }));
+  }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
+}
+
+const APP_VER='2026-09-10-b10';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -379,11 +434,10 @@ const WITNESS_TITLES  = ["小組長","護理長","副護理長"];   // 預設可
    PERMS[員編] = {lead:財管組長, caishi:財管組負責人, witness:見證資格}
    有設定過的以設定為準；沒設定過的沿用上面的預設與職稱判斷。 */
 let PERMS={};
-async function loadPerms(){
-  if(!API_URL)return;
+async function loadPerms(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=staff_perm',{cache:'no-store'});
-    const a=await r.json(); if(!Array.isArray(a))return;
+    const a=pre||await getJSON('table=staff_perm'); if(!Array.isArray(a))return;
     const m={}; const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
     a.forEach(function(o){
       const id=fld(o,['員編','id']); if(!id)return;
@@ -471,22 +525,20 @@ const SHEETS=[
 ];
 // ===================== 後端(Google Sheet + AI,單一來源) =====================
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';   // 點班清單來源 + AI 後端;留空=用內建清單、AI停用
-async function loadItems(){
-  if(!API_URL)return;
+async function loadItems(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=items',{cache:'no-store'});
-    const rows=await r.json();
+    const rows=pre||await getJSON('table=items');
     if(Array.isArray(rows)&&rows.length) ITEMS=rows.map(x=>Array.isArray(x)?x
       :[x.sheetId||x.area,x.name,x.qty,x.type,x.assign||'',(x.active===false||x.active==='FALSE'||x.active==='停用')?'停用':'']);
   }catch(e){console.error('讀點班清單失敗,改用內建清單',e);}
 }
 // 項目回報（一般人員反映項目有誤 → 財管組長處理）
 let ITEM_REPORTS=[];
-async function loadItemReports(){
-  if(!API_URL)return;
+async function loadItemReports(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=item_report',{cache:'no-store'});
-    const a=await r.json();
+    const a=pre||await getJSON('table=item_report');
     if(Array.isArray(a)) ITEM_REPORTS=a.map(o=>({
       id:o.id||o['ID']||('R'+Math.random().toString(36).slice(2,8)),
       sheet:o.sheet||o['分區']||'', item:o.item||o['項目']||'',
@@ -1376,7 +1428,11 @@ function renderHome(){
   </div>`;
   /* ★ 首頁只留「這一班要做的事」；查詢、統計、設定全部收進管理中心。
      護理師早上七點手上有病人，要的是兩下點到目標，不是十幾顆按鈕。 */
-  const hasAdmin=isLeader||can('items.edit')||can('perm.manage');
+  /* ★ 財管組負責人可以覆核歸還、可以做每月清點，
+     但原本的條件是 isLeader||items.edit||perm.manage —— 這三個她都沒有，
+     於是首頁看不到「管理中心」，永遠進不去「欠物本 · 每月清點統計」。
+     把 owed.monthly 加進來。 */
+  const hasAdmin=isLeader||can('items.edit')||can('perm.manage')||can('owed.monthly');
   const pend=ITEM_REPORTS.length;
   const reviewBtn=hasAdmin?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="openAdminHub()">⚙ 管理中心${pend?(' · '+pend+' 則待處理'):''}</button>`:'';
@@ -1405,6 +1461,7 @@ function renderHome(){
     <div class="section-h">我的待辦</div>
     ${syncBar()}
     ${renderTodoCard()}
+    ${owedDutyCard()}
     ${renderAuxCard()}
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
@@ -1670,11 +1727,10 @@ const ZONE_NAME={triage:'檢傷區',resus:'急救室',treat:'治療區',peds:'�
 let LOCED=[];
 const OWED_FALLBACK=[{"id": "OW001", "zone": "急救室", "date": "2023-05-01", "item": "ETCO2(黑)", "names": "張祺勝", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW002", "zone": "急救室", "date": "2023-07-07", "item": "鋼彎", "names": "林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "2023/10/7已送單"}, {"id": "OW003", "zone": "急救室", "date": "2024-12-18", "item": "0號 Mask", "names": "江沛鄉/曾鈺涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW004", "zone": "急救室", "date": "2025-08-08", "item": "血氧機", "names": "李宜靜", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "不確定是否已回來"}, {"id": "OW005", "zone": "急救室", "date": "2025-11-04", "item": "5號 Mask", "names": "蔡依玲/林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW006", "zone": "急救室", "date": "2025-11-14", "item": "5號 Mask", "names": "楊琇涵/林素娥", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW007", "zone": "急救室", "date": "2026-03-30", "item": "ETCO2(黑)", "names": "張祺勝/劉彩晶", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW008", "zone": "第一診間", "date": "2020-06-13", "item": "大彎Kelly", "names": "林伯雄/松韻禪", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW009", "zone": "第一診間", "date": "2023-11-08", "item": "CVP包", "names": "林妤蓁/張爾珈", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW010", "zone": "第一診間", "date": "2024-02-19", "item": "張眼器(小)", "names": "陳永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW011", "zone": "第一診間", "date": "2026-05-03", "item": "置針座5號", "names": "黃晟凱", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW012", "zone": "檢傷", "date": "2024-10-16", "item": "Suction tube", "names": "張舜硯", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW013", "zone": "檢傷", "date": "2025-01-26", "item": "Forceps", "names": "楊琇涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW014", "zone": "檢傷", "date": "2025-06-02", "item": "Suction tube", "names": "蕭筑云", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW015", "zone": "留觀區", "date": "2019-09-03", "item": "小鼻聶", "names": "家儀/琪文/祐蓁/鐘毅", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW016", "zone": "留觀區", "date": "2026-02-24", "item": "冰枕", "names": "永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW017", "zone": "留觀區", "date": "2026-02-26", "item": "冰枕", "names": "乃嘉", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}];
 let OWED=OWED_FALLBACK.slice();
-async function loadOwed(){
-  if(!API_URL)return;
+async function loadOwed(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=owed',{cache:'no-store'});
-    const a=await r.json();
+    const a=pre||await getJSON('table=owed');
     if(Array.isArray(a)&&a.length){
       const mapped=a.map(o=>({
         id:o.id||o['欠物ID']||('OW'+Math.random().toString(36).slice(2,8)),
@@ -2008,16 +2064,15 @@ function exportOwedCSV(ym){
 /* ==================== 管理中心 ====================
    把主管用的查詢、統計、設定全部收在這裡，首頁只留「這一班要做的事」。 */
 let ISSUES=[];
-async function loadIssues(){
-  if(!API_URL)return;
+async function loadIssues(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_issue&_='+Date.now(),{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))ISSUES=a;
+    const a=pre||await getJSON('table=rollcall_issue'); if(Array.isArray(a))ISSUES=a;
   }catch(e){}
 }
 function openAdminHub(){
   state.screen='adminHub'; render();
-  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadItemReports()]).then(function(){
+  loadBundle([['rollcall_log',30],['rollcall_issue',90],['owed'],['item_report']]).then(function(){
     if(state.screen==='adminHub')render();
   });
 }
@@ -2166,7 +2221,8 @@ function analytics(){
 }
 function openAnalytics(){ state.screen='analytics'; state.aiText=''; render();
   // ★ 一定要把冰箱／氧氣也載進來，之前沒載，那個「冰箱超標」數字是開 App 時的舊值
-  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadRtls(),loadFridgeLog(30),loadO2Log(30)])
+  loadBundle([['rollcall_log',30],['rollcall_issue',90],['owed'],['rtls'],
+    ['fridge_temp',30],['o2_check',30]])
     .then(function(){ if(state.screen==='analytics')render(); }); }
 function renderAnalytics(){
   const A=analytics();
@@ -2376,6 +2432,84 @@ function o2ShiftBy(dept,ymd,sh){
   });
   return r?String(r['簽名']||r.by||'已登錄'):'';
 }
+/* ==================== 欠物覆核（參與歸還流程的人）====================
+   ★ 歸還是「兩個人一起完成」的：
+     ‧ 蓋回結案（owed.close）＝ 護理長／副護理長／財管組長／財管負責人
+     ‧ 刷員編見證（witness） ＝ 當班 leader（小組長以上），
+       以及在「👥 權限設定」裡被額外授予見證資格的人
+   我一開始只給了「能蓋回結案的人」，漏掉見證這一半。
+   小組長常是人員歸還時第一個找的人，他要知道本區還欠什麼；
+   被授予見證資格的人也一樣。所以兩種角色都給卡，但內容不同：
+     ‧ 能結案的人 → 直接給「蓋回結案」按鈕
+     ‧ 只能見證的人 → 不給結案鈕（按了也會被擋），改成列出「要找誰結案」 */
+function owedClosers(){
+  return (ACCOUNTS||[]).filter(function(a){
+    if(a.active===false)return false;
+    return can('owed.close',{id:a.id,name:a.name,title:a.title,role:a.role});
+  }).map(function(a){
+    return {name:a.name, role:roleLabel({id:a.id,name:a.name,title:a.title,role:a.role})};
+  });
+}
+function owedWitnesses(){
+  return (ACCOUNTS||[]).filter(function(a){
+    if(a.active===false)return false;
+    return isWitnessRank({id:a.id,name:a.name,title:a.title,role:a.role});
+  }).map(function(a){ return a.name+'（'+(a.title||'')+'）'; });
+}
+function owedDutyCard(){
+  const canClose=can('owed.close'), canWit=can('witness');
+  if(!canClose&&!canWit)return '';
+  const list=(OWED||[]).filter(o=>!o.status||o.status==='欠物中');
+  const aged=list.map(function(o){
+    const t=Date.parse(o.date); const days=isNaN(t)?null:Math.floor((Date.now()-t)/86400000);
+    return Object.assign({},o,{days:days});
+  }).sort((a,b)=>(b.days||0)-(a.days||0));
+  const over30=aged.filter(o=>o.days!==null&&o.days>30).length;
+  const monthly=can('owed.monthly')
+    ? `<button class="btn btn-ghost btn-block" style="margin:0" onclick="openOwedMonthly()">📊 每月清點統計</button>` : '';
+  const myRole=canClose?'可蓋回結案':'可當見證人';
+
+  if(!list.length){
+    return `<div class="card" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);background:#ebfbee">
+      <div style="font-weight:800;color:#1f7a43">✓ 沒有待覆核的欠物</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin:3px 0 10px">
+        你的角色：${esc(roleLabel())}・${myRole}。目前欠物本已全部結清。</div>
+      ${monthly}</div>`;
+  }
+  const rows=aged.slice(0,3).map(function(o){
+    const agel=o.days===null?'':(o.days>30?`<span style="color:var(--bad,#E03131);font-weight:800">${o.days} 天</span>`
+                                          :`<span style="color:var(--ink-soft)">${o.days} 天</span>`);
+    const btn=canClose?`<button class="owe-close" onclick="owedCloseUI('${o.id}')">蓋回結案</button>`:'';
+    return `<div class="rem-li" style="align-items:center">
+      <span><b>${esc(o.item)}</b>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px">${esc(o.zone||'')} · ${esc(o.names||'')}</div></span>
+      <span style="display:flex;align-items:center;gap:8px">${agel}${btn}</span></div>`;
+  }).join('');
+
+  // 只能見證的人：告訴他要找誰結案（不然他會不知道下一步）
+  const closers=owedClosers();
+  const whoTo=(!canClose&&closers.length)
+    ? `<div style="padding:8px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-soft);line-height:1.8">
+        人員要歸還時，請找 <b>${esc(closers.slice(0,4).map(c=>c.name+'（'+c.role+'）').join('、'))}</b> 蓋回結案，
+        再由你刷員編見證。</div>` : '';
+  const witNote=canClose
+    ? `<div style="padding:0 12px 10px;font-size:11px;color:var(--ink-soft)">
+        ＊結案時需請當班 leader（小組長以上）刷員編見證，見證人與時間會一併寫入紀錄。</div>`
+    : `<div style="padding:0 12px 10px;font-size:11px;color:var(--ink-soft)">
+        ＊你有見證資格，但不能自己蓋回結案 —— 這是刻意分開的，避免同一人自己歸還又自己核銷。</div>`;
+
+  return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--brand);overflow:hidden">
+    <div style="padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span>📦 欠物覆核<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　${esc(roleLabel())}・${myRole}</span></span>
+      <span style="font-size:12.5px;font-weight:800;white-space:nowrap">${list.length} 筆未結${over30?`<span style="color:var(--bad,#E03131)">・逾30天 ${over30}</span>`:''}</span></div>
+    <div style="padding:0 6px 4px">${rows}</div>
+    ${whoTo}
+    <div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line)">
+      <button class="btn btn-primary" style="flex:1;min-width:140px;margin:0" onclick="state.screen='owed';render()">📦 開啟欠物本</button>
+      ${monthly?`<div style="flex:1;min-width:140px">${monthly}</div>`:''}</div>
+    ${witNote}</div>`;
+}
+
 function renderAuxCard(){
   const d=curRcDate(), open=!!state.auxOpen;
   const units=fridgeUnits(), depts=o2Depts();
@@ -2521,8 +2655,17 @@ function permRefreshRows(v){
 function permSummaryHtml(){
   const nLead=ACCOUNTS.filter(a=>effPerm(a).lead&&a.role!=='護理長'&&a.role!=='副護理長').map(a=>a.name);
   const nCai =ACCOUNTS.filter(a=>{const p=effPerm(a);return p.caishi&&!p.lead&&a.role!=='護理長'&&a.role!=='副護理長';}).map(a=>a.name);
+  /* ★ 額外授予見證資格的人也要列出來 —— 這些人首頁會出現「欠物覆核」卡，
+     設定過卻看不到清單的話，根本不知道自己指派了誰。
+     職稱本來就有資格的（小組長以上）另外算，不然清單會很長。 */
+  const nWitAdd=ACCOUNTS.filter(a=>{const p=permOf(a.id);
+    return p&&p.witness&&WITNESS_TITLES.indexOf(String(a.title||''))<0;}).map(a=>a.name);
+  const nWitTitle=ACCOUNTS.filter(a=>a.active!==false
+    &&WITNESS_TITLES.indexOf(String(a.title||''))>=0).length;
   return `目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
-          目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b>`;
+          目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b><br>
+          額外見證資格：<b>${nWitAdd.length?esc(nWitAdd.join('、')):'未指派'}</b>
+          <span style="opacity:.8">（另有 ${nWitTitle} 位因職稱自帶）</span>`;
 }
 function renderPermAdmin(){
   const q=(state.permQ||'').trim();
@@ -2691,11 +2834,10 @@ async function resolveItemReport(id){
   ITEM_REPORTS=ITEM_REPORTS.filter(r=>r.id!==id); renderItemsAdmin();
   await itemsWrite('item_report_close',{id:id,handler:state.user.name,at:new Date().toISOString()});
 }
-async function loadLocator(){
-  if(!API_URL)return;
+async function loadLocator(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=devices',{cache:'no-store'});
-    const a=await r.json();
+    const a=pre||await getJSON('table=devices');
     if(Array.isArray(a)&&a.length){
       const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
       const mapped=a.map(d=>({
@@ -2715,11 +2857,10 @@ async function loadLocator(){
    RTLS_FRESH_MIN 分鐘內有回報 → 視為「主動回報中」(綠點)；逾時或查無 → 灰點。 */
 let RTLS={}, RTLS_AT='';
 const RTLS_FRESH_MIN=15;
-async function loadRtls(){
-  if(!API_URL)return;
+async function loadRtls(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rtls',{cache:'no-store'});
-    const a=await r.json(); if(!Array.isArray(a))return;
+    const a=pre||await getJSON('table=rtls'); if(!Array.isArray(a))return;
     const m={};
     a.forEach(function(o){
       const tag=String(o['標籤ID']||o.tag||o.beaconId||'').trim();
@@ -2925,7 +3066,7 @@ function histShiftRow(s,id){
 function toggleShift(id){state._openShift=state._openShift||{};state._openShift[id]=!state._openShift[id];render()}
 
 function openHistory(){ state.screen='history'; render();
-  Promise.all([loadSignLog(),loadIssues()]).then(function(){ if(state.screen==='history')render(); }); }
+  loadBundle([['rollcall_log',90],['rollcall_issue',90]]).then(function(){ if(state.screen==='history')render(); }); }
 /* ★ 歷史點班紀錄：改讀真實的 rollcall_log（原本是 genHistDemo() 假資料）。
    依日期→班別分組，顯示各表由誰完成、耗時、異常數。 */
 function renderHistory(){
@@ -3025,11 +3166,10 @@ function logsOfWeek(wk){ return (SIGNLOG||[]).filter(r=>weekOfLog(r)===String(wk
    超過 ACTIVE_FRESH_MIN 分鐘沒更新就視為那個人已離開。 */
 let ACTIVE=[];
 const ACTIVE_FRESH_MIN=25;
-async function loadActive(){
-  if(!API_URL)return;
+async function loadActive(pre){
+  if(!API_URL&&!pre)return;
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_active&_='+Date.now(),{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))ACTIVE=a;
+    const a=pre||await getJSON('table=rollcall_active'); if(Array.isArray(a))ACTIVE=a;
   }catch(e){ /* 沒有這張分頁也不影響其他功能 */ }
 }
 let _progAt=0;
@@ -3148,7 +3288,7 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    await Promise.all([loadSignLog(3),loadActive(),loadFridgeLog(7),loadO2Log(7)]);
+    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',7],['o2_check',7]]);
     SYNC_MS=Date.now()-t0;
   }catch(e){ SYNC_MS=-1; }
   SYNC_AT=Date.now();
@@ -3234,23 +3374,20 @@ function doneDiag(){
 let SIGNLOG_MS=null, SIGNLOG_AT=0;   // 上次同步耗時(ms) 與 完成時間
 /* days 給值時只抓最近幾天（查「本班誰點過」用 3 天就夠，快很多）；
    主管簽核需要看整個月，就不帶 days。 */
-async function loadSignLog(days){
-  if(!API_URL)return;
+async function loadSignLog(days,pre){
+  if(!API_URL&&!pre)return;
   const t0=Date.now();
   try{
-    const q='table=rollcall_log'+(days?('&days='+days):'')+'&_='+t0;
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
-    const a=await r.json();
+    const a=pre||await getJSON('table=rollcall_log'+(days?('&days='+days):''));
     if(Array.isArray(a))SIGNLOG=a;
     SIGNLOG_MS=Date.now()-t0; SIGNLOG_AT=Date.now();
   }catch(e){ SIGNLOG_MS=-1; console.error('讀完成紀錄失敗',e); }
 }
 async function refreshSignLog(){await loadSignLog();render();}
 let SIGNOFFLOG=[];   // 後端週簽核紀錄 rollcall_signoff
-async function loadSignoffs(){
-  if(!API_URL)return;
-  try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_signoff',{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))SIGNOFFLOG=a;}
+async function loadSignoffs(pre){
+  if(!API_URL&&!pre)return;
+  try{const a=pre||await getJSON('table=rollcall_signoff'); if(Array.isArray(a))SIGNOFFLOG=a;}
   catch(e){console.error('讀簽核紀錄失敗',e);}
 }
 function p2(n){return String(n).padStart(2,'0');}
@@ -3259,7 +3396,9 @@ function fmtDTLocal(d){return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.ge
 function tpeDTLocal(){const t=tpeParts();return t.y+'-'+p2(t.m)+'-'+p2(t.d)+'T'+p2(t.h)+':'+p2(t.mi);}
 function fmtLocalFromISO(iso){const d=new Date(iso);return isNaN(d.getTime())?'':fmtDTLocal(d).replace('T',' ');}
 function recDone(r){return !!(r&&(r.isDone==='是'||r.isDone===true));}
-async function openRecords(){ state.screen='records'; render(); await Promise.all([loadSignoffs(),loadSignLog()]); if(state.screen==='records')renderRecords(); }
+async function openRecords(){ state.screen='records'; render();
+  await loadBundle([['rollcall_signoff'],['rollcall_log',60]]);
+  if(state.screen==='records')renderRecords(); }
 function renderRecords(){
   const map={};
   // ★ 後端為準；本機只補「後端還沒有」的那幾筆，並標示未上傳（不再蓋掉後端）
@@ -3349,14 +3488,12 @@ async function pushRemind(){
   // 後端接通後：改由 owedWrite('push_broadcast',{msg:body,by,at}) 觸發 FCM 推給所有已訂閱裝置
 }
 let FRIDGELOG=[], O2LOG=[];
-async function loadFridgeLog(days){ if(!API_URL)return;
-  try{const q='table=fridge_temp'+(days?('&days='+days):'')+'&_='+Date.now();
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
-async function loadO2Log(days){ if(!API_URL)return;
-  try{const q='table=o2_check'+(days?('&days='+days):'')+'&_='+Date.now();
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
+async function loadFridgeLog(days,pre){ if(!API_URL&&!pre)return;
+  try{const a=pre||await getJSON('table=fridge_temp'+(days?('&days='+days):''));
+    if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
+async function loadO2Log(days,pre){ if(!API_URL&&!pre)return;
+  try{const a=pre||await getJSON('table=o2_check'+(days?('&days='+days):''));
+    if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
 async function openLeader(){ state.screen='leader'; render();
   SYNC_AT=0; await syncAll();                       // 四張表一起抓，Leader 頁看到的就是最新
   if(state.screen==='leader')renderLeader(); }
@@ -3549,8 +3686,10 @@ store.load();
 if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=todayISO(); rebindForDate(); }
-(async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog(),loadItemReports(),
-  loadFridgeLog(),loadO2Log(),loadPerms(),loadRtls(),loadActive()]); render(); })();
+/* ★ 啟動只發一支請求（原本 10 支）。大表都只要最近幾天，回傳量也小很多。 */
+(async()=>{ await loadBundle([['items'],['devices'],['owed'],['item_report'],['staff_perm'],
+  ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30]]);
+  render(); })();
 /* ★ 自動更新完成狀態（20 秒一次）。
    涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
    分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。 */
