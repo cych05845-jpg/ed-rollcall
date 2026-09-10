@@ -1,0 +1,49 @@
+{
+  "name": "CYCH ER 點班",
+  "short_name": "ER點班",
+  "description": "嘉基急診護理站電子點班",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e9edf0",
+  "theme_color": "#0f7a86",
+  "lang": "zh-Hant",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "開始點班",
+      "short_name": "點班",
+      "url": "./index.html"
+    },
+    {
+      "name": "藥品冰箱溫度",
+      "short_name": "冰箱",
+      "url": "./fridge.html"
+    },
+    {
+      "name": "氧氣桶審核",
+      "short_name": "氧氣",
+      "url": "./o2.html"
+    }
+  ]
+}
