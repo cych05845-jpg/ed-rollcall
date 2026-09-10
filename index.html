@@ -500,7 +500,12 @@ async function submitRollcall(){
     shift:state.shift||'', sheetId:s.id, sheet:s.name||'', assign:state.half||'',
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
-    startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec};
+    startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec,
+    // ★ 異常明細：一筆異常一列，之後才分析得出「哪些器械最常壞、哪些耗材最常短少」
+    issues: list.filter(o=>state.checks[keyOf(o)]==='bad').map(function(o){
+      const k=keyOf(o);
+      return { item:o.name, type:o.type||'', reason:state.reason[k]||'未註記', note:state.note[k]||'' };
+    })};
   state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
   postProgress({clear:true,force:true});          // 清掉「進行中」標記
   await pushRollcall(payload);
@@ -1166,7 +1171,8 @@ function render(){
   ({login:renderLogin,home:renderHome,areas:renderAreas,pick:renderPick,half:renderHalf,
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
     history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed,
-    owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin}[state.screen]||renderLogin)();
+    owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin,
+    adminHub:renderAdminHub,analytics:renderAnalytics}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -1210,13 +1216,12 @@ function renderHome(){
   const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
-  const reviewBtn=(isLeader?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="openLeader()">📋 主管簽核 · 完成總表</button>
-     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="openRecords()">📜 簽核／點班紀錄</button>`:'')
-   + (can('items.edit')?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="openItemsAdmin()">🧾 點班項目管理${ITEM_REPORTS.length?(' · '+ITEM_REPORTS.length+' 則待處理'):''}</button>`:'')
-   + (can('perm.manage')?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-     onclick="openPermAdmin()">👥 權限設定（財管組・見證資格）</button>`:'');
+  /* ★ 首頁只留「這一班要做的事」；查詢、統計、設定全部收進管理中心。
+     護理師早上七點手上有病人，要的是兩下點到目標，不是十幾顆按鈕。 */
+  const hasAdmin=isLeader||can('items.edit')||can('perm.manage');
+  const pend=ITEM_REPORTS.length;
+  const reviewBtn=hasAdmin?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+     onclick="openAdminHub()">⚙ 管理中心${pend?(' · '+pend+' 則待處理'):''}</button>`:'';
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
@@ -1240,16 +1245,11 @@ function renderHome(){
     <div class="section-h">我的待辦</div>
     ${renderTodoCard()}
     <div class="section-h">作業</div>
-    <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
+    <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     ${reviewBtn}
-    <button class="btn btn-ghost btn-block" onclick="state.screen='history';render()">📅 查看歷史點班紀錄</button>
-    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
-    <div class="section-h">附加查核表</div>
-    ${fridgeHomeBtn('冰箱溫度 · 兒童檢傷','兒童檢傷 藥品冰箱（PT）')}
-    ${fridgeHomeBtn('冰箱溫度 · 留觀','留觀 藥品冰箱')}
-    ${o2HomeBtn('氧氣桶 · 治療二三（10 支）','治療二、三',10)}
-    ${o2HomeBtn('氧氣桶 · 兒科（2 支）','兒科',2)}
-    ${o2HomeBtn('氧氣桶 · 留觀（5 支）','留觀',5)}
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px">
+      ＊冰箱、氧氣等附加查核已列在上方「我的待辦」，完成後會自動消失</div>
   </div>`;
 }
 
@@ -1833,6 +1833,185 @@ function exportOwedCSV(ym){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
   a.download='欠物本_'+ym+'.csv';a.click();
+}
+
+/* ==================== 管理中心 ====================
+   把主管用的查詢、統計、設定全部收在這裡，首頁只留「這一班要做的事」。 */
+let ISSUES=[];
+async function loadIssues(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_issue&_='+Date.now(),{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))ISSUES=a;
+  }catch(e){}
+}
+function openAdminHub(){
+  state.screen='adminHub'; render();
+  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadItemReports()]).then(function(){
+    if(state.screen==='adminHub')render();
+  });
+}
+function renderAdminHub(){
+  const g=(title,items)=>`<div class="cat">
+    <div class="cat-h"><span class="cat-ic" style="background:#0f7a861f;color:#0f7a86">${title[0]}</span>${title.slice(1)}</div>
+    <div class="card" style="padding:8px 12px">${items.join('')}</div></div>`;
+  const b=(label,fn,note)=>`<button class="btn btn-ghost btn-block" style="margin:6px 0;text-align:left" onclick="${fn}">${label}${note?`<span style="float:right;color:var(--warn);font-weight:800">${note}</span>`:''}</button>`;
+  const secs=[];
+  if(isBoss()||isWitnessRank(state.user)) secs.push(g('📋 簽核與紀錄',[
+    b('主管簽核 · 完成總表','openLeader()'),
+    b('簽核／點班紀錄','openRecords()'),
+    b('歷史點班紀錄',"state.screen='history';render()")]));
+  secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
+  const mg=[];
+  if(can('items.edit'))mg.push(b('點班項目管理','openItemsAdmin()',ITEM_REPORTS.length?ITEM_REPORTS.length+' 則待處理':''));
+  if(can('perm.manage'))mg.push(b('權限設定（財管組・見證資格）','openPermAdmin()'));
+  if(can('owed.monthly'))mg.push(b('欠物本 · 每月清點統計','openOwedMonthly()'));
+  if(mg.length)secs.push(g('⚙ 設定與管理',mg));
+  secs.push(g('📍 儀器',[ b('全部儀器定位',"openMap('全部儀器')") ]));
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">⚙ 管理中心</div><div class="sub">${esc(state.user.name)} · ${esc(roleLabel())}</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen narrow">${secs.join('')}</div>`;
+}
+
+/* ===== 營運分析：統計用程式算（快又準），AI 只負責解讀與建議 ===== */
+function analytics(){
+  const dOf=r=>dateOfLog(r);
+  const inDays=(r,n)=>{const d=dOf(r);if(!d)return false;
+    const t=parseISO(d).getTime();return (Date.now()-t)<=n*86400000;};
+  const L=(SIGNLOG||[]).filter(r=>inDays(r,30));
+  const num=(r,a,b)=>{const v=Number(fld(r,[a,b]));return isNaN(v)?0:v;};
+
+  // 人員
+  const byPerson={};
+  L.forEach(function(r){
+    const n=nameOf(r)||'(未署名)';
+    const p=byPerson[n]=byPerson[n]||{n:0,sec:0,bad:0,dup:0,late:0};
+    p.n++; p.sec+=num(r,'durationSec','耗時秒'); p.bad+=num(r,'bad','異常數');
+    if(dOf(r)!==fld(r,['submittedAt','簽核時間']).slice(0,10))p.late++;   // 補點
+  });
+  const dupKey={};
+  L.forEach(function(r){ if(!isDoneRec_(r))return;
+    const k=dOf(r)+'|'+shiftOf(r)+'|'+sheetIdOf(r); dupKey[k]=(dupKey[k]||0)+1; });
+  const dupN=Object.keys(dupKey).filter(k=>dupKey[k]>1).length;
+
+  // 異常明細 → 器械／耗材
+  const byItem={}, byReason={};
+  (ISSUES||[]).filter(r=>inDays(r,90)).forEach(function(r){
+    const it=fld(r,['item','項目'])||'(未填)';
+    const rs=fld(r,['reason','原因'])||'未註記';
+    const tp=fld(r,['type','類型'])||'';
+    byItem[it]=byItem[it]||{n:0,type:tp,reasons:{}};
+    byItem[it].n++; byItem[it].reasons[rs]=(byItem[it].reasons[rs]||0)+1;
+    byReason[rs]=(byReason[rs]||0)+1;
+  });
+
+  // 欠物
+  const owe={n:(OWED||[]).length,byItem:{},byZone:{},aged:[]};
+  (OWED||[]).forEach(function(o){
+    owe.byItem[o.item]=(owe.byItem[o.item]||0)+1;
+    owe.byZone[o.zone||'未分區']=(owe.byZone[o.zone||'未分區']||0)+1;
+    const t=Date.parse(o.date); if(!isNaN(t)){
+      const days=Math.floor((Date.now()-t)/86400000);
+      if(days>30)owe.aged.push({item:o.item,zone:o.zone,days:days,names:o.names});
+    }
+  });
+  owe.aged.sort((a,b)=>b.days-a.days);
+
+  // 儀器定位
+  const dev={loc:0,live:0,moved:0,low:[],off:[]};
+  (LOCED||[]).filter(d=>d.locate).forEach(function(d){
+    dev.loc++;
+    const s=rtlsOf(d);
+    if(s&&s.live){ dev.live++;
+      if(s.zone&&d.zone&&String(s.zone)!==String(d.zone))dev.moved++;
+      if(s.lowPower)dev.low.push({name:d.unit||d.name,p:s.power});
+    } else dev.off.push(d.unit||d.name);
+  });
+
+  // 冰箱／氧氣
+  const fr={n:0,bad:0};
+  (FRIDGELOG||[]).forEach(function(r){
+    const c=Number(fld(r,['cur','現在溫度'])); if(isNaN(c))return;
+    fr.n++; if(c<2||c>8)fr.bad++;
+  });
+  return {L:L,byPerson:byPerson,dupN:dupN,byItem:byItem,byReason:byReason,owe:owe,dev:dev,fr:fr};
+}
+function openAnalytics(){ state.screen='analytics'; state.aiText=''; render();
+  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadRtls()]).then(function(){
+    if(state.screen==='analytics')render(); }); }
+function renderAnalytics(){
+  const A=analytics();
+  const top=(obj,n,fmt)=>{
+    const ks=Object.keys(obj).sort((a,b)=>(obj[b].n||obj[b])-(obj[a].n||obj[a])).slice(0,n);
+    if(!ks.length)return '<div style="font-size:13px;color:var(--ink-soft);padding:8px 2px">尚無資料</div>';
+    return ks.map(k=>fmt(k,obj[k])).join('');
+  };
+  const li=(l,r)=>`<div class="rem-li"><span>${l}</span><span style="font-weight:800">${r}</span></div>`;
+  const card=(t,body)=>`<div class="cat"><div class="cat-h"><span class="cat-ic" style="background:#0f7a861f;color:#0f7a86">${t[0]}</span>${t.slice(1)}</div>
+    <div class="card" style="padding:6px 12px">${body}</div></div>`;
+
+  const ppl=Object.keys(A.byPerson).sort((a,b)=>A.byPerson[b].n-A.byPerson[a].n).slice(0,8)
+    .map(function(n){const p=A.byPerson[n];
+      const avg=p.n?Math.round(p.sec/p.n):0;
+      return li(esc(n)+`<div style="font-size:11.5px;color:var(--ink-soft)">${p.n} 次 · 異常 ${p.bad} · 補點 ${p.late}</div>`,
+        avg?fmtDur(avg):'—');}).join('')||'<div style="font-size:13px;color:var(--ink-soft);padding:8px 2px">近 30 天尚無點班紀錄</div>';
+
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📊 營運分析</div><div class="sub">點班近 30 天 · 異常近 90 天</div></div>
+    <button class="back" onclick="state.screen='adminHub';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="card" style="padding:12px 14px;margin-bottom:12px;display:flex;gap:14px;flex-wrap:wrap;justify-content:space-around;text-align:center">
+      <div><div style="font-size:22px;font-weight:800">${A.L.length}</div><div style="font-size:11.5px;color:var(--ink-soft)">點班次數</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:${A.dupN?'var(--warn)':'inherit'}">${A.dupN}</div><div style="font-size:11.5px;color:var(--ink-soft)">重複點班</div></div>
+      <div><div style="font-size:22px;font-weight:800">${A.owe.n}</div><div style="font-size:11.5px;color:var(--ink-soft)">未結欠物</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:${A.fr.bad?'var(--bad,#c0392b)':'inherit'}">${A.fr.bad}</div><div style="font-size:11.5px;color:var(--ink-soft)">冰箱超標</div></div>
+    </div>
+    ${card('👤 人員（近30天・依點班次數）',ppl)}
+    ${card('🔧 器械／耗材異常 TOP（近90天）',
+      top(A.byItem,8,(k,v)=>li(esc(k)+`<div style="font-size:11.5px;color:var(--ink-soft)">${esc(Object.keys(v.reasons).slice(0,3).join('、'))}</div>`,v.n+' 次')))}
+    ${card('📦 欠物 TOP',top(A.owe.byItem,6,(k,v)=>li(esc(k),v+' 筆')))}
+    ${card('⏳ 逾 30 天未結欠物',
+      A.owe.aged.length?A.owe.aged.slice(0,6).map(a=>li(esc(a.item)+`<div style="font-size:11.5px;color:var(--ink-soft)">${esc(a.zone||'')} · ${esc(a.names||'')}</div>`,a.days+' 天')).join('')
+      :'<div style="font-size:13px;color:var(--ink-soft);padding:8px 2px">無 🎉</div>')}
+    ${card('📍 儀器定位',
+      li('可定位儀器',A.dev.loc+' 台')+li('回報中',A.dev.live+' 台')
+      +li('不在配置區（移位）',A.dev.moved+' 台')
+      +li('低電量',A.dev.low.length+' 台')+li('無訊號',A.dev.off.length+' 台'))}
+    <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="askAnalysis()">🤖 請 AI 解讀並給建議</button>
+    <div id="aiOut" class="card" style="margin-top:12px;white-space:pre-wrap;line-height:1.8;font-size:14px;${state.aiText?'':'display:none'}">${esc(state.aiText||'')}</div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;text-align:center">
+      ＊統計由程式即時計算；AI 只負責解讀數字並提出建議，不重算數據。</div>
+  </div>`;
+}
+async function askAnalysis(){
+  const box=document.getElementById('aiOut');
+  box.style.display=''; box.textContent='AI 分析中…';
+  const A=analytics();
+  const brief={
+    期間:'點班近30天／異常近90天',
+    點班次數:A.L.length, 重複點班組數:A.dupN,
+    人員:Object.keys(A.byPerson).slice(0,10).map(n=>({姓名:n,次數:A.byPerson[n].n,
+      平均耗時秒:A.byPerson[n].n?Math.round(A.byPerson[n].sec/A.byPerson[n].n):0,
+      異常數:A.byPerson[n].bad, 補點次數:A.byPerson[n].late})),
+    異常TOP:Object.keys(A.byItem).sort((a,b)=>A.byItem[b].n-A.byItem[a].n).slice(0,10)
+      .map(k=>({項目:k,次數:A.byItem[k].n,原因:Object.keys(A.byItem[k].reasons)})),
+    異常原因分布:A.byReason,
+    未結欠物:A.owe.n, 欠物TOP:A.owe.byItem, 逾30天未結:A.owe.aged.slice(0,8),
+    儀器:{可定位:A.dev.loc,回報中:A.dev.live,移位:A.dev.moved,低電量:A.dev.low.length,無訊號:A.dev.off.length},
+    冰箱:{登錄筆數:A.fr.n,超標筆數:A.fr.bad}
+  };
+  try{
+    const t=await askAI('analysis',{brief:brief,
+      ask:'你是急診護理管理顧問。請就以下四個面向各給 2-3 點具體觀察與可執行建議：'
+        +'人員管理、耗材管理、器械管理、儀器管理。'
+        +'請直接引用數字支持論點，指出風險與優先處理順序。'
+        +'用繁體中文、條列、每點一到兩句，不要客套話。以下是統計數據：'});
+    state.aiText=t||'（AI 沒有回傳內容）';
+  }catch(e){ state.aiText='AI 分析失敗：'+String(e&&e.message||e)+'\n（統計數字仍可直接參考上方）'; }
+  if(state.screen==='analytics')render();
 }
 
 /* ★★ 我的待辦：本班還沒完成的點班表與附加查核。
