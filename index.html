@@ -424,7 +424,7 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const APP_VER='2026-09-10-b10';
+const APP_VER='2026-09-10-b11';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1461,8 +1461,8 @@ function renderHome(){
     <div class="section-h">我的待辦</div>
     ${syncBar()}
     ${renderTodoCard()}
-    ${owedDutyCard()}
     ${renderAuxCard()}
+    ${owedDutyCard()}
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
@@ -1970,7 +1970,9 @@ function renderOwed(){
     ${monthBtn}
     ${secs||'<div class="card" style="text-align:center;color:var(--ink-soft);padding:20px">目前無未結欠物 🎉</div>'}
     ${can?'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊結案時須由當班 leader（小組長以上）刷員編見證</div>'
-         :'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊你可登記與修改自己的欠物；歸還結案請洽財管組負責人，並由當班 leader 見證</div>'}
+         :`<div style="color:var(--ink-soft);font-size:12px;margin-top:8px;line-height:1.9">
+            ＊你可登記與修改自己的欠物。歸還時請找下列任一位蓋回結案，再由當班 leader（小組長以上）刷員編見證：<br>
+            <b style="color:var(--ink)">${esc(owedClosers().map(c=>c.name+'（'+c.role+'）').join('、'))||'（尚未指派財管組負責人，請洽護理長）'}</b></div>`}
   </div>`;
 }
 function can2(c){ return can(c); }
@@ -2460,54 +2462,33 @@ function owedDutyCard(){
   const canClose=can('owed.close'), canWit=can('witness');
   if(!canClose&&!canWit)return '';
   const list=(OWED||[]).filter(o=>!o.status||o.status==='欠物中');
-  const aged=list.map(function(o){
-    const t=Date.parse(o.date); const days=isNaN(t)?null:Math.floor((Date.now()-t)/86400000);
-    return Object.assign({},o,{days:days});
-  }).sort((a,b)=>(b.days||0)-(a.days||0));
-  const over30=aged.filter(o=>o.days!==null&&o.days>30).length;
-  const monthly=can('owed.monthly')
-    ? `<button class="btn btn-ghost btn-block" style="margin:0" onclick="openOwedMonthly()">📊 每月清點統計</button>` : '';
+  const over30=list.filter(function(o){
+    const t=Date.parse(o.date); return !isNaN(t)&&Math.floor((Date.now()-t)/86400000)>30;
+  }).length;
   const myRole=canClose?'可蓋回結案':'可當見證人';
-
+  /* ★ 只做「一列入口」，不把欠物明細攤在首頁。
+     明細與蓋回結案都在欠物本裡（架構本來就一樣），首頁再列一次只是重複、又把頁面拉很長。
+     首頁該回答的只有一句：有幾筆待處理、要不要現在進去。 */
   if(!list.length){
-    return `<div class="card" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);background:#ebfbee">
-      <div style="font-weight:800;color:#1f7a43">✓ 沒有待覆核的欠物</div>
-      <div style="font-size:12px;color:var(--ink-soft);margin:3px 0 10px">
-        你的角色：${esc(roleLabel())}・${myRole}。目前欠物本已全部結清。</div>
-      ${monthly}</div>`;
+    return `<div class="card" style="padding:12px 14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);
+        display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span style="font-weight:800;color:#1f7a43">📦 欠物覆核
+        <span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　${esc(roleLabel())}・${myRole}</span></span>
+      <span style="font-size:12.5px;font-weight:800;color:#1f7a43;white-space:nowrap">✓ 已全部結清</span></div>`;
   }
-  const rows=aged.slice(0,3).map(function(o){
-    const agel=o.days===null?'':(o.days>30?`<span style="color:var(--bad,#E03131);font-weight:800">${o.days} 天</span>`
-                                          :`<span style="color:var(--ink-soft)">${o.days} 天</span>`);
-    const btn=canClose?`<button class="owe-close" onclick="owedCloseUI('${o.id}')">蓋回結案</button>`:'';
-    return `<div class="rem-li" style="align-items:center">
-      <span><b>${esc(o.item)}</b>
-        <div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px">${esc(o.zone||'')} · ${esc(o.names||'')}</div></span>
-      <span style="display:flex;align-items:center;gap:8px">${agel}${btn}</span></div>`;
-  }).join('');
-
-  // 只能見證的人：告訴他要找誰結案（不然他會不知道下一步）
-  const closers=owedClosers();
-  const whoTo=(!canClose&&closers.length)
-    ? `<div style="padding:8px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-soft);line-height:1.8">
-        人員要歸還時，請找 <b>${esc(closers.slice(0,4).map(c=>c.name+'（'+c.role+'）').join('、'))}</b> 蓋回結案，
-        再由你刷員編見證。</div>` : '';
-  const witNote=canClose
-    ? `<div style="padding:0 12px 10px;font-size:11px;color:var(--ink-soft)">
-        ＊結案時需請當班 leader（小組長以上）刷員編見證，見證人與時間會一併寫入紀錄。</div>`
-    : `<div style="padding:0 12px 10px;font-size:11px;color:var(--ink-soft)">
-        ＊你有見證資格，但不能自己蓋回結案 —— 這是刻意分開的，避免同一人自己歸還又自己核銷。</div>`;
-
-  return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--brand);overflow:hidden">
-    <div style="padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center;gap:8px">
-      <span>📦 欠物覆核<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　${esc(roleLabel())}・${myRole}</span></span>
-      <span style="font-size:12.5px;font-weight:800;white-space:nowrap">${list.length} 筆未結${over30?`<span style="color:var(--bad,#E03131)">・逾30天 ${over30}</span>`:''}</span></div>
-    <div style="padding:0 6px 4px">${rows}</div>
-    ${whoTo}
-    <div style="padding:8px 12px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line)">
-      <button class="btn btn-primary" style="flex:1;min-width:140px;margin:0" onclick="state.screen='owed';render()">📦 開啟欠物本</button>
-      ${monthly?`<div style="flex:1;min-width:140px">${monthly}</div>`:''}</div>
-    ${witNote}</div>`;
+  const hint=canClose
+    ? '進欠物本蓋回結案，需當班 leader 刷員編見證'
+    : '你可當見證人：由能結案的人蓋回，再由你刷員編見證';
+  return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--brand);overflow:hidden;cursor:pointer"
+      onclick="state.screen='owed';render()" role="button" tabindex="0">
+    <div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span style="min-width:0">
+        <span style="font-weight:800">📦 欠物覆核</span>
+        <span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　${esc(roleLabel())}・${myRole}</span>
+        <div style="font-size:11.5px;color:var(--ink-soft);margin-top:3px">${hint}</div></span>
+      <span style="display:flex;align-items:center;gap:8px;white-space:nowrap">
+        <span style="font-size:12.5px;font-weight:800">${list.length} 筆未結${over30?`<span style="color:var(--bad,#E03131)">・逾30天 ${over30}</span>`:''}</span>
+        <span style="color:var(--ink-soft)">›</span></span></div></div>`;
 }
 
 function renderAuxCard(){
