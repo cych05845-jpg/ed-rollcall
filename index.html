@@ -382,25 +382,36 @@ async function loadPerms(){
     const a=await r.json(); if(!Array.isArray(a))return;
     const m={}; const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
     a.forEach(function(o){
-      const id=String(o['員編']||o.id||'').trim(); if(!id)return;
-      m[id]={lead:yes(o['財管組長']||o.lead), caishi:yes(o['財管負責人']||o.caishi), witness:yes(o['見證資格']||o.witness)};
+      const id=fld(o,['員編','id']); if(!id)return;
+      m[id]={lead:yes(fld(o,['財管組長','lead'])), caishi:yes(fld(o,['財管負責人','caishi'])), witness:yes(fld(o,['見證資格','witness']))};
     });
     PERMS=m;
   }catch(e){console.error('讀權限設定失敗，改用預設',e);}
 }
-function permOf(id){ return PERMS[String(id)]||null; }
+/* ★ 員編比對容錯：Google Sheets 會把「05845」當成數字存成 5845，前導零被吃掉，
+   讀回來就對不上原本的 05845 —— 這就是「權限設定好又消失」的原因。
+   一律去掉前導零再比對，兩邊格式不同也認得。 */
+function idKey(v){ return String(v==null?'':v).trim().replace(/^0+/,''); }
+function permOf(id){
+  const k=idKey(id);
+  if(!k)return null;
+  if(PERMS[String(id)])return PERMS[String(id)];
+  for(const kk in PERMS){ if(idKey(kk)===k)return PERMS[kk]; }
+  return null;
+}
 
-function acctOf(u){ if(!u)return null; return ACCOUNTS.find(a=>a.id===u.id)||null; }
+function acctOf(u){ if(!u)return null;
+  return ACCOUNTS.find(a=>a.id===u.id) || ACCOUNTS.find(a=>idKey(a.id)===idKey(u.id)) || null; }
 function isBoss(u){ u=u||state.user; if(!u)return false; return u.role==='護理長'||u.role==='副護理長'; }
 function isCaishiLead(u){ u=u||state.user; if(!u)return false;
   const p=permOf(u.id); if(p)return !!p.lead;
-  if(CAISHI_LEAD_IDS.indexOf(u.id)>=0)return true;
+  if(CAISHI_LEAD_IDS.some(x=>idKey(x)===idKey(u.id)))return true;
   const a=acctOf(u); return !!(a&&(a.caishiLead||(a.note&&String(a.note).includes('財管組長'))));
 }
 function isCaishi(u){ u=u||state.user; if(!u)return false;
   if(isCaishiLead(u))return true;
   const p=permOf(u.id); if(p)return !!p.caishi;
-  if(CAISHI_IDS.indexOf(u.id)>=0)return true;
+  if(CAISHI_IDS.some(x=>idKey(x)===idKey(u.id)))return true;
   const a=acctOf(u); return !!(a&&(a.caishi||(a.note&&String(a.note).includes('財管'))));
 }
 function isWitnessRank(u){ if(!u)return false;
@@ -622,6 +633,14 @@ function ymOf(v){
   if(m) return m[1]+'-'+('0'+m[2]).slice(-2);
   return s;
 }
+/* ★ 單位／科別名稱正規化：全形半形括號、空白、大小寫都不該影響比對。
+   「兒童檢傷 藥品冰箱（PT）」和「兒童檢傷藥品冰箱(PT)」要算同一個。 */
+function normUnit(v){
+  return String(v==null?'':v)
+    .replace(/[（]/g,'(').replace(/[）]/g,')')
+    .replace(/\s+/g,'')
+    .toUpperCase();
+}
 function rcYMD(){
   const s=(typeof curRcDate==='function'&&curRcDate())||new Date().toISOString().slice(0,10);
   return { ym:String(s).slice(0,7), day:String(+String(s).slice(8,10)) };
@@ -630,7 +649,7 @@ function fridgeDoneToday(unit){
   const t=rcYMD();
   try{
     for(let i=(FRIDGELOG||[]).length-1;i>=0;i--){ const r=FRIDGELOG[i]||{};
-      if(String(r['單位']||r.unit||'')===String(unit)
+      if(normUnit(r['單位']||r.unit||'')===normUnit(unit)
       && ymOf(r['年月']||r.ym||'')===t.ym
       && String(+(r['日']||r.day||0))===t.day)
         return String(r['簽名']||r.sign||'已登錄');
@@ -646,7 +665,7 @@ function o2DoneToday(dept){
   const t=rcYMD();
   try{
     for(let i=(O2LOG||[]).length-1;i>=0;i--){ const r=O2LOG[i]||{};
-      if(String(r['科別']||r.dept||'')===String(dept)
+      if(normUnit(r['科別']||r.dept||'')===normUnit(dept)
       && ymOf(r['年月']||r.ym||'')===t.ym
       && String(+(r['日']||r.day||0))===t.day)
         return String(r['簽名']||r.by||'已登錄');
@@ -1603,7 +1622,8 @@ let _owedWitness=null;
 function owedWitnessLookup(){
   const v=(document.getElementById('oc_wid').value||'').trim();
   const el=document.getElementById('oc_wname');
-  const a=ACCOUNTS.find(x=>x.id===v);
+  // 員編前導零容錯：帳號是 00777、leader 只按 777 也要找得到（反之亦然）
+  const a=ACCOUNTS.find(x=>x.id===v)||(v?ACCOUNTS.find(x=>idKey(x.id)===idKey(v)):null);
   if(!a){_owedWitness=null;el.textContent=v?'查無此員編':'尚未見證';el.style.color='var(--ink-soft)';return;}
   if(!isWitnessRank(a)){_owedWitness=null;
     el.textContent=`${a.name}（${a.title}）— 非小組長以上，不可見證`;el.style.color='var(--bad,#E03131)';return;}
@@ -1614,10 +1634,16 @@ async function submitOwedClose(id){
   const way=document.getElementById('oc_way').value;
   const note=document.getElementById('oc_note').value.trim();
   const at=new Date().toISOString();
+  const snapshot=OWED.slice();                      // 寫入失敗要還原，不能只在畫面上消失
   closeOwedClose();
   OWED=OWED.filter(o=>o.id!==id);renderOwed();
-  await owedWrite('owed_close',{id,status:'已返還結案',way:way,closer:state.user.name,
+  const r=await owedWrite('owed_close',{id,status:'已返還結案',way:way,closer:state.user.name,
     closerId:state.user.id,witness:_owedWitness.name,witnessId:_owedWitness.id,note:note,at:at});
+  if(!(r&&r.ok===true)){
+    OWED=snapshot;renderOwed();
+    alert('結案沒有存到後端，這筆欠物已還原。\n請確認網路，或 GS 已「重新部署為新版本」後再試。');
+    return;
+  }
   _owedWitness=null;
   await loadOwed();renderOwed();
   toast('已結案，見證人已記錄');
@@ -2114,12 +2140,14 @@ function openPermAdmin(){
 function effPerm(a){
   const p=permOf(a.id);
   return {
-    lead:    p?!!p.lead    : (CAISHI_LEAD_IDS.indexOf(a.id)>=0),
-    caishi:  p?!!p.caishi  : (CAISHI_IDS.indexOf(a.id)>=0),
+    lead:    p?!!p.lead    : CAISHI_LEAD_IDS.some(x=>idKey(x)===idKey(a.id)),
+    caishi:  p?!!p.caishi  : CAISHI_IDS.some(x=>idKey(x)===idKey(a.id)),
     witness: p&&p.witness  ? true : (WITNESS_TITLES.indexOf(String(a.title||''))>=0)
   };
 }
-function renderPermAdmin(){
+/* ★ 搜尋不再重畫整個畫面。原本每打一個字就重建 innerHTML，輸入框被銷毀重建，
+   游標位置跑掉、手機上還會失焦亂跳。現在只更新清單容器。 */
+function permRowsHtml(){
   const q=(state.permQ||'').trim();
   let list=ACCOUNTS.filter(a=>a.active!==false);
   if(q) list=list.filter(a=>a.name.includes(q)||String(a.id).includes(q)||String(a.title||'').includes(q));
@@ -2148,8 +2176,23 @@ function renderPermAdmin(){
             : chip(p.witness,'見證',`togglePerm('${a.id}','witness')`))}
       </div></div>`;
   }).join('');
+  return rows||'<div style="padding:12px;color:var(--ink-soft);font-size:13px">查無符合人員</div>';
+}
+function permRefreshRows(v){
+  state.permQ=v;
+  const box=document.getElementById('pm_rows');
+  if(box)box.innerHTML=permRowsHtml();       // 只換清單，輸入框不動 → 游標不會跑
+  const s1=document.getElementById('pm_sum');
+  if(s1)s1.innerHTML=permSummaryHtml();
+}
+function permSummaryHtml(){
   const nLead=ACCOUNTS.filter(a=>effPerm(a).lead&&a.role!=='護理長'&&a.role!=='副護理長').map(a=>a.name);
   const nCai =ACCOUNTS.filter(a=>{const p=effPerm(a);return p.caishi&&!p.lead&&a.role!=='護理長'&&a.role!=='副護理長';}).map(a=>a.name);
+  return `目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
+          目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b>`;
+}
+function renderPermAdmin(){
+  const q=(state.permQ||'').trim();
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">👥 權限設定</div><div class="sub">護理長／副護理長專用 · 指派後所有裝置立即生效</div></div>
@@ -2161,14 +2204,12 @@ function renderPermAdmin(){
         <b>財管負責人</b>：欠物結案、月結統計（每月清點）<br>
         <b>見證</b>：可當歸還見證人（小組長以上預設就有，這裡可額外授予）
       </div>
-      <div style="margin-top:10px;font-size:12.5px;color:var(--ink-soft)">
-        目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
-        目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b></div>
+      <div id="pm_sum" style="margin-top:10px;font-size:12.5px;color:var(--ink-soft)">${permSummaryHtml()}</div>
     </div>
     <label class="owe-f">搜尋姓名／員編／職稱
-      <input id="pm_q" value="${esc(q)}" placeholder="例：蔡 或 12346"
-        oninput="state.permQ=this.value;renderPermAdmin();document.getElementById('pm_q').focus()"></label>
-    <div class="card" style="padding:4px 12px;margin-top:10px">${rows||'<div style="padding:12px;color:var(--ink-soft);font-size:13px">查無符合人員</div>'}</div>
+      <input id="pm_q" value="${esc(q)}" placeholder="例：蔡 或 12346" autocomplete="off"
+        oninput="permRefreshRows(this.value)"></label>
+    <div id="pm_rows" class="card" style="padding:4px 12px;margin-top:10px">${permRowsHtml()}</div>
     <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;text-align:center">
       ＊護理長／副護理長本身就是全權，不需要也不能在此調整。最多顯示 80 筆，請用搜尋縮小範圍。</div>
   </div>`;
@@ -2180,11 +2221,20 @@ async function togglePerm(id,field){
   next[field]=!next[field];
   if(field==='lead'&&next.lead)next.caishi=true;        // 組長本來就含負責人權限
   if(field==='caishi'&&!next.caishi)next.lead=false;    // 取消負責人 → 組長也一併取消
-  PERMS[id]=next; renderPermAdmin();
+  const prev=PERMS[id]?Object.assign({},PERMS[id]):null;
+  PERMS[id]=next; permRefreshRows(state.permQ||'');
   const r=await itemsWrite('perm_set',{id:id,name:a.name,lead:next.lead,caishi:next.caishi,witness:next.witness,
     editor:state.user.name,at:new Date().toISOString()});
-  if(r&&r.ok===false){ toast('儲存失敗，請檢查後端連線'); }
-  else toast(a.name+'：權限已更新');
+  if(!(r&&r.ok)){
+    // ★ 寫入失敗就還原畫面，不要讓人以為設定成功（之前就是這樣「設好又消失」）
+    if(prev)PERMS[id]=prev; else delete PERMS[id];
+    permRefreshRows(state.permQ||'');
+    alert('權限沒有存到後端，畫面已還原。\n請確認 GS 已更新並「重新部署為新版本」。');
+    return;
+  }
+  toast(a.name+'：權限已更新');
+  await loadPerms();                     // 立刻回讀，確認後端真的存進去了
+  permRefreshRows(state.permQ||'');
 }
 
 /* ==================== 點班項目管理（護理長／副護理長／財管組長）==================== */

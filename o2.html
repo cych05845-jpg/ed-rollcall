@@ -86,6 +86,7 @@ const SHIFTS=["N","D","E"];
 const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
+const EXPECT_VER='2026-09-10-v10';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 /* 寫回後端並確認後端真的回 ok；失敗就標記未上傳並示警。 */
 async function o2Write(code,day,si){
@@ -101,6 +102,24 @@ async function o2Write(code,day,si){
     console.error('氧氣寫回失敗',e);
     if(data.marks[k])data.marks[k]._unsync=true;
   }
+  save(); syncBanner();
+}
+/* ★ 一次寫多筆：原本「一鍵完成」會同時送出 6 支 POST，
+   後端會平行跑 6 個執行環境、各自算 appendRow 的位置，互相搶同一列，
+   甚至把資料寫到標題列上面（o2_check 第 1~3 列就是這樣被塞進資料的）。
+   改成一支請求帶 items[]，後端一次寫完，不可能再搶。 */
+async function o2WriteBatch(codes,day,si){
+  if(!API_URL||!codes.length)return;
+  const payload={dept:data.dept,ym:data.ym,day:day,shift:SHIFTS[si],qty:data.qty||'',
+                 by:curName(),at:new Date().toISOString(),items:codes.slice()};
+  const mark=(bad)=>codes.forEach(c=>{const k=ck(c,day,si);
+    if(!data.marks[k])return; if(bad)data.marks[k]._unsync=true; else delete data.marks[k]._unsync;});
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check_batch',payload:payload})});
+    const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
+    mark(!(j&&j.ok));
+    if(!(j&&j.ok))alert('氧氣紀錄沒有存到後端。\n請確認 GS 已「重新部署為新版本」（版本需為 '+EXPECT_VER+'）。');
+  }catch(e){ console.error('氧氣批次寫回失敗',e); mark(true); }
   save(); syncBanner();
 }
 function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
@@ -121,7 +140,10 @@ function syncBanner(){
 }
 async function retrySync(){
   const ks=unsyncList(); if(!ks.length)return;
-  for(const k of ks){ const p=String(k).split('_'); await o2Write(p[0], +p[1], SHIFTS.indexOf(p[2])); }
+  // 同一天同一班的併成一支請求送
+  const g={};
+  ks.forEach(k=>{ const p=String(k).split('_'); const gk=p[1]+'|'+p[2]; (g[gk]=g[gk]||[]).push(p[0]); });
+  for(const gk in g){ const p=gk.split('|'); await o2WriteBatch(g[gk], +p[0], SHIFTS.indexOf(p[1])); }
   syncBanner();
   alert(unsyncList().length?'仍有資料上傳失敗，請回冰箱表點「🔧 測試後端連線」查原因':'全部已上傳成功');
 }
@@ -229,8 +251,10 @@ function quickDone(){
   if(!data.ym){alert('請先選年月');return;}
   const day=+document.getElementById('qcDay').value, sh=document.getElementById('qcShift').value, si=SHIFTS.indexOf(sh);
   const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm);
-  CRIT.forEach(([code])=>{ const k=ck(code,day,si); if(!data.marks[k]){ data.marks[k]={by:nm,at:stamp()}; o2Write(code,day,si); } });
+  const todo=[];
+  CRIT.forEach(([code])=>{ const k=ck(code,day,si); if(!data.marks[k]){ data.marks[k]={by:nm,at:stamp()}; todo.push(code); } });
   save(); render();
+  if(todo.length)o2WriteBatch(todo,day,si);      // ★ 一支請求送出全部，不再 6 支平行搶列
 }
 function render(){
   document.getElementById('ymSel').value=data.ym||'';
