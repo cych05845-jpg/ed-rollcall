@@ -92,6 +92,7 @@
   .sheet-row.srv-done{background:#ebfbee}
   .done-by{font-size:12px;font-weight:700;color:#1f7a43;margin-top:3px;line-height:1.5}
   .done-by.part{color:#b5680f}
+  .done-by.act{color:#1c5fb0}
   .tool-pill{font-size:13.5px;font-weight:700;padding:9px 15px;border-radius:10px;border:1.5px solid var(--brand);
     background:var(--brand-soft);color:var(--brand);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .tool-pill:active{opacity:.7}
@@ -501,6 +502,7 @@ async function submitRollcall(){
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
     startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec};
   state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
+  postProgress({clear:true,force:true});          // 清掉「進行中」標記
   await pushRollcall(payload);
 }
 /* ★ 確認後端真的寫進去了。失敗時在完成畫面顯示紅色警示＋重試，
@@ -1235,6 +1237,8 @@ function renderHome(){
     <div class="section-h">點班日期</div>
     ${rcDatePicker()}
     ${todayBindCard()}
+    <div class="section-h">我的待辦</div>
+    ${renderTodoCard()}
     <div class="section-h">作業</div>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     ${reviewBtn}
@@ -1274,7 +1278,9 @@ function renderPick(){
     const twop=String(s.ops)==='2'?'<span class="badge badge-2p">2人</span>':'';
     // ★ 跨裝置狀態：本班是否已有人點過（來自後端，別台點的也看得到）
     const sd=shiftDoneOf(s.id,null);
-    const srv=sd?(sd.isDone
+    const av=(!sd||!sd.isDone)?activeOf(s.id,null):null;
+    const srv=av?`<div class="done-by act">🖊 <b>${esc(av.by||'他人')}</b> 正在點班 ${av.done}/${av.total}${av.mins>0?(' · '+av.mins+'分鐘前'):' · 剛剛'}</div>`
+      :sd?(sd.isDone
         ? `<div class="done-by">✓ 本班已由 <b>${esc(sd.by||'—')}</b> 完成${sd.at?(' · '+shortTime(sd.at)):''}${sd.times>1?(' · 已點 '+sd.times+' 次'):''}</div>`
         : `<div class="done-by part">◍ 本班 <b>${esc(sd.by||'—')}</b> 點到 ${sd.done}/${sd.total}${sd.at?(' · '+shortTime(sd.at)):''}</div>`)
       :'';
@@ -1294,7 +1300,7 @@ function renderPick(){
       <div style="font-size:12px;color:var(--ink-soft)">綠底＝本班已有人點完（跨裝置同步）</div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-ghost" style="font-size:13px;padding:6px 10px" onclick="doneDiag()" title="別台點完這台卻沒顯示時點這">🔍</button>
-        <button class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="refreshDoneStatus()">↻ 更新狀態</button>
+        <button id="syncBtn" class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="refreshDoneStatus()">${syncLabel()}</button>
       </div>
     </div>
     <div class="sheet-list">${rows}</div></div>`;
@@ -1310,7 +1316,7 @@ function openSheet(id){
   }
   state.sheetId=id;
   if(String(s.ops)==='2'){state.screen='half';render()}
-  else{state.half=null;state.screen='rollcall';render()}
+  else{state.half=null;state.screen='rollcall';render();postProgress({force:true});}
 }
 function renderHalf(){
   const s=sheetById(state.sheetId);
@@ -1355,6 +1361,11 @@ function renderRollcall(){
         <div><div>尚未完成（還有 ${remain} 項）</div><div class="sb-sub">已點 ${done} / ${list.length}</div></div></div>`;
   // ★ 本班別人已經點過就明確提示，避免重複作業
   const _sd=shiftDoneOf(state.sheetId,state.half);
+  const _av=(!_sd||!_sd.isDone)?activeOf(state.sheetId,state.half):null;
+  const actBanner=_av?`<div class="card" style="padding:11px 14px;margin-bottom:12px;border-left:4px solid #1c5fb0;background:#eef4fb">
+      <div style="font-weight:800;font-size:13.5px;color:#1c5fb0">🖊 ${esc(_av.by||'他人')} 正在點這張表（${_av.done}/${_av.total}${_av.mins>0?('・'+_av.mins+'分鐘前'):'・剛剛'}）</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">建議改點其他區，或與對方確認分工，避免重複作業。</div>
+    </div>`:'';
   const srvBanner=_sd?`<div class="card" style="padding:11px 14px;margin-bottom:12px;border-left:4px solid ${_sd.isDone?'var(--ok,#2f9e44)':'var(--warn,#e8590c)'};background:${_sd.isDone?'#ebfbee':'#fff8f0'}">
       <div style="font-weight:800;font-size:13.5px;color:${_sd.isDone?'#1f7a43':'#b5680f'}">
         ${_sd.isDone?'✓ 本班已由 '+esc(_sd.by||'他人')+' 點完':'◍ 本班 '+esc(_sd.by||'他人')+' 已點到 '+_sd.done+'/'+_sd.total}
@@ -1419,6 +1430,7 @@ function renderRollcall(){
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
   <div class="screen wide lvl2">
     ${banner}
+    ${actBanner}
     ${srvBanner}
     ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
@@ -1454,6 +1466,7 @@ function setListView(v){state.listView=v;render();}
 function bulkNormal(){
   const s=sheetById(state.sheetId);
   itemsOf(s.id,state.half).forEach(o=>{const k=keyOf(o);if(!state.checks[k])state.checks[k]='ok'});
+  postProgress({force:true});
   render();
 }
 
@@ -1486,7 +1499,7 @@ function renderItem(o,s){
     <div class="li-ctrl">${dev}<button class="flagbtn ${st==='bad'?'on':''}" onclick="setCheck('${k}','bad')">異常</button></div>
     ${abn}</div>`;
 }
-function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k]}render()}
+function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k]}render();postProgress();}
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
@@ -1820,6 +1833,75 @@ function exportOwedCSV(ym){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
   a.download='欠物本_'+ym+'.csv';a.click();
+}
+
+/* ★★ 我的待辦：本班還沒完成的點班表與附加查核。
+   一般人員只看自己被指派的分區；當班 leader（小組長以上）看全區，方便催。 */
+function isShiftLeader(){
+  const u=state.user; if(!u)return false;
+  if(isBoss(u))return true;
+  return isWitnessRank(u);         // 小組長以上
+}
+function myTodoSheets(){
+  // leader 看全部；一般人員依排班帶入的分區，抓不到就顯示自己所在分區
+  if(isShiftLeader())return SHEETS.slice();
+  const areas=new Set();
+  if(state.bind&&state.bind.areaId)areas.add(state.bind.areaId);
+  if(state.areaId)areas.add(state.areaId);
+  if(!areas.size)return SHEETS.slice();     // 無從判斷就全列，寧可多提醒
+  return SHEETS.filter(s=>areas.has(s.area));
+}
+function todoList(){
+  const out={sheets:[],extra:[]};
+  myTodoSheets().forEach(function(s){
+    const sd=shiftDoneOf(s.id,null);
+    if(sd&&sd.isDone)return;
+    const av=activeOf(s.id,null);
+    out.sheets.push({s:s,part:sd?sd.done+'/'+sd.total:'',act:av});
+  });
+  // 附加查核（冰箱／氧氣）
+  Object.keys(FRIDGE_SHEETS).forEach(function(k){
+    const sh=SHEETS.find(x=>x.id===k); if(!sh)return;
+    if(!isShiftLeader()&&!myTodoSheets().some(x=>x.id===k))return;
+    const unit=FRIDGE_SHEETS[k];
+    if(fridgeDoneToday(unit))return;
+    if(out.extra.some(e=>e.key===unit))return;
+    out.extra.push({key:unit,label:'🌡 藥品冰箱溫度 · '+sh.name,go:"openFridge('"+unit+"')"});
+  });
+  Object.keys(O2_SHEETS).forEach(function(k){
+    const sh=SHEETS.find(x=>x.id===k); if(!sh)return;
+    if(!isShiftLeader()&&!myTodoSheets().some(x=>x.id===k))return;
+    const o=O2_SHEETS[k];
+    if(o2DoneToday(o.dept))return;
+    if(out.extra.some(e=>e.key===o.dept))return;
+    out.extra.push({key:o.dept,label:'🫧 氧氣桶審核 · '+o.dept+'（'+o.qty+'支）',
+      go:"openO2('"+o.dept+"',"+o.qty+")"});
+  });
+  return out;
+}
+function renderTodoCard(){
+  const t=todoList(), n=t.sheets.length+t.extra.length;
+  const scope=isShiftLeader()?'全區':'我的分區';
+  if(!n){
+    return `<div class="card" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);background:#ebfbee">
+      <div style="font-weight:800;color:#1f7a43">✓ 本班已全部完成（${esc(scope)}）</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">點班表與附加查核都沒有待辦項目。</div></div>`;
+  }
+  const rows=t.sheets.map(function(x){
+    const sub=x.act?('🖊 '+esc(x.act.by)+' 正在點 '+x.act.done+'/'+x.act.total)
+             :(x.part?('已點到 '+x.part):'尚未開始');
+    return `<div class="rem-li" onclick="openArea('${x.s.area}')" style="cursor:pointer">
+      <span><span class="area-dot" style="background:${areaColor(x.s.area)}"></span>${esc(areaById(x.s.area).name)} · ${esc(x.s.name)}
+        <div style="font-size:11.5px;color:${x.act?'#1c5fb0':'var(--ink-soft)'};margin-top:2px">${sub}</div></span>
+      <span class="pill-bad">未完成</span></div>`;
+  }).join('');
+  const ex=t.extra.map(e=>`<div class="rem-li" onclick="${e.go}" style="cursor:pointer">
+      <span>${esc(e.label)}</span><span class="pill-bad">未完成</span></div>`).join('');
+  return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--warn,#e8590c);overflow:hidden">
+    <div style="padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center">
+      <span>📌 我的待辦 · 本班未完成 ${n} 項<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">（${esc(scope)}）</span></span>
+      <button class="btn btn-ghost" style="font-size:12.5px;padding:5px 10px" onclick="refreshDoneStatus()">↻</button></div>
+    <div style="padding:0 6px 8px">${rows}${ex}</div></div>`;
 }
 
 /* ==================== 權限設定（僅護理長／副護理長）====================
@@ -2339,6 +2421,57 @@ function weekOfLog(r){
   return d?isoWeek(parseISO(d)):'';
 }
 function logsOfWeek(wk){ return (SIGNLOG||[]).filter(r=>weekOfLog(r)===String(wk)); }
+
+/* ★★ 點班「進行中」：避免兩人同時做同一張表。
+   進入點班表時寫一筆，每 30 秒更新進度，提交後清掉。
+   超過 ACTIVE_FRESH_MIN 分鐘沒更新就視為那個人已離開。 */
+let ACTIVE=[];
+const ACTIVE_FRESH_MIN=25;
+async function loadActive(){
+  if(!API_URL)return;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_active&_='+Date.now(),{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))ACTIVE=a;
+  }catch(e){ /* 沒有這張分頁也不影響其他功能 */ }
+}
+let _progAt=0;
+async function postProgress(opts){
+  if(!API_URL||!state.sheetId||!state.user)return;
+  opts=opts||{};
+  const now=Date.now();
+  if(!opts.force&&!opts.clear&&now-_progAt<30000)return;   // 30 秒內不重複送
+  _progAt=now;
+  const s=sheetById(state.sheetId), list=itemsOf(s.id,state.half);
+  let done=0; list.forEach(o=>{const v=state.checks[keyOf(o)];if(v==='ok'||v==='bad')done++;});
+  try{
+    await owedWrite('rollcall_progress',{date:curRcDate(),shift:state.shift||detectShift(),
+      sheetId:s.id,sheet:s.name||'',assign:state.half||'',
+      empId:state.user.id,name:state.user.name,done:done,total:list.length,
+      clear:!!opts.clear});
+  }catch(e){}
+}
+// 別人正在點這張表嗎？（排除自己、排除已完成、排除過期）
+function activeOf(sheetId,half){
+  const d=curRcDate(), sh=String(state.shift||detectShift());
+  const me=state.user?String(state.user.id):'';
+  let best=null;
+  (ACTIVE||[]).forEach(function(r){
+    if(sheetIdOf(r)!==String(sheetId))return;
+    if(dateOfLog(r)!==d)return;
+    const rs=shiftOf(r); if(rs&&rs!==sh)return;
+    if(fld(r,['狀態','status'])==='已結束')return;
+    if(half){ const a=assignOf(r); if(a&&a!==String(half))return; }
+    if(me&&fld(r,['empId','員編'])===me)return;          // 自己不算
+    const at=fld(r,['更新時間','at']);
+    const t=Date.parse(String(at).replace(' ','T'));
+    const mins=isNaN(t)?9999:Math.floor((Date.now()-t)/60000);
+    if(mins>ACTIVE_FRESH_MIN)return;                      // 太久沒更新＝人已離開
+    const rec={by:nameOf(r),done:Number(fld(r,['done','完成項數']))||0,
+               total:Number(fld(r,['total','總項數']))||0,mins:mins};
+    if(!best||rec.mins<best.mins)best=rec;
+  });
+  return best;
+}
 // 是否完成：舊資料可能寫「是」，也可能只有完成項數/總項數
 function isDoneRec_(r){
   if(!r)return false;
@@ -2391,16 +2524,33 @@ function shortTime(s){
   const m=String(s||'').match(/(\d{1,2}):(\d{2})/);
   return m?(m[1].padStart(2,'0')+':'+m[2]):String(s||'');
 }
-// 進入點班表清單時重抓一次，確保看到的是最新狀態
+/* 進入點班表清單時重抓一次。★ 只抓最近 3 天，並在按鈕上顯示「更新中…」與實際耗時，
+   這樣你能直接看到同步要幾秒，也不會以為畫面卡住。 */
+let SYNCING=false;
 async function refreshDoneStatus(){
-  await loadSignLog();
+  if(SYNCING)return;
+  SYNCING=true;
+  const btn=document.getElementById('syncBtn');
+  if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
+  await Promise.all([loadSignLog(3),loadActive()]);
+  SYNCING=false;
   if(state.screen==='pick'||state.screen==='rollcall'||state.screen==='half')render();
+}
+function syncLabel(){
+  if(SYNCING)return '⏳ 更新中…';
+  if(SIGNLOG_MS===null)return '↻ 更新狀態';
+  if(SIGNLOG_MS<0)return '⚠ 連線失敗，再試';
+  const sec=(SIGNLOG_MS/1000).toFixed(1);
+  const ago=Math.round((Date.now()-SIGNLOG_AT)/1000);
+  return '↻ 已更新（'+sec+'秒'+(ago>5?('・'+ago+'秒前'):'')+'）';
 }
 /* 🔍 完成狀態診斷：直接印出「這台在比對什麼」與「後端實際有什麼」，
    若別台點完這台卻沒顯示，一看就知道是日期、班別還是 sheetId 對不上。 */
 function doneDiag(){
   const d=curRcDate(), sh=String(state.shift||detectShift());
   let out='這台的比對條件\n  日期＝'+d+'\n  班別＝'+sh+'\n';
+  out+='\n上次同步耗時：'+(SIGNLOG_MS===null?'尚未同步':(SIGNLOG_MS<0?'失敗':(SIGNLOG_MS/1000).toFixed(2)+' 秒'))
+     +(SIGNLOG_AT?('（'+Math.round((Date.now()-SIGNLOG_AT)/1000)+' 秒前）'):'')+'\n';
   out+='\n後端 rollcall_log 共 '+(SIGNLOG||[]).length+' 筆';
   if((SIGNLOG||[]).length){
     out+='\n  第一筆的欄位名：'+Object.keys(SIGNLOG[0]).join(' | ');
@@ -2439,11 +2589,19 @@ function doneDiag(){
   }
   alert(out);
 }
-async function loadSignLog(){
+let SIGNLOG_MS=null, SIGNLOG_AT=0;   // 上次同步耗時(ms) 與 完成時間
+/* days 給值時只抓最近幾天（查「本班誰點過」用 3 天就夠，快很多）；
+   主管簽核需要看整個月，就不帶 days。 */
+async function loadSignLog(days){
   if(!API_URL)return;
-  try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_log',{cache:'no-store'});
-    const a=await r.json(); if(Array.isArray(a))SIGNLOG=a;}
-  catch(e){console.error('讀完成紀錄失敗',e);}
+  const t0=Date.now();
+  try{
+    const q='table=rollcall_log'+(days?('&days='+days):'')+'&_='+t0;
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
+    const a=await r.json();
+    if(Array.isArray(a))SIGNLOG=a;
+    SIGNLOG_MS=Date.now()-t0; SIGNLOG_AT=Date.now();
+  }catch(e){ SIGNLOG_MS=-1; console.error('讀完成紀錄失敗',e); }
 }
 async function refreshSignLog(){await loadSignLog();render();}
 let SIGNOFFLOG=[];   // 後端週簽核紀錄 rollcall_signoff
@@ -2741,7 +2899,14 @@ if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=fmtISO(new Date()); rebindForDate(); }
 (async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog(),loadItemReports(),
-  loadFridgeLog(),loadO2Log(),loadPerms(),loadRtls()]); render(); })();
+  loadFridgeLog(),loadO2Log(),loadPerms(),loadRtls(),loadActive()]); render(); })();
+// 停在點班表清單時自動更新完成狀態（20 秒一次），人員不必手動按
+setInterval(function(){
+  if(!state.user||(state.screen!=='pick'&&state.screen!=='home')||SYNCING)return;
+  if(Date.now()-SIGNLOG_AT<15000)return;      // 剛更新過就跳過
+  refreshDoneStatus();
+},20000);
+
 // RTLS 每 2 分鐘自動刷新一次（僅在點班/首頁時，避免無謂流量）
 setInterval(function(){
   if(!state.user)return;
