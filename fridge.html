@@ -88,6 +88,7 @@ const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
+const APP_VER='2026-09-10-b7';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-10-v10';
 
 const P=new URLSearchParams(location.search);
@@ -218,9 +219,10 @@ function srvBadge(){
     if(w&&sh)w.insertBefore(el,sh); }
   const local=Object.keys(data.readings||{}).length;
   if(serverCount===-1){ el.style.cssText+=';background:#fbe8e8;color:#c0392b;font-weight:700';
-    el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）'; return; }
+    el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）· 版本 '+APP_VER; return; }
   el.style.cssText+=';background:#e6f6ed;color:#1f7a43;font-weight:700';
-  el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 筆 · 本機 '+local+' 筆 · 本月 '+(data.ym||'');
+  el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 筆 · 本機 '+local+' 筆 · 本月 '
+    +(data.ym||'')+' · 版本 '+APP_VER;
 }
 function curName(){ return (document.getElementById('nameIn').value||'').trim(); }
 function clampPlot(t){ return Math.max(TMIN, Math.min(TMAX, t)); }

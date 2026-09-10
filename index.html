@@ -367,6 +367,10 @@ const ACCOUNTS=[
      當班 leader（小組長以上）→ 歸還見證人
      一般點班人員         → 登記欠物、回報項目有誤
 */
+/* ★ 前端版本印記：上傳後首頁最下方會顯示這串。
+   看到的不是這串就代表瀏覽器還在用舊檔（需強制重新整理／清站台資料）。 */
+const APP_VER='2026-09-10-b7';
+
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
 const WITNESS_TITLES  = ["小組長","護理長","副護理長"];   // 預設可見證的職稱
@@ -1401,12 +1405,14 @@ function renderHome(){
     <div class="section-h">我的待辦</div>
     ${syncBar()}
     ${renderTodoCard()}
+    ${renderAuxCard()}
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     ${reviewBtn}
-    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px">
-      ＊冰箱、氧氣等附加查核已列在上方「我的待辦」，完成後會自動消失</div>
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px;line-height:1.8">
+      ＊冰箱、氧氣等附加查核也列在上方「輔助單張」，可展開看三個時段誰登錄了<br>
+      <span style="opacity:.75">前端版本 ${APP_VER}</span></div>
   </div>`;
 }
 
@@ -2094,17 +2100,74 @@ function analytics(){
     } else dev.off.push(d.unit||d.name);
   });
 
-  // 冰箱／氧氣
-  const fr={n:0,bad:0};
-  (FRIDGELOG||[]).forEach(function(r){
-    const c=Number(fld(r,['cur','現在溫度'])); if(isNaN(c))return;
-    fr.n++; if(c<2||c>8)fr.bad++;
+  /* ★ 冰箱／氧氣（品管指標）
+     原本只有一個「超標筆數」，看不出最要緊的事：該登的有沒有登。
+     一天應登：冰箱＝每台 × 3 時段（00-08/08-16/16-24）；氧氣＝每科別 × 3 班。
+     這裡算近 14 天的完成率，並列出實際缺漏的格子（哪天哪班哪台沒登），
+     這樣不用去 Google Sheet 翻，直接知道要找誰補。 */
+  const AUX_DAYS=14;
+  const auxDates=[];
+  for(let i=0;i<AUX_DAYS;i++){
+    const dd=tpeDate(); dd.setDate(dd.getDate()-i); auxDates.push(fmtISO(dd));
+  }
+  /* ★ 規則：當班範圍內有完成即算完成，且「還沒結束的班」不列入分母。
+     所以分母＝已結束的班數，不是固定的 天×3。
+     現在是白班進行中的話，今天只有大夜列入計算，小夜不算漏。 */
+  const fr={need:0,got:0,bad:[],miss:[],by:{},revd:0,pending:0};
+  fridgeUnits().forEach(function(u){
+    auxDates.forEach(function(dt){
+      FRIDGE_SLOTS.forEach(function(sl){
+        const shOfSlot=SHIFT_OF_SLOT[sl];
+        const by=fridgeSlotBy(u,dt,sl);
+        if(!shiftEnded(dt,shOfSlot)){                 // 這一班還沒結束
+          if(by){ fr.by[by]=(fr.by[by]||0)+1; }       // 已提前登錄，記人次但不列入分母
+          else fr.pending++;
+          return;
+        }
+        fr.need++;
+        if(by){ fr.got++; fr.by[by]=(fr.by[by]||0)+1; }
+        else fr.miss.push({unit:u,date:dt,slot:SLOT_LABEL[sl],shift:SHIFT_NAME[shOfSlot]});
+      });
+    });
   });
-  return {L:L,byPerson:byPerson,dupN:dupN,byItem:byItem,byReason:byReason,owe:owe,dev:dev,fr:fr};
+  (FRIDGELOG||[]).forEach(function(r){
+    const dt=(function(){const ym=ymOf(fld(r,['年月','ym']));const dy=+fld(r,['日','day']);
+      return (ym&&dy)?(ym+'-'+String(dy).padStart(2,'0')):'';})();
+    if(!dt||auxDates.indexOf(dt)<0)return;
+    const c=Number(fld(r,['現在溫度','cur']));
+    const hi=Number(fld(r,['高溫','hi'])), lo=Number(fld(r,['低溫','lo']));
+    if(!isNaN(c)&&(c<2||c>8))
+      fr.bad.push({unit:fld(r,['單位','unit']),date:dt,cur:c,by:fld(r,['簽名','sign'])});
+    if(!isNaN(hi)&&!isNaN(lo)&&lo>hi) fr.revd++;      // 高低溫顛倒＝填錯，資料品質指標
+  });
+  fr.miss.sort((a,b)=>b.date.localeCompare(a.date));
+  fr.pct=fr.need?Math.round(fr.got/fr.need*100):0;
+
+  const o2={need:0,got:0,miss:[],by:{},pending:0};
+  o2Depts().forEach(function(dp){
+    auxDates.forEach(function(dt){
+      ['D','E','N'].forEach(function(sh){
+        const by=o2ShiftBy(dp,dt,sh);
+        if(!shiftEnded(dt,sh)){
+          if(by){ o2.by[by]=(o2.by[by]||0)+1; } else o2.pending++;
+          return;
+        }
+        o2.need++;
+        if(by){ o2.got++; o2.by[by]=(o2.by[by]||0)+1; }
+        else o2.miss.push({dept:dp,date:dt,shift:SHIFT_NAME[sh]});
+      });
+    });
+  });
+  o2.miss.sort((a,b)=>b.date.localeCompare(a.date));
+  o2.pct=o2.need?Math.round(o2.got/o2.need*100):0;
+
+  return {L:L,byPerson:byPerson,dupN:dupN,byItem:byItem,byReason:byReason,owe:owe,dev:dev,
+          fr:fr,o2:o2,auxDays:AUX_DAYS};
 }
 function openAnalytics(){ state.screen='analytics'; state.aiText=''; render();
-  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadRtls()]).then(function(){
-    if(state.screen==='analytics')render(); }); }
+  // ★ 一定要把冰箱／氧氣也載進來，之前沒載，那個「冰箱超標」數字是開 App 時的舊值
+  Promise.all([loadSignLog(),loadIssues(),loadOwed(),loadRtls(),loadFridgeLog(30),loadO2Log(30)])
+    .then(function(){ if(state.screen==='analytics')render(); }); }
 function renderAnalytics(){
   const A=analytics();
   const top=(obj,n,fmt)=>{
@@ -2131,7 +2194,8 @@ function renderAnalytics(){
       <div><div style="font-size:22px;font-weight:800">${A.L.length}</div><div style="font-size:11.5px;color:var(--ink-soft)">點班次數</div></div>
       <div><div style="font-size:22px;font-weight:800;color:${A.dupN?'var(--warn)':'inherit'}">${A.dupN}</div><div style="font-size:11.5px;color:var(--ink-soft)">重複點班</div></div>
       <div><div style="font-size:22px;font-weight:800">${A.owe.n}</div><div style="font-size:11.5px;color:var(--ink-soft)">未結欠物</div></div>
-      <div><div style="font-size:22px;font-weight:800;color:${A.fr.bad?'var(--bad,#c0392b)':'inherit'}">${A.fr.bad}</div><div style="font-size:11.5px;color:var(--ink-soft)">冰箱超標</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:${A.fr.pct>=95?'inherit':'var(--warn)'}">${A.fr.pct}%</div><div style="font-size:11.5px;color:var(--ink-soft)">冰箱登錄率</div></div>
+      <div><div style="font-size:22px;font-weight:800;color:${A.o2.pct>=95?'inherit':'var(--warn)'}">${A.o2.pct}%</div><div style="font-size:11.5px;color:var(--ink-soft)">氧氣登錄率</div></div>
     </div>
     ${card('👤 人員（近30天・依點班次數）',ppl)}
     ${card('🔧 器械／耗材異常 TOP（近90天）',
@@ -2140,14 +2204,38 @@ function renderAnalytics(){
     ${card('⏳ 逾 30 天未結欠物',
       A.owe.aged.length?A.owe.aged.slice(0,6).map(a=>li(esc(a.item)+`<div style="font-size:11.5px;color:var(--ink-soft)">${esc(a.zone||'')} · ${esc(a.names||'')}</div>`,a.days+' 天')).join('')
       :'<div style="font-size:13px;color:var(--ink-soft);padding:8px 2px">無 🎉</div>')}
+    ${card('🌡 藥品冰箱（近'+A.auxDays+'天）',
+      li('應登錄班數（每台冰箱・每班一次）',A.fr.need+' 班'+(A.fr.pending?`<div style="font-size:11.5px;color:var(--ink-soft)">另有 ${A.fr.pending} 班還沒結束，不列入</div>`:''))
+      +li('已登錄',`<span style="color:${A.fr.pct>=95?'inherit':'var(--warn)'}">${A.fr.got} 班（${A.fr.pct}%）</span>`)
+      +li('溫度超標（不在 2–8℃）',`<span style="color:${A.fr.bad.length?'var(--bad,#c0392b)':'inherit'}">${A.fr.bad.length} 筆</span>`)
+      +li('高低溫填顛倒',`<span style="color:${A.fr.revd?'var(--warn)':'inherit'}">${A.fr.revd} 筆</span>`)
+      +(A.fr.bad.length?('<div style="padding:8px 2px 2px;font-size:11.5px;color:var(--ink-soft)">超標明細（最近 5 筆）</div>'
+        +A.fr.bad.slice(-5).reverse().map(b=>li(esc(b.unit)+`<div style="font-size:11.5px;color:var(--ink-soft)">${esc(b.date)} · ${esc(b.by||'')}</div>`,
+          `<span style="color:var(--bad,#c0392b)">${b.cur}℃</span>`)).join('')):'')
+      +(A.fr.miss.length?('<div style="padding:8px 2px 2px;font-size:11.5px;color:var(--ink-soft)">未登錄的格子（最近 6 個 · 共 '+A.fr.miss.length+' 個）</div>'
+        +A.fr.miss.slice(0,6).map(m=>li(esc(m.unit),`<span style="color:var(--warn)">${esc(m.date.slice(5))} ${esc(m.shift)}</span>`)).join(''))
+        :'<div style="padding:8px 2px;font-size:13px;color:#1f7a43;font-weight:700">✓ 沒有漏登錄</div>'))}
+    ${card('🫧 氧氣桶（近'+A.auxDays+'天）',
+      li('應登錄班數（每科別・每班一次）',A.o2.need+' 班'+(A.o2.pending?`<div style="font-size:11.5px;color:var(--ink-soft)">另有 ${A.o2.pending} 班還沒結束，不列入</div>`:''))
+      +li('已登錄',`<span style="color:${A.o2.pct>=95?'inherit':'var(--warn)'}">${A.o2.got} 班（${A.o2.pct}%）</span>`)
+      +(A.o2.miss.length?('<div style="padding:8px 2px 2px;font-size:11.5px;color:var(--ink-soft)">未登錄的格子（最近 6 個 · 共 '+A.o2.miss.length+' 個）</div>'
+        +A.o2.miss.slice(0,6).map(m=>li(esc(m.dept),`<span style="color:var(--warn)">${esc(m.date.slice(5))} ${esc(m.shift)}</span>`)).join(''))
+        :'<div style="padding:8px 2px;font-size:13px;color:#1f7a43;font-weight:700">✓ 沒有漏登錄</div>')
+      +(Object.keys(A.o2.by).length?('<div style="padding:8px 2px 2px;font-size:11.5px;color:var(--ink-soft)">登錄人次 TOP</div>'
+        +Object.keys(A.o2.by).sort((a,b)=>A.o2.by[b]-A.o2.by[a]).slice(0,5).map(k=>li(esc(k),A.o2.by[k]+' 班')).join('')):''))}
     ${card('📍 儀器定位',
       li('可定位儀器',A.dev.loc+' 台')+li('回報中',A.dev.live+' 台')
       +li('不在配置區（移位）',A.dev.moved+' 台')
       +li('低電量',A.dev.low.length+' 台')+li('無訊號',A.dev.off.length+' 台'))}
     <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="askAnalysis()">🤖 請 AI 解讀並給建議</button>
     <div id="aiOut" class="card" style="margin-top:12px;white-space:pre-wrap;line-height:1.8;font-size:14px;${state.aiText?'':'display:none'}">${esc(state.aiText||'')}</div>
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;text-align:center">
-      ＊統計由程式即時計算；AI 只負責解讀數字並提出建議，不重算數據。</div>
+    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.8">
+      ＊統計由程式即時計算。<br>
+      ＊登錄率的規則：<b>當班範圍內有完成即算完成</b>
+      （00-08＝大夜、08-16＝白班、16-24＝小夜）。<br>
+      ＊分母只算<b>已經結束的班</b>；還在進行或還沒開始的班不列入，
+      所以早上看不會因為晚上還沒點而變成低分。<br>
+      ＊AI 只負責解讀數字並提出建議，不重算數據。</div>
   </div>`;
 }
 async function askAnalysis(){
@@ -2165,12 +2253,17 @@ async function askAnalysis(){
     異常原因分布:A.byReason,
     未結欠物:A.owe.n, 欠物TOP:A.owe.byItem, 逾30天未結:A.owe.aged.slice(0,8),
     儀器:{可定位:A.dev.loc,回報中:A.dev.live,移位:A.dev.moved,低電量:A.dev.low.length,無訊號:A.dev.off.length},
-    冰箱:{登錄筆數:A.fr.n,超標筆數:A.fr.bad}
+    冰箱:{期間天數:A.auxDays,規則:'當班範圍內完成即可，未結束的班不列入分母',
+          應登錄班數:A.fr.need,已登錄:A.fr.got,登錄率:A.fr.pct+'%',
+          超標筆數:A.fr.bad.length,高低溫顛倒:A.fr.revd,未登錄班數:A.fr.miss.length,
+          未登錄範例:A.fr.miss.slice(0,6)},
+    氧氣:{應登錄班數:A.o2.need,已登錄:A.o2.got,登錄率:A.o2.pct+'%',
+          未登錄班數:A.o2.miss.length,未登錄範例:A.o2.miss.slice(0,6)}
   };
   try{
     const t=await askAI('analysis',{brief:brief,
       ask:'你是急診護理管理顧問。請就以下四個面向各給 2-3 點具體觀察與可執行建議：'
-        +'人員管理、耗材管理、器械管理、儀器管理。'
+        +'人員管理、耗材管理、器械管理、儀器管理，以及輔助單張（藥品冰箱溫度、氧氣桶）的登錄遵從度。'
         +'請直接引用數字支持論點，指出風險與優先處理順序。'
         +'用繁體中文、條列、每點一到兩句，不要客套話。以下是統計數據：'});
     state.aiText=t||'（AI 沒有回傳內容）';
@@ -2237,6 +2330,108 @@ function todoList(){
   });
   return out;
 }
+/* ==================== 輔助單張（冰箱／氧氣）====================
+   ★ 為什麼要獨立一區：這兩張表原本只掛在「我的待辦」裡，做完就消失。
+   結果護理長想確認「今天三個時段都登錄了嗎、誰登的」就無處可看，
+   只能自己去 Google Sheet 翻。現在首頁給一個可收合的專區，
+   一眼看到每個冰箱／每個科別今天的三個時段有沒有登錄、是誰登的。 */
+function fridgeUnits(){ return [...new Set(Object.values(FRIDGE_SHEETS))]; }
+function o2Depts(){ return [...new Set(Object.values(O2_SHEETS).map(o=>o.dept))]; }
+const FRIDGE_SLOTS=['0','8','16'];                 // 冰箱一天三個時段
+const SLOT_LABEL={'0':'00-08','8':'08-16','16':'16-24'};
+/* ★ 時段 ↔ 班別對照。登錄率的規則是「當班範圍內有完成即可」，
+   所以三個時段其實就是三個班：00-08＝大夜、08-16＝白班、16-24＝小夜。 */
+const SLOT_OF_SHIFT={N:'0',D:'8',E:'16'};
+const SHIFT_OF_SLOT={'0':'N','8':'D','16':'E'};
+const SHIFT_END_H={N:8,D:16,E:24};                 // 各班結束時刻（台北時）
+/* 某一天的某一班是否已經結束。沒結束的班不該算「漏登錄」——
+   現在是白班進行中，晚上的小夜還沒開始，把它算成缺漏只會讓數字失真。 */
+function shiftEnded(ymd,sh){
+  const t=tpeParts();
+  const todayStr=t.iso;
+  if(ymd<todayStr)return true;
+  if(ymd>todayStr)return false;
+  return (t.h + t.mi/60) >= SHIFT_END_H[sh];
+}
+
+// 某冰箱單位在某日某時段的登錄者（空＝未登錄）
+function fridgeSlotBy(unit,ymd,slot){
+  const ym=ymd.slice(0,7), day=String(+ymd.slice(8,10));
+  const r=latestOf(FRIDGELOG,function(x){
+    return normUnit(x['單位']||x.unit||'')===normUnit(unit)
+        && ymOf(x['年月']||x.ym||'')===ym
+        && String(+(x['日']||x.day||0))===day
+        && String(x['時段']||x.shift||'')===String(slot);
+  });
+  return r?String(r['簽名']||r.sign||'已登錄'):'';
+}
+// 某科別在某日某班的氧氣登錄者
+function o2ShiftBy(dept,ymd,sh){
+  const ym=ymd.slice(0,7), day=String(+ymd.slice(8,10));
+  const r=latestOf(O2LOG,function(x){
+    return normUnit(x['科別']||x.dept||'')===normUnit(dept)
+        && ymOf(x['年月']||x.ym||'')===ym
+        && String(+(x['日']||x.day||0))===day
+        && String(x['時段']||x.shift||'')===String(sh);
+  });
+  return r?String(r['簽名']||r.by||'已登錄'):'';
+}
+function renderAuxCard(){
+  const d=curRcDate(), open=!!state.auxOpen;
+  const units=fridgeUnits(), depts=o2Depts();
+  /* ★ 標題只算「本班」——當班範圍內有完成就算完成。
+     原本算「今日 15 格」把晚上還沒開始的班也算進去，
+     早上看永遠只有兩三成，數字沒有意義也讓人焦慮。 */
+  const sh=effShift(), mySlot=SLOT_OF_SHIFT[sh];
+  let need=0, got=0, miss=[];
+  units.forEach(function(u){ need++;
+    if(fridgeSlotBy(u,d,mySlot))got++; else miss.push('🌡 '+u); });
+  depts.forEach(function(dp){ need++;
+    if(o2ShiftBy(dp,d,sh))got++; else miss.push('🫧 '+dp); });
+  const pct=need?Math.round(got/need*100):0;
+  const color=pct>=100?'var(--ok,#2f9e44)':(pct>=50?'var(--warn,#e8590c)':'var(--bad,#E03131)');
+  const head=`<div style="padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;
+      align-items:center;cursor:pointer" onclick="state.auxOpen=${open?'false':'true'};render()">
+    <span>🧾 輔助單張（冰箱／氧氣）
+      <span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　本班（${SHIFT_NAME[sh]}）${got}/${need}</span></span>
+    <span style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:12.5px;font-weight:800;color:${color}">${pct===100?'✓ 本班完成':pct+'%'}</span>
+      <span style="color:var(--ink-soft)">${open?'▲':'▼'}</span></span></div>`;
+  if(!open&&miss.length) return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid ${color};overflow:hidden">
+    ${head}<div style="padding:0 14px 11px;font-size:12px;color:var(--ink-soft)">本班還沒登錄：${esc(miss.join('、'))}</div></div>`;
+  if(!open) return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid ${color};overflow:hidden">${head}</div>`;
+
+  const cell=(by,onclick)=>`<span onclick="${onclick}" style="cursor:pointer;flex:1;min-width:0;text-align:center;
+      padding:6px 4px;border-radius:8px;font-size:11.5px;font-weight:700;
+      border:1.5px solid ${by?'var(--ok,#2f9e44)':'var(--line)'};
+      background:${by?'#ebfbee':'transparent'};color:${by?'#1f7a43':'var(--ink-soft)'};
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${by?('✓ '+esc(by)):'未登錄'}</span>`;
+  const frRows=units.map(function(u){
+    const cells=FRIDGE_SLOTS.map(sl=>cell(fridgeSlotBy(u,d,sl),`openFridge('${u.replace(/'/g,"\\'")}')`)).join('');
+    return `<div style="padding:8px 12px;border-top:1px solid var(--line)">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:5px">🌡 ${esc(u)}</div>
+      <div style="display:flex;gap:5px;margin-bottom:3px">${FRIDGE_SLOTS.map(sl=>
+        `<span style="flex:1;text-align:center;font-size:10.5px;font-weight:${sl===mySlot?'800':'400'};
+          color:${sl===mySlot?'var(--warn,#e8590c)':'var(--ink-soft)'}">${SLOT_LABEL[sl]}${sl===mySlot?' ◀本班':''}</span>`).join('')}</div>
+      <div style="display:flex;gap:5px">${cells}</div></div>`;
+  }).join('');
+  const o2Rows=depts.map(function(dp){
+    const qty=(Object.values(O2_SHEETS).find(o=>o.dept===dp)||{}).qty||'';
+    const cells=['D','E','N'].map(sh=>cell(o2ShiftBy(dp,d,sh),`openO2('${dp.replace(/'/g,"\\'")}',${qty||0})`)).join('');
+    return `<div style="padding:8px 12px;border-top:1px solid var(--line)">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:5px">🫧 ${esc(dp)}<span style="font-weight:400;color:var(--ink-soft)">　應有 ${esc(String(qty))} 支</span></div>
+      <div style="display:flex;gap:5px;margin-bottom:3px">${['D','E','N'].map(x=>
+        `<span style="flex:1;text-align:center;font-size:10.5px;font-weight:${x===sh?'800':'400'};
+          color:${x===sh?'var(--warn,#e8590c)':'var(--ink-soft)'}">${SHIFT_NAME[x]}${x===sh?' ◀本班':''}</span>`).join('')}</div>
+      <div style="display:flex;gap:5px">${cells}</div></div>`;
+  }).join('');
+  return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid ${color};overflow:hidden">
+    ${head}${frRows}${o2Rows}
+    <div style="padding:8px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-soft)">
+      ＊點任一格即可開表登錄。綠色＝已登錄並顯示登錄者，資料以後端為準（每 20 秒自動更新）。<br>
+      ＊上方百分比只看「本班」——當班範圍內有完成就算完成，還沒開始的班不列入。</div></div>`;
+}
+
 function renderTodoCard(){
   const t=todoList(), n=t.sheets.length+t.extra.length;
   const areas=myBindAreas();
