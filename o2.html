@@ -73,7 +73,7 @@
     </div>
   </div>
   <div class="form" id="form"></div>
-  <div class="hint wrap" style="padding:0 4px">＊點格子打勾（記錄簽名者，滑鼠移上去看是誰／何時）；備註列可輸入文字。資料存本機。<br>＊評值項目文字如與貴院最新版有出入，告訴我我立即校正成一模一樣。</div>
+  <div class="hint wrap" style="padding:0 4px">＊點格子打勾（記錄簽名者，滑鼠移上去看是誰／何時）；備註列可輸入文字。資料會上傳後端，每 25 秒自動同步，別台登錄的也會出現。<br>＊評值項目文字如與貴院最新版有出入，告訴我我立即校正成一模一樣。</div>
 </div>
 <div id="modalHost"></div>
 
@@ -86,7 +86,7 @@ const SHIFTS=["N","D","E"];
 const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
-const APP_VER='2026-09-10-b7';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-09-10-b8';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-10-v10';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
@@ -168,7 +168,6 @@ function retrySync(){
 
 const P=new URLSearchParams(location.search);
 let data=startData();
-syncFromServer();
 
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
@@ -209,7 +208,7 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('o2_lastName')||''; nm.onchange=()=>localStorage.setItem('o2_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('o2_lastName',n); } };
 }
-function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); syncFromServer(); }
+function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); SRV_AT=0; autoSync(true); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
@@ -224,26 +223,69 @@ function ymOf(v){
   return s;
 }
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
-/* 從後端載入本科別本月已勾選的紀錄，與本機合併 → 換裝置看到的都一樣。 */
+/* 從後端載入本科別本月已勾選的紀錄，與本機合併 → 換裝置看到的都一樣。
+   ★ 原本這裡有三個毛病，造成「後台有資料但沒顯示」：
+     ① 只有 n>0 才 render()，抓到 0 筆或抓失敗時畫面毫無反應，看起來像壞掉
+     ② 完全沒有狀態提示。Apps Script 一次來回要 1~3 秒，這段空白期
+        使用者只看到空表格，會以為沒同步（13:28 空白、13:29 才出現就是這個）
+     ③ 沒有任何自動更新，別台登錄的永遠不會自己出現
+   現在：進來就先顯示「正在讀取後端…」，抓完顯示筆數，之後每 25 秒自動更新。 */
+let serverCount=null, syncing=false;
+function srvBadge(){
+  let el=document.getElementById('srvBadge');
+  if(!el){ el=document.createElement('div'); el.id='srvBadge';
+    el.style.cssText='font-size:12.5px;padding:6px 12px;margin:8px 0;border-radius:8px;display:inline-block;font-weight:700';
+    const w=document.querySelector('.wrap'), sh=document.getElementById('sheet');
+    if(w&&sh)w.insertBefore(el,sh); else if(w)w.insertBefore(el,w.firstChild); }
+  const local=Object.keys(data.marks||{}).length;
+  if(syncing){ el.style.background='#fff4e6'; el.style.color='#b5680f';
+    el.textContent='⏳ 正在讀取後端…（本機 '+local+' 格）'; return; }
+  if(serverCount===-1){ el.style.background='#fbe8e8'; el.style.color='#c0392b';
+    el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 格）· 版本 '+APP_VER; return; }
+  el.style.background='#e6f6ed'; el.style.color='#1f7a43';
+  el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 格 · 本機 '+local
+    +' 格 · 本月 '+(data.ym||'')+' · 版本 '+APP_VER;
+}
 async function syncFromServer(){
   if(!API_URL)return;
+  syncing=true; srvBadge();
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check',{cache:'no-store'});
-    const a=await r.json(); if(!Array.isArray(a))return;
+    const a=await r.json();
+    if(!Array.isArray(a)){ serverCount=-1; syncing=false; srvBadge();
+      console.error('後端回傳不是陣列',a); return; }
     let n=0;
     a.forEach(function(o){
       const dept=String(o['科別']||o.dept||'');
       let ym=ymOf(o['年月']||o.ym||'');
       if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
-      if(dept!==String(data.dept)||ym!==ymOf(data.ym))return;
+      if(normU(dept)!==normU(data.dept)||ym!==ymOf(data.ym))return;
       const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||''), crit=String(o['項目']||o.crit||'');
       const si=SHIFTS.indexOf(sh); if(!day||si<0||!crit)return;
-      data.marks[ck(crit,day,si)]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };
+      const k=ck(crit,day,si);
       n++;
+      const local=data.marks[k];
+      if(local&&(local._sending||local._unsync))return;      // 還沒上傳完的不要被後端蓋掉
+      data.marks[k]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };
     });
-    if(n){ save(); render(); }
-  }catch(e){ console.error('同步後端氧氣紀錄失敗（先用本機資料）',e); }
+    serverCount=n; syncing=false;
+    save(); render(); srvBadge();
+  }catch(e){
+    console.error('同步後端氧氣紀錄失敗（先用本機資料）',e);
+    serverCount=-1; syncing=false; srvBadge();
+  }
 }
+/* ★ 自動同步：每 25 秒 ＋ 切回分頁／取得焦點時立刻同步。
+   別台剛登錄的會自己出現，不必手動重整。 */
+let SRV_AT=0;
+async function autoSync(force){
+  if(!API_URL)return;
+  if(!force&&Date.now()-SRV_AT<20000)return;
+  SRV_AT=Date.now();
+  await syncFromServer();
+}
+// 科別／單位名稱正規化，全形括號與空白差異不影響比對
+function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
 
 var wkIdx=null;
 function monthChunks(){ const days=daysInMonth(data.ym); const a=[]; for(let s=1;s<=days;s+=7){const c=[];for(let d=s;d<=Math.min(s+6,days);d++)c.push(d);a.push(c);} return a; }
@@ -356,7 +398,10 @@ function boot(){
   initControls();
   render();
   syncBanner();
-  verBadge();
+  syncFromServer();                                  // ★ 一進來就抓，並顯示「正在讀取後端…」
+  setInterval(function(){ if(!document.hidden) autoSync(); },25000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
+  window.addEventListener('focus',function(){ autoSync(); });
 }
 // 前端版本印記：上傳後看不到這串就代表瀏覽器還在用舊檔
 function verBadge(){

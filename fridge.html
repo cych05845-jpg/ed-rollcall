@@ -88,7 +88,7 @@ const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-10-b7';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-09-10-b8';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-10-v10';
 
 const P=new URLSearchParams(location.search);
@@ -177,12 +177,14 @@ function rkey(day,si){ return day+'_'+SHIFTS[si]; }
 function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
 /* 從後端載入本單位本月已登錄的溫度，與本機資料合併 → 換手機/電腦看到的都一樣。
    後端有的以後端為準；本機獨有的（剛離線輸入還沒送出）保留。 */
+let syncing=false;
 async function syncFromServer(){
   if(!API_URL)return;
+  syncing=true; srvBadge();          // ★ 先告訴使用者「正在讀取」，別讓那 1~3 秒看起來像壞掉
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp',{cache:'no-store'});
     const a=await r.json();
-    if(!Array.isArray(a)){ serverCount=-1; srvBadge(); console.error('後端回傳不是陣列',a); return; }
+    if(!Array.isArray(a)){ serverCount=-1; syncing=false; srvBadge(); console.error('後端回傳不是陣列',a); return; }
     let n=0;
     a.forEach(function(o){
       const unit=String(o['單位']||o.unit||'');
@@ -206,8 +208,9 @@ async function syncFromServer(){
         sign:String(o['簽名']||o.sign||'')
       };
     });
-    serverCount=n; save(); render(); srvBadge();
-  }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e); serverCount=-1; srvBadge(); }
+    serverCount=n; syncing=false; save(); render(); srvBadge();
+  }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e);
+    serverCount=-1; syncing=false; srvBadge(); }
 }
 // 後端筆數徽章：一眼看出「Sheet 裡到底有幾筆」，不用再猜
 let serverCount=null;
@@ -218,6 +221,8 @@ function srvBadge(){
     const w=document.querySelector('.wrap'), sh=document.getElementById('sheet');
     if(w&&sh)w.insertBefore(el,sh); }
   const local=Object.keys(data.readings||{}).length;
+  if(syncing){ el.style.cssText+=';background:#fff4e6;color:#b5680f;font-weight:700';
+    el.textContent='⏳ 正在讀取後端…（本機 '+local+' 筆）'; return; }
   if(serverCount===-1){ el.style.cssText+=';background:#fbe8e8;color:#c0392b;font-weight:700';
     el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）· 版本 '+APP_VER; return; }
   el.style.cssText+=';background:#e6f6ed;color:#1f7a43;font-weight:700';
@@ -601,6 +606,7 @@ function boot(){
   initControls();
   render();
   syncBanner();
+  srvBadge();                        // 先把徽章放上去，才看得到「正在讀取後端…」
   syncFromServer();
   setInterval(function(){ if(!document.hidden) autoSync(); },25000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
