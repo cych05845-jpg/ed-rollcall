@@ -2787,9 +2787,19 @@ function shiftDoneOf(sheetId, half){
            done:num('done','完成項數'), total:num('total','總項數'),
            isDone:fin.length>0, times:hits.length };
 }
+/* ★ 只取 HH:MM 顯示。要注意兩種來源：
+   ① 後端寫的台北字串「2026-09-10 10:33」→ 直接取 10:33
+   ② 前端存的 ISO UTC「2026-09-10T02:33:00.000Z」→ 直接取會變成 02:33（少 8 小時），
+      必須先轉成本地時間再取。 */
 function shortTime(s){
-  const m=String(s||'').match(/(\d{1,2}):(\d{2})/);
-  return m?(m[1].padStart(2,'0')+':'+m[2]):String(s||'');
+  const t=String(s||'').trim();
+  if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)&&/(Z|[+-]\d{2}:?\d{2})$/.test(t)){
+    const d=new Date(t);
+    if(!isNaN(d.getTime()))
+      return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  }
+  const m=t.match(/(\d{1,2}):(\d{2})/);
+  return m?(m[1].padStart(2,'0')+':'+m[2]):t;
 }
 /* 進入點班表清單時重抓一次。★ 只抓最近 3 天，並在按鈕上顯示「更新中…」與實際耗時，
    這樣你能直接看到同步要幾秒，也不會以為畫面卡住。 */
