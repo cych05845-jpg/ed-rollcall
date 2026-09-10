@@ -424,7 +424,7 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const APP_VER='2026-09-10-b11';
+const APP_VER='2026-09-10-b12';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -481,7 +481,12 @@ function isWitnessRank(u){ if(!u)return false;
 function can(cap,u){ u=u||state.user; if(!u)return false;
   switch(cap){
     case 'owed.add':      return true;                          // 全員可登記
-    case 'owed.close':    return isBoss(u)||isCaishi(u);        // 結案（仍須見證）
+    /* ★ 有見證資格的人也可以主動蓋回結案（護理長指示）。
+       原本只給主管與財管組，但實務上人員歸還時第一個找到的就是當班 leader，
+       他不能結案的話事情就卡住。
+       配套：見證人不可以是自己（見 owedWitnessLookup）——
+       同一人既結案又見證的話，見證欄就沒有意義了。 */
+    case 'owed.close':    return isBoss(u)||isCaishi(u)||isWitnessRank(u);
     case 'owed.editAny':  return isBoss(u)||isCaishiLead(u);    // 改別人的欠物
     case 'owed.monthly':  return isBoss(u)||isCaishi(u);        // 每月清點統計
     case 'items.edit':    return isBoss(u)||isCaishiLead(u);    // 管理點班項目
@@ -1806,14 +1811,14 @@ function owedCloseUI(id){
       </div>
       <label class="owe-f">處理方式
         <select id="oc_way"><option>歸還</option><option>報失賠償</option><option>報廢</option></select></label>
-      <label class="owe-f">見證人員編（當班 leader 刷卡）
-        <input id="oc_wid" inputmode="numeric" placeholder="請當班 leader 刷/輸入員編"
+      <label class="owe-f">見證人員編（另一位小組長以上人員刷卡）
+        <input id="oc_wid" inputmode="numeric" placeholder="請另一位小組長以上人員刷/輸入員編"
                oninput="owedWitnessLookup()"></label>
       <div id="oc_wname" style="font-size:13px;font-weight:700;margin:-4px 2px 10px;color:var(--ink-soft)">尚未見證</div>
       <label class="owe-f">備註<input id="oc_note" placeholder="選填"></label>
       <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitOwedClose('${o.id}')">確認結案</button>
       <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;text-align:center">
-        ＊須由當班 leader（小組長以上）刷員編見證，見證人與時間會一併記錄。</div>
+        ＊須由<b>另一位</b>小組長以上人員刷員編見證（不能是自己），見證人與時間會一併記錄。</div>
     </div></div>`;
   document.body.appendChild(w);
 }
@@ -1827,10 +1832,14 @@ function owedWitnessLookup(){
   if(!a){_owedWitness=null;el.textContent=v?'查無此員編':'尚未見證';el.style.color='var(--ink-soft)';return;}
   if(!isWitnessRank(a)){_owedWitness=null;
     el.textContent=`${a.name}（${a.title}）— 非小組長以上，不可見證`;el.style.color='var(--bad,#E03131)';return;}
+  // ★ 見證人不可以是操作結案的本人，否則見證欄等於沒有意義
+  if(idKey(a.id)===idKey(state.user&&state.user.id)){_owedWitness=null;
+    el.textContent=`${a.name} — 見證人不可以是自己，請由另一位小組長以上人員刷員編`;
+    el.style.color='var(--bad,#E03131)';return;}
   _owedWitness=a;el.textContent=`✓ 見證人：${a.name}（${a.title}）`;el.style.color='var(--ok,#0f7a86)';
 }
 async function submitOwedClose(id){
-  if(!_owedWitness){alert('請先請當班 leader（小組長以上）刷員編見證');return;}
+  if(!_owedWitness){alert('請先請另一位小組長以上人員刷員編見證（不能是自己）');return;}
   const way=document.getElementById('oc_way').value;
   const note=document.getElementById('oc_note').value.trim();
   const at=new Date().toISOString();
@@ -1969,10 +1978,13 @@ function renderOwed(){
     <button class="btn btn-primary btn-block" style="margin-bottom:12px" onclick="openOwedAdd()">＋ 登記欠物</button>
     ${monthBtn}
     ${secs||'<div class="card" style="text-align:center;color:var(--ink-soft);padding:20px">目前無未結欠物 🎉</div>'}
-    ${can?'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊結案時須由當班 leader（小組長以上）刷員編見證</div>'
+    ${can?'<div style="text-align:center;color:var(--ink-soft);font-size:12px;margin-top:6px">＊結案時須由另一位小組長以上人員刷員編見證（不能是自己）</div>'
          :`<div style="color:var(--ink-soft);font-size:12px;margin-top:8px;line-height:1.9">
             ＊你可登記與修改自己的欠物。歸還時請找下列任一位蓋回結案，再由當班 leader（小組長以上）刷員編見證：<br>
-            <b style="color:var(--ink)">${esc(owedClosers().map(c=>c.name+'（'+c.role+'）').join('、'))||'（尚未指派財管組負責人，請洽護理長）'}</b></div>`}
+            <b style="color:var(--ink)">${(function(){const cs=owedClosers();
+              if(!cs.length)return '（尚未指派，請洽護理長）';
+              const head=cs.slice(0,5).map(c=>esc(c.name)+'（'+esc(c.role)+'）').join('、');
+              return head+(cs.length>5?(' 等 '+cs.length+' 位'):'');})()}</b></div>`}
   </div>`;
 }
 function can2(c){ return can(c); }
@@ -2465,7 +2477,7 @@ function owedDutyCard(){
   const over30=list.filter(function(o){
     const t=Date.parse(o.date); return !isNaN(t)&&Math.floor((Date.now()-t)/86400000)>30;
   }).length;
-  const myRole=canClose?'可蓋回結案':'可當見證人';
+  const myRole=canClose?'可蓋回結案':'可查閱';
   /* ★ 只做「一列入口」，不把欠物明細攤在首頁。
      明細與蓋回結案都在欠物本裡（架構本來就一樣），首頁再列一次只是重複、又把頁面拉很長。
      首頁該回答的只有一句：有幾筆待處理、要不要現在進去。 */
@@ -2477,8 +2489,8 @@ function owedDutyCard(){
       <span style="font-size:12.5px;font-weight:800;color:#1f7a43;white-space:nowrap">✓ 已全部結清</span></div>`;
   }
   const hint=canClose
-    ? '進欠物本蓋回結案，需當班 leader 刷員編見證'
-    : '你可當見證人：由能結案的人蓋回，再由你刷員編見證';
+    ? '進欠物本蓋回結案，需另一位小組長以上人員刷員編見證'
+    : '歸還結案請洽可覆核的人員';
   return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--brand);overflow:hidden;cursor:pointer"
       onclick="state.screen='owed';render()" role="button" tabindex="0">
     <div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
@@ -2659,7 +2671,8 @@ function renderPermAdmin(){
       <div style="font-size:13px;line-height:1.9">
         <b>財管組長</b>：管點班項目、欠物結案、月結統計<br>
         <b>財管負責人</b>：欠物結案、月結統計（每月清點）<br>
-        <b>見證</b>：可當歸還見證人（小組長以上預設就有，這裡可額外授予）
+        <b>見證</b>：可蓋回結案，也可當歸還見證人（小組長以上預設就有，這裡可額外授予）<br>
+        <span style="color:var(--ink-soft);font-size:12px">＊結案時的見證人必須是另一個人，不能刷自己的員編</span>
       </div>
       <div id="pm_sum" style="margin-top:10px;font-size:12.5px;color:var(--ink-soft)">${permSummaryHtml()}</div>
     </div>
