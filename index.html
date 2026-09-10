@@ -89,6 +89,9 @@
   .cat-ic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
   .cat-cnt{font-size:13px;font-weight:700;color:var(--ink-soft);margin-left:auto}
   .cat-tools{display:flex;gap:9px;flex-wrap:wrap;margin:0 0 12px}
+  .sheet-row.srv-done{background:#ebfbee}
+  .done-by{font-size:12px;font-weight:700;color:#1f7a43;margin-top:3px;line-height:1.5}
+  .done-by.part{color:#b5680f}
   .tool-pill{font-size:13.5px;font-weight:700;padding:9px 15px;border-radius:10px;border:1.5px solid var(--brand);
     background:var(--brand-soft);color:var(--brand);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .tool-pill:active{opacity:.7}
@@ -665,7 +668,7 @@ window.addEventListener('message',function(e){
 });
 function goTarget(t){
   if(!t) return;
-  if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();return;}
+  if(t.type==='area'){state.areaId=t.areaId;state.screen='pick';render();refreshDoneStatus();return;}
   if(t.type==='sheet'){
     const s=sheetById(t.sheetId); if(!s.id){state.screen='areas';render();return;}
     state.areaId=s.area; state.sheetId=s.id; state.half=null;
@@ -1256,7 +1259,7 @@ function renderAreas(){
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen wide"><div class="area-tiles">${tiles}</div></div>`;
 }
-function openArea(id){state.areaId=id;state.screen='pick';render()}
+function openArea(id){state.areaId=id;state.screen='pick';render();refreshDoneStatus();}
 
 function renderPick(){
   const area=areaById(state.areaId);
@@ -1264,19 +1267,40 @@ function renderPick(){
   const rows=sheets.map(s=>{
     const [stc,stt]=sheetStatus(s.id);const n=itemsOf(s.id,null).length;
     const twop=String(s.ops)==='2'?'<span class="badge badge-2p">2人</span>':'';
-    return `<div class="sheet-row" style="border-left-color:${area.color}" onclick="openSheet('${s.id}')">
-      <div style="min-width:0"><div class="sheet-name">${esc(s.name)}${twop}</div><div class="sheet-meta">${n} 項</div></div>
+    // ★ 跨裝置狀態：本班是否已有人點過（來自後端，別台點的也看得到）
+    const sd=shiftDoneOf(s.id,null);
+    const srv=sd?(sd.isDone
+        ? `<div class="done-by">✓ 本班已由 <b>${esc(sd.by||'—')}</b> 完成${sd.at?(' · '+shortTime(sd.at)):''}${sd.times>1?(' · 已點 '+sd.times+' 次'):''}</div>`
+        : `<div class="done-by part">◍ 本班 <b>${esc(sd.by||'—')}</b> 點到 ${sd.done}/${sd.total}${sd.at?(' · '+shortTime(sd.at)):''}</div>`)
+      :'';
+    return `<div class="sheet-row ${sd&&sd.isDone?'srv-done':''}" style="border-left-color:${area.color}" onclick="openSheet('${s.id}')">
+      <div style="min-width:0"><div class="sheet-name">${esc(s.name)}${twop}</div>
+        <div class="sheet-meta">${n} 項</div>${srv}</div>
       <span class="st-tag ${stc}">${stt}</span></div>`;
   }).join('');
+  const doneN=sheets.filter(s=>{const d=shiftDoneOf(s.id,null);return d&&d.isDone;}).length;
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,${area.color},${area.color}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">${esc(area.name)}</div>
-      <div class="sub">${sheets.length} 張點班表</div></div>
+      <div class="sub">${sheets.length} 張點班表 · 本班已完成 ${doneN}/${sheets.length}</div></div>
     <button class="back" onclick="state.screen='areas';render()">返回</button></div></div>
-  <div class="screen wide lvl2"><div class="sheet-list">${rows}</div></div>`;
+  <div class="screen wide lvl2">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--ink-soft)">綠底＝本班已有人點完（跨裝置同步）</div>
+      <button class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="refreshDoneStatus()">↻ 更新狀態</button>
+    </div>
+    <div class="sheet-list">${rows}</div></div>`;
 }
 function openSheet(id){
-  state.sheetId=id;const s=sheetById(id);
+  const s=sheetById(id);
+  // ★ 已有人點完就先確認，避免重複點班
+  const sd=shiftDoneOf(id,null);
+  if(sd&&sd.isDone){
+    const ok=confirm('「'+s.name+'」本班已由 '+(sd.by||'他人')+
+      (sd.at?('（'+shortTime(sd.at)+'）'):'')+' 點完。\n\n確定還要再點一次嗎？\n（若只是要查看，按取消即可）');
+    if(!ok)return;
+  }
+  state.sheetId=id;
   if(String(s.ops)==='2'){state.screen='half';render()}
   else{state.half=null;state.screen='rollcall';render()}
 }
@@ -1285,7 +1309,7 @@ function renderHalf(){
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">${esc(s.name)} · 2 人分工</div><div class="sub">請選擇你負責的部分</div></div>
-    <button class="back" onclick="state.screen='pick';render()">返回</button></div></div>
+    <button class="back" onclick="state.screen='pick';render();refreshDoneStatus()">返回</button></div></div>
   <div class="screen narrow">
     <div class="section-h">這張表由兩人分工點檢（一人一頁）</div>
     <div style="display:grid;gap:12px">
@@ -1321,6 +1345,15 @@ function renderRollcall(){
         <div><div>此點班表已完成</div><div class="sb-sub">${list.length} 項全部完成，可提交簽核</div></div></div>`
     : `<div class="status-banner todo"><div class="sb-ic">!</div>
         <div><div>尚未完成（還有 ${remain} 項）</div><div class="sb-sub">已點 ${done} / ${list.length}</div></div></div>`;
+  // ★ 本班別人已經點過就明確提示，避免重複作業
+  const _sd=shiftDoneOf(state.sheetId,state.half);
+  const srvBanner=_sd?`<div class="card" style="padding:11px 14px;margin-bottom:12px;border-left:4px solid ${_sd.isDone?'var(--ok,#2f9e44)':'var(--warn,#e8590c)'};background:${_sd.isDone?'#ebfbee':'#fff8f0'}">
+      <div style="font-weight:800;font-size:13.5px;color:${_sd.isDone?'#1f7a43':'#b5680f'}">
+        ${_sd.isDone?'✓ 本班已由 '+esc(_sd.by||'他人')+' 點完':'◍ 本班 '+esc(_sd.by||'他人')+' 已點到 '+_sd.done+'/'+_sd.total}
+        ${_sd.at?('　'+shortTime(_sd.at)):''}${_sd.times>1?('　已點 '+_sd.times+' 次'):''}</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">
+        ${_sd.isDone?'如非必要不需重複點班；要複點請繼續操作。':'可接續完成剩下的項目。'}</div>
+    </div>`:'';
 
   // 依類別分組（器械/儀器/耗材/藥品/其他）
   let blocks='';
@@ -1378,6 +1411,7 @@ function renderRollcall(){
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
   <div class="screen wide lvl2">
     ${banner}
+    ${srvBanner}
     ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
       <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(state.shift)}）點班結果</div>
@@ -2301,6 +2335,37 @@ function isDoneRec_(r){
 }
 // 統一取 sheetId（欄名可能是中文）
 function sheetIdOf(r){ return String((r&&(r.sheetId||r['sheetId']))||'').trim(); }
+
+/* ★★ 跨裝置「本班是否已有人點過」——這是人員端最重要的資訊。
+   原本清單的進度只看本機 state.checks，所以 A 在別台點完，B 這台完全看不到，
+   結果同一區被重複點好幾次。這裡改成從後端 rollcall_log 判斷。 */
+function shiftDoneOf(sheetId, half){
+  const d=curRcDate(), sh=String(state.shift||detectShift());
+  const hits=(SIGNLOG||[]).filter(function(r){
+    if(sheetIdOf(r)!==String(sheetId))return false;
+    if(dateOfLog(r)!==d)return false;
+    if(String(r.shift||r['班別']||'')!==sh)return false;
+    if(half){ const a=String(r.assign||r['分工']||''); if(a&&a!==String(half))return false; }
+    return true;
+  });
+  if(!hits.length)return null;
+  const fin=hits.filter(isDoneRec_);
+  const pick=(fin.length?fin:hits)[ (fin.length?fin:hits).length-1 ];
+  const num=(a,b)=>{const v=Number(pick[a]!==undefined?pick[a]:pick[b]);return isNaN(v)?0:v;};
+  return { by:String(pick.name||pick['姓名']||''),
+           at:String(pick.submittedAt||pick['簽核時間']||''),
+           done:num('done','完成項數'), total:num('total','總項數'),
+           isDone:fin.length>0, times:hits.length };
+}
+function shortTime(s){
+  const m=String(s||'').match(/(\d{1,2}):(\d{2})/);
+  return m?(m[1].padStart(2,'0')+':'+m[2]):String(s||'');
+}
+// 進入點班表清單時重抓一次，確保看到的是最新狀態
+async function refreshDoneStatus(){
+  await loadSignLog();
+  if(state.screen==='pick'||state.screen==='rollcall'||state.screen==='half')render();
+}
 async function loadSignLog(){
   if(!API_URL)return;
   try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_log',{cache:'no-store'});
@@ -2590,7 +2655,7 @@ function renderDone(){
     <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
       ${esc(state.user.name)}（${esc(state.user.title)}）· ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} 簽核</p>
     ${timingHtml}
-    <button class="btn btn-primary btn-block" onclick="state.screen='pick';render()">回點班表清單</button>
+    <button class="btn btn-primary btn-block" onclick="state.screen='pick';render();refreshDoneStatus()">回點班表清單</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
   </div></div>`;
 }
