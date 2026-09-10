@@ -424,7 +424,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const APP_VER='2026-09-10-b12';
+const EXPECT_API_VER='2026-09-10-v11';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-10-b13';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -433,17 +434,30 @@ const WITNESS_TITLES  = ["小組長","護理長","副護理長"];   // 預設可
 /* ★ 權限由護理長／副護理長在 App 內「👥 權限設定」指派，存後端 staff_perm 表，跨裝置一致。
    PERMS[員編] = {lead:財管組長, caishi:財管組負責人, witness:見證資格}
    有設定過的以設定為準；沒設定過的沿用上面的預設與職稱判斷。 */
-let PERMS={};
+let PERMS={}, PERMS_AT=0, PERMS_N=0;
 async function loadPerms(pre){
   if(!API_URL&&!pre)return;
   try{
     const a=pre||await getJSON('table=staff_perm'); if(!Array.isArray(a))return;
-    const m={}; const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='Y'||v==='1'||v==='是';};
+    /* ★ 手動在 Google Sheet 裡直接填也要能用，所以：
+       ① 勾選值認得多種寫法：TRUE／是／Y／1／✓／V／O／有
+       ② 欄位名認得同義詞（護理長習慣叫「覆核者」「監督者」「管理者」），
+          自己在後台加欄位、名稱不完全一樣也讀得到 */
+    const m={};
+    const yes=function(v){
+      v=String(v==null?'':v).trim().toUpperCase();
+      return ['TRUE','是','Y','YES','1','✓','V','O','有','ＴＲＵＥ'].indexOf(v)>=0;
+    };
     a.forEach(function(o){
-      const id=fld(o,['員編','id']); if(!id)return;
-      m[id]={lead:yes(fld(o,['財管組長','lead'])), caishi:yes(fld(o,['財管負責人','caishi'])), witness:yes(fld(o,['見證資格','witness']))};
+      const id=fld(o,['員編','工號','id']); if(!id)return;
+      m[id]={
+        lead:   yes(fld(o,['財管組長','組長','財管小組長','lead'])),
+        caishi: yes(fld(o,['財管負責人','負責人','管理者','欠物本管理者','財管','caishi'])),
+        witness:yes(fld(o,['見證資格','見證','覆核者','可覆核','監督者','witness']))
+      };
     });
     PERMS=m;
+    PERMS_AT=Date.now(); PERMS_N=a.length;
   }catch(e){console.error('讀權限設定失敗，改用預設',e);}
 }
 /* ★ 員編比對容錯：Google Sheets 會把「05845」當成數字存成 5845，前導零被吃掉，
@@ -2675,6 +2689,13 @@ function renderPermAdmin(){
         <span style="color:var(--ink-soft);font-size:12px">＊結案時的見證人必須是另一個人，不能刷自己的員編</span>
       </div>
       <div id="pm_sum" style="margin-top:10px;font-size:12.5px;color:var(--ink-soft)">${permSummaryHtml()}</div>
+      <div id="pm_srv" style="margin-top:10px">${permSrvHtml()}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn btn-ghost" style="flex:1;min-width:150px;margin:0;font-size:12.5px"
+          onclick="permCheckBackend()">🔍 檢查後端狀態</button>
+        <button class="btn btn-ghost" style="flex:1;min-width:150px;margin:0;font-size:12.5px"
+          onclick="permSeed()">📋 建立後台名冊</button>
+      </div>
     </div>
     <label class="owe-f">搜尋姓名／員編／職稱
       <input id="pm_q" value="${esc(q)}" placeholder="例：蔡 或 12346" autocomplete="off"
@@ -2684,6 +2705,55 @@ function renderPermAdmin(){
       ＊護理長／副護理長本身就是全權，不需要也不能在此調整。最多顯示 80 筆，請用搜尋縮小範圍。</div>
   </div>`;
 }
+/* ★ 後端狀態列：「設定完更新就不見」最常見的原因是 GS 還在舊版
+   —— 舊版表頭偵測在 staff_perm 超過 3 筆後會把資料列當表頭，整張表讀成亂的。
+   把版本與讀回筆數直接顯示出來，就不必再猜。 */
+let PERM_DIAG=null;
+function permSrvHtml(){
+  const n=Object.keys(PERMS||{}).length;
+  if(PERM_DIAG&&PERM_DIAG.bad){
+    return `<div style="background:#fbe8e8;color:#c0392b;border-radius:8px;padding:8px 11px;font-size:12px;font-weight:700;line-height:1.8">
+      ⚠ 後端版本是 ${esc(PERM_DIAG.ver||'(讀不到)')}，不是 ${esc(EXPECT_API_VER)}<br>
+      <span style="font-weight:400">這會讓權限「設定完更新就不見」。請到 Apps Script：
+      部署 → 管理部署 → 鉛筆 → 版本：<b>新版本</b> → 部署。</span></div>`;
+  }
+  if(PERM_DIAG){
+    return `<div style="background:#e6f6ed;color:#1f7a43;border-radius:8px;padding:8px 11px;font-size:12px;font-weight:700">
+      ☁ 後端 ${esc(PERM_DIAG.ver)} ✓　staff_perm 讀回 ${PERMS_N} 列，其中 ${n} 位有設定</div>`;
+  }
+  return `<div style="font-size:12px;color:var(--ink-soft)">staff_perm 讀回 ${PERMS_N} 列，其中 ${n} 位有設定。
+    若設定會消失，請按「🔍 檢查後端狀態」。</div>`;
+}
+async function permCheckBackend(){
+  PERM_DIAG={ver:'檢查中…',bad:false};
+  const box=document.getElementById('pm_srv'); if(box)box.innerHTML=permSrvHtml();
+  try{
+    const j=await getJSON('diag=1');
+    const ver=(j&&j.version)||'';
+    PERM_DIAG={ver:ver,bad:(ver!==EXPECT_API_VER)};
+  }catch(e){ PERM_DIAG={ver:'連不到後端',bad:true}; }
+  await loadPerms();
+  permRefreshRows(state.permQ||'');
+  const box2=document.getElementById('pm_srv'); if(box2)box2.innerHTML=permSrvHtml();
+}
+/* 把全部人員寫進後端 staff_perm（值留空＝沒有權限），
+   之後你可以完全不透過 App、直接在 Google Sheet 上打 TRUE 設定。 */
+async function permSeed(){
+  if(!can('perm.manage')){alert('僅限護理長／副護理長');return;}
+  if(!confirm('要把全部 '+ACCOUNTS.filter(a=>a.active!==false).length+' 位人員寫入後端 staff_perm 名冊嗎？\n\n'
+    +'已存在的人不會被改動，只補上缺少的空白列。\n'
+    +'完成後你可以直接在 Google Sheet 的 staff_perm 分頁打 TRUE 設定權限。'))return;
+  const names=ACCOUNTS.filter(a=>a.active!==false).map(a=>({id:a.id,name:a.name}));
+  const r=await itemsWrite('perm_seed',{names:names});
+  if(r&&r.ok){
+    alert('完成：'+(r.message||'名冊已建立')+'\n\n接下來可以直接在 Google Sheet 的 staff_perm 分頁設定。');
+    await loadPerms(); permRefreshRows(state.permQ||'');
+    const box=document.getElementById('pm_srv'); if(box)box.innerHTML=permSrvHtml();
+  }else{
+    alert('建立名冊失敗。\n通常是 GS 還沒更新到 '+EXPECT_API_VER+'（缺少 perm_seed）。\n請貼上新的 GS 並「重新部署為新版本」。');
+  }
+}
+
 async function togglePerm(id,field){
   const a=ACCOUNTS.find(x=>x.id===id); if(!a)return;
   const cur=effPerm(a);
