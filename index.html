@@ -588,7 +588,7 @@ async function fetchMonth(base,monthKey){
 // 用「姓名」比對(兩系統員編/pid不同),讀今天的科別。只綁已公告(published)的班表。
 async function bindSchedule(forDate){
   const u=state.user; if(!u) return {status:'nomatch'};
-  const now=forDate||new Date();
+  const now=forDate||tpeDate();          // ★ 沒指定日期就用台北的今天，不看裝置時區
   const monthKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const dayNum=now.getDate(), dayStr=String(dayNum);
   const isAide=/助理員/.test(u.title||'');
@@ -617,7 +617,7 @@ const O2_SHEETS={'treat23':{dept:'治療二、三',qty:10},'peds-area':{dept:'�
 function curYM(){
   const s=(curRcDate()||'').slice(0,7);
   if(/^\d{4}-\d{2}$/.test(s))return s;
-  const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const t=tpeParts();return t.y+'-'+String(t.m).padStart(2,'0');
 }
 function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'🌡 藥品冰箱溫度 · '+unit);}
 function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
@@ -645,15 +645,35 @@ function rcYMD(){
   const s=(typeof curRcDate==='function'&&curRcDate())||new Date().toISOString().slice(0,10);
   return { ym:String(s).slice(0,7), day:String(+String(s).slice(8,10)) };
 }
+/* ★「以最新資料為基準」：同一天同一區可能被登錄好幾次（不同班別、或改過），
+   原本只是從陣列尾巴往前找第一筆符合的，靠的是列的順序 ——
+   一旦後端補寫、重跑修表把列搬動過，順序就不可靠了。
+   現在改成比對「寫入時間」取最新的那一筆；沒有寫入時間才退回用列序。 */
+function stampOf(r){
+  const v=String(r['寫入時間']||r.at||r['更新時間']||'').trim();
+  if(!v)return -1;
+  const d=new Date(v.replace(' ','T'));
+  return isNaN(d.getTime())?-1:d.getTime();
+}
+function latestOf(list,match){
+  let best=null,bestKey=-Infinity;
+  (list||[]).forEach(function(r,i){
+    if(!match(r||{}))return;
+    const k=stampOf(r||{});
+    const key=(k>=0?k:0)+i*1e-6;        // 有時間用時間；沒有時間就用列序當次要依據
+    if(key>=bestKey){bestKey=key;best=r;}
+  });
+  return best;
+}
 function fridgeDoneToday(unit){
   const t=rcYMD();
   try{
-    for(let i=(FRIDGELOG||[]).length-1;i>=0;i--){ const r=FRIDGELOG[i]||{};
-      if(normUnit(r['單位']||r.unit||'')===normUnit(unit)
-      && ymOf(r['年月']||r.ym||'')===t.ym
-      && String(+(r['日']||r.day||0))===t.day)
-        return String(r['簽名']||r.sign||'已登錄');
-    }
+    const r=latestOf(FRIDGELOG,function(x){
+      return normUnit(x['單位']||x.unit||'')===normUnit(unit)
+          && ymOf(x['年月']||x.ym||'')===t.ym
+          && String(+(x['日']||x.day||0))===t.day;
+    });
+    if(r)return String(r['簽名']||r.sign||'已登錄');
   }catch(e){}
   try{ const s=localStorage.getItem('fridge_'+unit+'_'+t.ym); if(!s)return '';
     const d=JSON.parse(s);
@@ -664,12 +684,12 @@ function fridgeDoneToday(unit){
 function o2DoneToday(dept){
   const t=rcYMD();
   try{
-    for(let i=(O2LOG||[]).length-1;i>=0;i--){ const r=O2LOG[i]||{};
-      if(normUnit(r['科別']||r.dept||'')===normUnit(dept)
-      && ymOf(r['年月']||r.ym||'')===t.ym
-      && String(+(r['日']||r.day||0))===t.day)
-        return String(r['簽名']||r.by||'已登錄');
-    }
+    const r=latestOf(O2LOG,function(x){
+      return normUnit(x['科別']||x.dept||'')===normUnit(dept)
+          && ymOf(x['年月']||x.ym||'')===t.ym
+          && String(+(x['日']||x.day||0))===t.day;
+    });
+    if(r)return String(r['簽名']||r.by||'已登錄');
   }catch(e){}
   try{ const s=localStorage.getItem('o2_'+dept+'_'+t.ym); if(!s)return '';
     const d=JSON.parse(s);
@@ -683,15 +703,19 @@ function renderEmbed(){
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div class="title" style="font-size:15px">${esc(state.embedTitle||'附加查核')}</div>
-    <button class="back" onclick="state.screen=(state.embedBack||'home');render()">← 返回點班</button></div></div>
+    <button class="back" onclick="leaveEmbed()">← 返回點班</button></div></div>
   <iframe src="${esc(state.embedUrl||'')}" style="width:100%;height:calc(100vh - 58px);border:none;display:block;background:#eef2f4"></iframe>`;
 }
+/* 離開冰箱／氧氣表就立刻重抓，完成狀態才會馬上變成 ✓（且跨裝置一致）。
+   ★ 兩條路徑都要接：表裡自己的返回鈕會 postMessage，外框的「← 返回點班」則直接呼叫。 */
+function leaveEmbed(){
+  state.screen=(state.embedBack||'home');
+  render();
+  SYNC_AT=0;            // 強制重抓，不受 15 秒節流影響
+  syncAll();
+}
 window.addEventListener('message',function(e){
-  if(e&&e.data&&e.data.cmd==='embedBack'){
-    state.screen=(state.embedBack||'home'); render();
-    // 從冰箱/氧氣表返回後，重新抓後端紀錄，完成狀態才會即時更新（且跨裝置一致）
-    Promise.all([loadFridgeLog(),loadO2Log()]).then(function(){ render(); }).catch(function(){});
-  }
+  if(e&&e.data&&e.data.cmd==='embedBack') leaveEmbed();
 });
 function goTarget(t){
   if(!t) return;
@@ -706,13 +730,13 @@ function goTarget(t){
 // ---------- 補點日期(可選範圍) + 點班耗時 ----------
 function fmtISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function parseISO(s){const p=String(s||'').split('-');return new Date(+p[0],(+p[1]||1)-1,(+p[2]||1));}
-function curRcDate(){return state.rcDate||fmtISO(new Date());}
+function curRcDate(){return state.rcDate||todayISO();}
 function curRcDateObj(){return parseISO(curRcDate());}
 function isLeaderUser(){const u=state.user;return !!(u&&(u.role==='護理長'||u.role==='副護理長'));}
 const NIGHT_OPEN_MIN=23*60+30;        // 23:30 起可補「明天」大夜(0-8),上班前完成
-function maxRcDate(){const n=new Date();const d=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+function maxRcDate(){const d=tpeDate();
   if(n.getHours()*60+n.getMinutes()>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);return d;}
-function minRcDate(){const n=new Date();
+function minRcDate(){const n=tpeDate();
   if(isLeaderUser())return new Date(n.getFullYear(),n.getMonth()-1,1);  // 護理長/副護理長:上月1號起(更寬,可跨月)
   const b=new Date(n.getFullYear(),n.getMonth(),n.getDate());b.setDate(b.getDate()-14);
   return b;}                                                            // 一般人員:往回14天(可跨月,不受月份限制)
@@ -736,7 +760,7 @@ function timingKey(){return curRcDate()+'|'+(state.sheetId||'')+'|'+(state.half|
 function fmtClock(ms){const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
 function fmtDur(sec){sec=Math.max(0,sec|0);if(sec<60)return sec+' 秒';const m=Math.floor(sec/60),s=sec%60;return s?`${m} 分 ${s} 秒`:`${m} 分`;}
 function rcDatePicker(){
-  const cur=curRcDate(), mn=fmtISO(minRcDate()), mx=fmtISO(maxRcDate()), today=fmtISO(new Date());
+  const cur=curRcDate(), mn=fmtISO(minRcDate()), mx=fmtISO(maxRcDate()), today=todayISO();
   const tag=cur===today?'今天':(cur>today?'明日 · 大夜補點':'補點');
   const hint=isLeaderUser()?'護理長可補上月 1 號起任一天':'可補今天與往回 14 天（可跨月）；更早需護理長/副護理長開啟';
   return `<div class="card" style="padding:14px">
@@ -752,7 +776,7 @@ function rcDatePicker(){
 // 首頁「今日班表」卡片
 function todayBindCard(){
   const b=state.todayBind;
-  const cur=curRcDate(), today=fmtISO(new Date());
+  const cur=curRcDate(), today=todayISO();
   const dl=cur===today?'今日':(cur>today?'明日':cur.slice(5).replace('-','/'));
   const wrap=(color,inner)=>`<div class="card" style="border-left:4px solid ${color}">${inner}</div>`;
   if(!b||b.status==='loading') return wrap('var(--brand)','<div style="font-size:13.5px;color:var(--ink-soft)">📅 讀取班表中…</div>');
@@ -1144,7 +1168,57 @@ function sheetById(id){return SHEETS.find(s=>s.id===id)||{}}
 function areaColor(id){return (areaById(id).color)||'#0f7a86'}
 function fmtDate(d){return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`}
 function weekday(d){return ['週日','週一','週二','週三','週四','週五','週六'][d.getDay()]}
-function detectShift(){const h=new Date().getHours();return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N'}
+/* ★★★ 一律以台北時間為準，不看裝置時區。
+   出過什麼事：早上 11:22 卻顯示「大夜班」。
+   原因是 new Date().getHours() 讀的是【這台裝置設定的時區】——
+   這台電腦（跟那份 Google 試算表一樣）還停在美國時區，
+   台北 9/10 11:22 在紐約是 9/9 23:22 → getHours()=23 → 判成大夜班。
+
+   而且影響不只班別：整個 App 的「今天」也是同一個來源算的，
+   時區偏掉會讓日期整天差一天，於是「別台點完了我這台看不到」。
+   所以這裡統一提供台北時間的取用點，班別與日期都走這裡。 */
+function tpeParts(d){
+  d = d || new Date();
+  try{
+    const f = new Intl.DateTimeFormat('en-CA',{ timeZone:'Asia/Taipei', hour12:false,
+      year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    const o = {};
+    f.formatToParts(d).forEach(function(p){ if(p.type!=='literal') o[p.type]=p.value; });
+    const h = (o.hour==='24'?'00':o.hour);          // 某些環境午夜會給 24
+    if(o.year&&o.month&&o.day&&h!==undefined)
+      return { y:+o.year, m:+o.month, d:+o.day, h:+h, mi:+o.minute, s:+o.second,
+               iso:o.year+'-'+o.month+'-'+o.day };
+  }catch(e){}
+  // 退路：Intl 不可用時用 UTC+8 硬算（台灣沒有日光節約時間，固定 +8 是安全的）
+  const t = new Date(d.getTime()+8*3600e3);
+  const p = n=>String(n).padStart(2,'0');
+  return { y:t.getUTCFullYear(), m:t.getUTCMonth()+1, d:t.getUTCDate(),
+           h:t.getUTCHours(), mi:t.getUTCMinutes(), s:t.getUTCSeconds(),
+           iso:t.getUTCFullYear()+'-'+p(t.getUTCMonth()+1)+'-'+p(t.getUTCDate()) };
+}
+function todayISO(){ return tpeParts().iso; }                       // 台北的「今天」yyyy-MM-dd
+function tpeHM(){ const t=tpeParts(); const p=n=>String(n).padStart(2,'0'); return p(t.h)+':'+p(t.mi); }
+function tpeDate(){ const t=tpeParts(); return new Date(t.y,t.m-1,t.d); }   // 當地曆的台北今天（給月曆用）
+// 裝置時區跟台北不一致時要提醒，否則使用者永遠不知道自己看到的是偏掉的時間
+function tzMismatch(){
+  try{
+    const dev=-new Date().getTimezoneOffset()/60;    // 裝置的 UTC 偏移（小時）
+    return Math.abs(dev-8)>0.01 ? dev : null;
+  }catch(e){ return null; }
+}
+function detectShift(){ const h=tpeParts().h; return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N'; }
+/* 裝置時區設錯時在首頁明講。系統本身已經一律用台北時間、不受影響，
+   但裝置上其他 App 的時間會是錯的，還是該讓人知道去改。 */
+function tzWarnCard(){
+  const dev=tzMismatch(); if(dev===null)return '';
+  const sign=dev>=0?'+':'';
+  return `<div class="card" style="padding:11px 13px;margin-bottom:12px;border-left:4px solid var(--warn,#F59F00)">
+    <div style="font-size:13px;font-weight:700;margin-bottom:4px">⚠ 這台裝置的時區不是台北（目前 UTC${sign}${dev}）</div>
+    <div style="font-size:12px;color:var(--ink-soft);line-height:1.8">
+      點班系統的日期與班別已經一律用台北時間計算，<b>不受影響</b>（現在是 ${tpeHM()}・${SHIFT_NAME[detectShift()]}）。<br>
+      但這台裝置上其他程式顯示的時間會是錯的，建議到系統設定把時區改成「台北」。</div>
+  </div>`;
+}
 const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
 function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
 const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
@@ -1219,7 +1293,7 @@ async function doLogin(){
   if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
   if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
   state.user={id:a.id,name:a.name,title:a.title,role:a.role};
-  state.rcDate=fmtISO(new Date());
+  state.rcDate=todayISO();
   state.todayBind={status:'loading'};
   state.screen='home';render();
   try{ state.todayBind=await bindSchedule(curRcDateObj());
@@ -1230,7 +1304,7 @@ async function doLogin(){
 function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
 
 function renderHome(){
-  const now=new Date(),cur=state.shift||detectShift();state.shift=cur;
+  const now=tpeDate(),cur=state.shift||detectShift();state.shift=cur;
   const u=state.user;const isLeader=(u.role==='護理長'||u.role==='副護理長');
   const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
@@ -1256,12 +1330,14 @@ function renderHome(){
       <div class="big">${fmtDate(now)}</div>
       <div class="day">${weekday(now)} · 目前班別 <span class="shift-pill">🕐 ${SHIFT_NAME[cur]}</span></div>
     </div></div>
+    ${tzWarnCard()}
     <div class="section-h">今日各班狀態</div>
     <div class="sum-row">${stat}</div>
     <div class="section-h">點班日期</div>
     ${rcDatePicker()}
     ${todayBindCard()}
     <div class="section-h">我的待辦</div>
+    ${syncBar()}
     ${renderTodoCard()}
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
@@ -2551,7 +2627,7 @@ function genHistDemo(){
     {area:'急救室',item:'喉頭鏡葉',reason:'借出未還',type:'器械'},
   ];
   const NAMES=['陳子瑄','王孝彰','蔡婷瑋','吳鈺珊','劉逸靚'];
-  const days=[];const today=new Date();
+  const days=[];const today=tpeDate();
   for(let i=0;i<14;i++){
     const d=new Date(today);d.setDate(d.getDate()-i);
     const shifts=['N','E','D'].map((sh,si)=>{
@@ -2801,25 +2877,57 @@ function shortTime(s){
   const m=t.match(/(\d{1,2}):(\d{2})/);
   return m?(m[1].padStart(2,'0')+':'+m[2]):t;
 }
-/* 進入點班表清單時重抓一次。★ 只抓最近 3 天，並在按鈕上顯示「更新中…」與實際耗時，
-   這樣你能直接看到同步要幾秒，也不會以為畫面卡住。 */
-let SYNCING=false;
-async function refreshDoneStatus(){
+/* ★ 統一的自動同步。
+   之前的問題：20 秒自動更新只抓 rollcall_log 與 rollcall_active，
+   冰箱／氧氣紀錄只在「開啟 App」和「進 Leader 頁」時抓過一次，
+   所以首頁的「我的待辦」會一直停在開啟時的狀態 ——
+   看起來像很多人沒點班，其實是畫面沒更新。
+   現在四張表一起抓，且在首頁／分區／點班表／Leader 頁都會自動跑。 */
+let SYNCING=false, SYNC_AT=0, SYNC_MS=null;
+async function syncAll(){
   if(SYNCING)return;
   SYNCING=true;
   const btn=document.getElementById('syncBtn');
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
-  await Promise.all([loadSignLog(3),loadActive()]);
+  const t0=Date.now();
+  try{
+    await Promise.all([loadSignLog(3),loadActive(),loadFridgeLog(7),loadO2Log(7)]);
+    SYNC_MS=Date.now()-t0;
+  }catch(e){ SYNC_MS=-1; }
+  SYNC_AT=Date.now();
   SYNCING=false;
-  if(state.screen==='pick'||state.screen==='rollcall'||state.screen==='half')render();
+  render();
+}
+// 舊名稱保留：畫面上各處的 ↻ 按鈕都指向這裡
+async function refreshDoneStatus(){ return syncAll(); }
+// 這幾個畫面會顯示「誰點完了／冰箱氧氣完成沒」，需要自動更新
+function needsLiveSync(){
+  return ['home','areas','pick','rollcall','half','leader','todo'].indexOf(state.screen)>=0;
+}
+function syncAgo(){
+  if(!SYNC_AT)return '';
+  const s=Math.round((Date.now()-SYNC_AT)/1000);
+  if(s<10)return '剛剛';
+  if(s<60)return s+' 秒前';
+  if(s<3600)return Math.floor(s/60)+' 分鐘前';
+  return Math.floor(s/3600)+' 小時前';
+}
+function syncBar(){
+  const bad=(SYNC_MS===-1);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
+      font-size:11.5px;color:${bad?'var(--bad,#E03131)':'var(--ink-soft)'};margin:-2px 2px 8px">
+    <span>${SYNCING?'⏳ 正在向後端同步…':(bad?'⚠ 上次同步失敗，資料可能不是最新':
+      (SYNC_AT?('☁ 已同步・'+syncAgo()+'　自動每 20 秒更新'):'☁ 尚未同步'))}</span>
+    <button onclick="syncAll()" ${SYNCING?'disabled':''} style="border:1px solid var(--line);background:transparent;
+      color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">↻ 立即更新</button>
+  </div>`;
 }
 function syncLabel(){
   if(SYNCING)return '⏳ 更新中…';
-  if(SIGNLOG_MS===null)return '↻ 更新狀態';
-  if(SIGNLOG_MS<0)return '⚠ 連線失敗，再試';
-  const sec=(SIGNLOG_MS/1000).toFixed(1);
-  const ago=Math.round((Date.now()-SIGNLOG_AT)/1000);
-  return '↻ 已更新（'+sec+'秒'+(ago>5?('・'+ago+'秒前'):'')+'）';
+  if(SYNC_MS===null)return '↻ 更新狀態';
+  if(SYNC_MS<0)return '⚠ 連線失敗，再試';
+  const sec=(SYNC_MS/1000).toFixed(1);
+  return '↻ 已更新（'+sec+'秒'+(SYNC_AT?('・'+syncAgo()):'')+'）';
 }
 /* 🔍 完成狀態診斷：直接印出「這台在比對什麼」與「後端實際有什麼」，
    若別台點完這台卻沒顯示，一看就知道是日期、班別還是 sheetId 對不上。 */
@@ -2890,6 +2998,8 @@ async function loadSignoffs(){
 }
 function p2(n){return String(n).padStart(2,'0');}
 function fmtDTLocal(d){return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes());}
+// 簽核時間預設值：台北的現在（裝置時區設錯也不會帶錯時間進來）
+function tpeDTLocal(){const t=tpeParts();return t.y+'-'+p2(t.m)+'-'+p2(t.d)+'T'+p2(t.h)+':'+p2(t.mi);}
 function fmtLocalFromISO(iso){const d=new Date(iso);return isNaN(d.getTime())?'':fmtDTLocal(d).replace('T',' ');}
 function recDone(r){return !!(r&&(r.isDone==='是'||r.isDone===true));}
 async function openRecords(){ state.screen='records'; render(); await Promise.all([loadSignoffs(),loadSignLog()]); if(state.screen==='records')renderRecords(); }
@@ -2923,7 +3033,7 @@ function renderRecords(){
   </div>`;
 }
 function last4Weeks(){
-  const arr=[],now=new Date();
+  const arr=[],now=tpeDate();            // ★ 週次以台北時間為準
   const base=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const dow=(base.getDay()+6)%7,thisMon=new Date(base);thisMon.setDate(base.getDate()-dow);
   for(let i=0;i<4;i++){const mon=new Date(thisMon);mon.setDate(thisMon.getDate()-i*7);
@@ -2936,7 +3046,7 @@ async function doSignoff(){
   if(!(state.user&&(state.user.role==='護理長'||state.user.role==='副護理長'))){alert('僅護理長／副護理長可簽核');return;}
   const wk=state.signWeek;
   const el=document.getElementById('signAt');
-  const atLocal=(el&&el.value)?el.value:fmtDTLocal(new Date());
+  const atLocal=(el&&el.value)?el.value:tpeDTLocal();
   const atD=new Date(atLocal); const atISO=isNaN(atD.getTime())?new Date().toISOString():atD.toISOString();
   const wl=(last4Weeks().find(w=>w.key===wk)||{}).label||'';
   const rec={week:wk,weekLabel:wl,by:state.user.name,empId:state.user.id,at:atISO,atText:atLocal.replace('T',' ')};
@@ -2982,9 +3092,17 @@ async function pushRemind(){
   // 後端接通後：改由 owedWrite('push_broadcast',{msg:body,by,at}) 觸發 FCM 推給所有已訂閱裝置
 }
 let FRIDGELOG=[], O2LOG=[];
-async function loadFridgeLog(){ if(!API_URL)return; try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp',{cache:'no-store'}); const a=await r.json(); if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
-async function loadO2Log(){ if(!API_URL)return; try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check',{cache:'no-store'}); const a=await r.json(); if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
-async function openLeader(){ state.screen='leader'; render(); try{ await Promise.all([loadSignLog(),loadFridgeLog(),loadO2Log()]); }catch(e){} if(state.screen==='leader')renderLeader(); }
+async function loadFridgeLog(days){ if(!API_URL)return;
+  try{const q='table=fridge_temp'+(days?('&days='+days):'')+'&_='+Date.now();
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
+async function loadO2Log(days){ if(!API_URL)return;
+  try{const q='table=o2_check'+(days?('&days='+days):'')+'&_='+Date.now();
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q,{cache:'no-store'});
+    const a=await r.json(); if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
+async function openLeader(){ state.screen='leader'; render();
+  SYNC_AT=0; await syncAll();                       // 四張表一起抓，Leader 頁看到的就是最新
+  if(state.screen==='leader')renderLeader(); }
 function inSignWeek_(ym,day){ if(!ym||!day)return false; const p=String(ym).split('-'); const d=new Date(+p[0],(+p[1]||1)-1,+day); return isoWeek(d)===state.signWeek; }
 function extraHas_(kind,re){
   const log=kind==='fridge'?FRIDGELOG:O2LOG;
@@ -2995,7 +3113,7 @@ function extraRow_(label,done,onclick){
   return `<div class="rem-li"><span>${label} ${done?'<span class="pill-ok">本週已登錄</span>':'<span class="pill-bad">尚無</span>'}</span><button class="btn btn-ghost" style="padding:5px 12px" onclick="${onclick}">查核</button></div>`;
 }
 function renderLeader(){
-  state.signWeek=state.signWeek||isoWeek(new Date());
+  state.signWeek=state.signWeek||isoWeek(tpeDate());
   const weeks=last4Weeks();
   if(!weeks.some(w=>w.key===state.signWeek))state.signWeek=weeks[0].key;
   const wsel=weeks.map(w=>`<option value="${w.key}" ${w.key===state.signWeek?'selected':''}>${w.label}（${w.key}）${w.isThis?' · 本週':''}</option>`).join('');
@@ -3044,7 +3162,7 @@ function renderLeader(){
     </div>
     <div class="card" style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div style="font-weight:700;font-size:14px">🖊 簽核時間（可修改）</div>
-      <input type="datetime-local" id="signAt" value="${fmtDTLocal(new Date())}" style="flex:1;max-width:230px;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)">
+      <input type="datetime-local" id="signAt" value="${tpeDTLocal()}" style="flex:1;max-width:230px;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)">
     </div>
     <button class="btn btn-primary btn-block" onclick="doSignoff()">✅ 簽核本週（${state.signWeek}）</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openRecords()">📜 查看簽核／點班紀錄</button>
@@ -3143,7 +3261,7 @@ function renderDone(){
      <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px"><span style="color:var(--ink-soft)">開始</span><b>${fmtClock(tm.start)}</b></div>
      <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:14px"><span style="color:var(--ink-soft)">完成</span><b>${fmtClock(tm.end)}</b></div>
      <div style="display:flex;justify-content:space-between;padding:7px 0 0;font-size:14px;border-top:1px dashed var(--line)"><span style="color:var(--ink-soft)">耗時</span><b style="color:var(--brand)">${fmtDur(tm.durationSec)}</b></div>
-     ${tm.date&&tm.date!==fmtISO(new Date())?`<div style="text-align:center;color:var(--warn);font-size:12.5px;margin-top:8px">補點日期：${esc(tm.date)}</div>`:''}
+     ${tm.date&&tm.date!==todayISO()?`<div style="text-align:center;color:var(--warn);font-size:12.5px;margin-top:8px">補點日期：${esc(tm.date)}</div>`:''}
    </div>`:'';
   // 上傳狀態：null=進行中、true=已存後端、false=失敗（只在本機）
   const syncHtml = state.rcSaved===false
@@ -3161,7 +3279,7 @@ function renderDone(){
     <h2 style="margin:0 0 6px">點班完成</h2>
     ${syncHtml}
     <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
-      ${esc(state.user.name)}（${esc(state.user.title)}）· ${new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'})} 簽核</p>
+      ${esc(state.user.name)}（${esc(state.user.title)}）· ${tpeHM()} 簽核</p>
     ${timingHtml}
     <button class="btn btn-primary btn-block" onclick="state.screen='pick';render();refreshDoneStatus()">回點班表清單</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
@@ -3174,15 +3292,33 @@ store.load();
 state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
-if(state.user){ state.rcDate=fmtISO(new Date()); rebindForDate(); }
+if(state.user){ state.rcDate=todayISO(); rebindForDate(); }
 (async()=>{ await Promise.all([loadItems(),loadLocator(),loadOwed(),loadSignLog(),loadItemReports(),
   loadFridgeLog(),loadO2Log(),loadPerms(),loadRtls(),loadActive()]); render(); })();
-// 停在點班表清單時自動更新完成狀態（20 秒一次），人員不必手動按
+/* ★ 自動更新完成狀態（20 秒一次）。
+   涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
+   分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。 */
 setInterval(function(){
-  if(!state.user||(state.screen!=='pick'&&state.screen!=='home')||SYNCING)return;
-  if(Date.now()-SIGNLOG_AT<15000)return;      // 剛更新過就跳過
-  refreshDoneStatus();
+  if(!state.user||SYNCING)return;
+  if(document.hidden)return;
+  if(!needsLiveSync())return;
+  if(Date.now()-SYNC_AT<15000)return;         // 剛更新過就跳過
+  syncAll();
 },20000);
+
+// 切回這個分頁／視窗重新取得焦點 → 立刻補抓一次，不用等 20 秒也不用手動按
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden||!state.user||SYNCING)return;
+  if(!needsLiveSync())return;
+  if(Date.now()-SYNC_AT<3000)return;
+  syncAll();
+});
+window.addEventListener('focus',function(){
+  if(!state.user||SYNCING)return;
+  if(!needsLiveSync())return;
+  if(Date.now()-SYNC_AT<3000)return;
+  syncAll();
+});
 
 // RTLS 每 2 分鐘自動刷新一次（僅在點班/首頁時，避免無謂流量）
 setInterval(function(){

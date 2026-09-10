@@ -97,10 +97,43 @@ render();
 syncFromServer();
 syncBanner();
 
+/* ★ 自動向後端同步（25 秒一次）＋ 切回這個分頁時立刻同步。
+   別台剛登錄的溫度會自己出現，不必手動重整、也不會誤以為沒人登錄。
+   還有未上傳的資料時不覆蓋（見 syncFromServer 內的保護）。 */
+let SRV_AT=0;
+async function autoSync(force){
+  if(!API_URL)return;
+  if(!force&&Date.now()-SRV_AT<20000)return;
+  SRV_AT=Date.now();
+  await syncFromServer();
+}
+setInterval(function(){ if(!document.hidden) autoSync(); },25000);
+document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
+window.addEventListener('focus',function(){ autoSync(); });
+
 function keyOf(){return 'fridge_'+data.unit+'_'+data.ym;}
 function blank(unit,ym){return {unit,ym,readings:{},abn:{},superv:[]};}
 function loadFor(unit,ym){ try{const s=localStorage.getItem('fridge_'+unit+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(unit,ym); }
-function thisYM(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+/* ★ 一律用台北時間，不看裝置時區。
+   出過的問題：早上 11:22 卻被判成大夜班 —— 因為 getHours() 讀的是裝置設定的時區，
+   那台電腦還停在美國時區。日期也會整天差一天，於是「別台登錄了我這台看不到」。 */
+function tpeParts(d){
+  d = d || new Date();
+  try{
+    const f = new Intl.DateTimeFormat("en-CA",{ timeZone:"Asia/Taipei", hour12:false,
+      year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+    const o = {};
+    f.formatToParts(d).forEach(function(p){ if(p.type!=="literal") o[p.type]=p.value; });
+    const h = (o.hour==="24"?"00":o.hour);
+    if(o.year&&o.month&&o.day&&h!==undefined)
+      return { y:+o.year, m:+o.month, d:+o.day, h:+h, mi:+o.minute };
+  }catch(e){}
+  const t = new Date(d.getTime()+8*3600e3);
+  return { y:t.getUTCFullYear(), m:t.getUTCMonth()+1, d:t.getUTCDate(), h:t.getUTCHours(), mi:t.getUTCMinutes() };
+}
+// 裝置時區與台北不一致時回傳裝置的 UTC 偏移（小時），一致則回 null
+function tzMismatch(){ try{ const dev=-new Date().getTimezoneOffset()/60; return Math.abs(dev-8)>0.01?dev:null; }catch(e){ return null; } }
+function thisYM(){const t=tpeParts();return t.y+'-'+String(t.m).padStart(2,'0');}
 function startData(){
   // ★ 年月一定要有值。空字串會讓寫入的「年月」是空的、而且同步時永遠比對不到，
   //   造成本機看得到、別台看不到 —— 這是先前記錄不一致的真正原因。
@@ -137,6 +170,8 @@ function ymOf(v){
   return s;
 }
 function rkey(day,si){ return day+'_'+SHIFTS[si]; }
+// 單位名稱正規化：全形括號、空白差異不該影響比對
+function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
 /* 從後端載入本單位本月已登錄的溫度，與本機資料合併 → 換手機/電腦看到的都一樣。
    後端有的以後端為準；本機獨有的（剛離線輸入還沒送出）保留。 */
 async function syncFromServer(){
@@ -151,16 +186,22 @@ async function syncFromServer(){
       let ym=ymOf(o['年月']||o.ym||'');
       // 舊資料若「年月」是空的（先前的 bug 寫進去的），改用「寫入時間」推回月份，才不會變孤兒
       if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
-      if(unit!==String(data.unit)||ym!==ymOf(data.ym))return;
+      if(normU(unit)!==normU(data.unit)||ym!==ymOf(data.ym))return;
       const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||'');
       const si=SHIFTS.indexOf(sh); if(!day||si<0)return;
-      data.readings[rkey(day,si)]={
+      const k=rkey(day,si);
+      n++;
+      /* ★ 還在上傳中／上傳失敗的那一格不要被後端蓋掉。
+         否則人剛輸入的數字會被舊資料覆寫，看起來像「存了又不見」，
+         接著又會再存一次 —— 又是重複列。 */
+      const local=data.readings[k];
+      if(local&&(local._sending||local._unsync))return;
+      data.readings[k]={
         cur:String(o['現在溫度']!==undefined?o['現在溫度']:(o.cur||'')),
         hi: String(o['高溫']!==undefined?o['高溫']:(o.hi||'')),
         lo: String(o['低溫']!==undefined?o['低溫']:(o.lo||'')),
         sign:String(o['簽名']||o.sign||'')
       };
-      n++;
     });
     serverCount=n; save(); render(); srvBadge();
   }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e); serverCount=-1; srvBadge(); }
@@ -305,27 +346,80 @@ async function writeSelfTest(){
 // 溫度寫回點班後端(task:'fridge_temp')
 /* 寫回後端。★ 會確認後端真的回 ok，失敗就把該筆標記為「未上傳」並在畫面示警，
    避免「本機看起來存好了、其實沒進 Sheet」這種最危險的情況。 */
-async function fridgeWrite(day,si){
-  if(!API_URL)return;
-  const k=rkey(day,si), r=data.readings[k]||{};
-  const payload={unit:data.unit,ym:data.ym,day:day,shift:SHIFTS[si],cur:r.cur,hi:r.hi,lo:r.lo,sign:r.sign,at:new Date().toISOString()};
+/* ★★★ 上傳佇列 —— 這一段是為了解決「存檔慢／異常 → 一直重按 → 同一格好幾筆」。
+   Apps Script 一次來回大約 1~3 秒，舊做法是按下儲存後停在「儲存中…」等它回來；
+   等太久就會有人再按一次、或以為沒存到而重新輸入，於是同一格出現 5 筆一樣的資料
+   （9/10 留觀 02:55:14~02:55:17 那 4 筆就是這樣來的）。
+
+   現在改成：
+   ① 按下儲存 → 畫面立刻顯示已登錄並關掉視窗，不等後端（樂觀更新）
+   ② 上傳在背景做，每一格最多只有一個請求在飛；期間再存同一格只會更新待送內容，
+      不會多送一次（合併，而不是排隊）
+   ③ 失敗自動重試（3 秒、6 秒、12 秒…最多 60 秒），不必人工按「重試上傳」
+   ④ 每一格自己標記狀態：⏳ 上傳中／✓ 已同步／⚠ 未上傳，不用再猜有沒有存到
+   後端那邊也改成「同一格覆蓋」（單位＋年月＋日＋時段為鍵），
+   所以就算真的重複送出也只會有一列。 */
+const WQ = { inflight:{}, pending:{}, timer:{}, backoff:{} };
+
+function payloadOf(day,si){
+  const r=data.readings[rkey(day,si)]||{};
+  return {unit:data.unit,ym:data.ym,day:day,shift:SHIFTS[si],
+          cur:r.cur,hi:r.hi,lo:r.lo,sign:r.sign,at:new Date().toISOString()};
+}
+function markState(k,st){                     // st: 'send' | 'ok' | 'fail'
+  const r=data.readings[k]; if(!r)return;
+  if(st==='ok'){ delete r._unsync; delete r._sending; }
+  else if(st==='send'){ r._sending=true; }
+  else { delete r._sending; r._unsync=true; }
+  save();
+}
+// 對外入口：安排一次上傳（可重複呼叫，同一格只會有一個請求在飛）
+function fridgeWrite(day,si){
+  const k=rkey(day,si);
+  WQ.pending[k]=payloadOf(day,si);            // 永遠以「最新輸入」為準
+  markState(k,'send');
+  pumpWQ(k);
+  return Promise.resolve();                   // 不讓呼叫端等後端
+}
+async function pumpWQ(k){
+  if(WQ.inflight[k])return;                   // 已經有一個在飛 → 它回來時會自動再送最新的
+  const payload=WQ.pending[k]; if(!payload)return;
+  delete WQ.pending[k];
+  WQ.inflight[k]=true;
+  let ok=false;
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',payload:payload})});
     const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
-    if(j&&j.ok){ if(data.readings[k])delete data.readings[k]._unsync; }
-    else { if(data.readings[k])data.readings[k]._unsync=true; }
-  }catch(e){
-    console.error('冰箱溫度寫回失敗',e);
-    if(data.readings[k])data.readings[k]._unsync=true;
+    ok=!!(j&&j.ok);
+  }catch(e){ console.error('冰箱溫度寫回失敗',e); }
+  WQ.inflight[k]=false;
+  if(ok){
+    WQ.backoff[k]=0;
+    if(!WQ.pending[k]) markState(k,'ok');
+  }else{
+    markState(k,'fail');
+    if(!WQ.pending[k]) WQ.pending[k]=payload;  // 沒有更新的內容就重送同一份
+    const wait=Math.min((WQ.backoff[k]?WQ.backoff[k]*2:3000),60000);
+    WQ.backoff[k]=wait;
+    clearTimeout(WQ.timer[k]);
+    WQ.timer[k]=setTimeout(function(){ pumpWQ(k); },wait);   // 自動重試，不用人工按
   }
-  save(); syncBanner();
+  syncBanner(); render();
+  if(WQ.pending[k]&&ok) pumpWQ(k);            // 期間又改過 → 立刻補送最新的
+}
+// 還在飛或還沒送成功的筆數
+function pendingCount(){
+  let n=0; for(const k in (data.readings||{})) if(data.readings[k]._sending||data.readings[k]._unsync) n++;
+  return n;
 }
 // 未上傳筆數的示警橫幅 ＋ 一鍵重試
 function unsyncList(){ const a=[]; for(const k in (data.readings||{})) if(data.readings[k]._unsync) a.push(k); return a; }
 function syncBanner(){
-  const n=unsyncList().length;
+  const nFail=unsyncList().length;
+  const nSend=Object.keys(WQ.inflight).filter(function(k){return WQ.inflight[k];}).length;
+  const n=nFail;
   let el=document.getElementById('syncBar');
-  if(!n){ if(el)el.remove(); return; }
+  if(!n){ if(el)el.remove(); if(nSend)return; return; }
   if(!el){ el=document.createElement('div'); el.id='syncBar';
     el.style.cssText='background:#fbe8e8;color:#c0392b;border:1px solid #f0c0c0;border-radius:10px;'
       +'padding:10px 14px;margin:10px 0;font-size:13.5px;font-weight:700;display:flex;'
@@ -333,15 +427,17 @@ function syncBanner(){
     const w=document.querySelector('.wrap'); const sh=document.getElementById('sheet');
     if(w&&sh)w.insertBefore(el,sh); else if(w)w.appendChild(el);
   }
-  el.innerHTML=`<span>⚠ 有 ${n} 筆只存在這台裝置，尚未上傳到後端（別台看不到）</span>
+  el.innerHTML=`<span>⚠ 有 ${n} 筆還沒上傳到後端（別台看不到）。系統會自動重試，資料不會遺失。</span>
     <button onclick="retrySync()" style="border:none;background:#c0392b;color:#fff;font-weight:800;
-      padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">重試上傳</button>`;
+      padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">立即重試</button>`;
 }
-async function retrySync(){
+// 手動重試：把未完成的重新排入佇列（背景送，不卡畫面）。平常不必按，會自動重試。
+function retrySync(){
   const ks=unsyncList(); if(!ks.length)return;
-  for(const k of ks){ const p=String(k).split('_'); await fridgeWrite(+p[0], SHIFTS.indexOf(p[1])); }
+  ks.forEach(function(k){ const p=String(k).split('_');
+    WQ.backoff[k]=0; clearTimeout(WQ.timer[k]);
+    fridgeWrite(+p[0], SHIFTS.indexOf(p[1])); });
   syncBanner();
-  alert(unsyncList().length?'仍有資料上傳失敗，請點「🔧 測試後端連線」查原因':'全部已上傳成功');
 }
 
 function render(){
@@ -449,17 +545,18 @@ function saveEntry(day,si){
   if(cur===''){alert('請輸入現在溫度');return;}
   const sign=document.getElementById('e_sign').value.trim();
   if(sign){ localStorage.setItem('fridge_lastName',sign); document.getElementById('nameIn').value=sign; }
-  data.readings[rkey(day,si)]={cur:cur, hi:document.getElementById('e_hi').value.trim(), lo:document.getElementById('e_lo').value.trim(), sign:sign};
+  let hi=document.getElementById('e_hi').value.trim();
+  let lo=document.getElementById('e_lo').value.trim();
+  // 高低溫寫反就自動對調（曾出現低溫 24℃ / 高溫 5℃ 這種明顯顛倒的紀錄）
+  if(hi!==''&&lo!==''&&(+lo)>(+hi)){ const t=hi; hi=lo; lo=t; }
+  data.readings[rkey(day,si)]={cur:cur, hi:hi, lo:lo, sign:sign};
   save();
-  // ★ 等後端真的回 ok 才算存好；沒成功會在畫面留下紅色「未上傳」橫幅可重試
-  const btn=document.querySelector('.modal-card .btn-p'); if(btn){btn.textContent='儲存中…';btn.disabled=true;}
-  fridgeWrite(day,si).then(function(){
-    const r=data.readings[rkey(day,si)]||{};
-    if(r._unsync) alert('⚠ 這筆溫度目前只存在這台裝置，尚未上傳到後端。\n請點畫面上的「重試上傳」，或用「🔧 測試後端連線」查原因。');
-    if(+cur<LOW||+cur>HIGH){ closeModal(); openAbn(day,si,true); }
-    else { closeModal(); render(); }
-    syncBanner();
-  });
+  /* ★ 立刻關窗、立刻顯示已登錄，上傳在背景進行（失敗會自動重試）。
+     不再讓人停在「儲存中…」等後端 —— 那個等待就是重複存檔的元凶。 */
+  fridgeWrite(day,si);
+  if(+cur<LOW||+cur>HIGH){ closeModal(); openAbn(day,si,true); }
+  else { closeModal(); render(); }
+  syncBanner();
 }
 function closeModal(){ document.getElementById('modalHost').innerHTML=''; render(); }
 

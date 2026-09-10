@@ -88,39 +88,55 @@ function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
 const EXPECT_VER='2026-09-10-v10';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
-/* 寫回後端並確認後端真的回 ok；失敗就標記未上傳並示警。 */
-async function o2Write(code,day,si){
-  if(!API_URL)return;
-  const k=ck(code,day,si);
-  const payload={dept:data.dept,ym:data.ym,day:day,shift:SHIFTS[si],crit:code,qty:data.qty||'',by:curName(),at:new Date().toISOString()};
-  try{
-    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check',payload:payload})});
-    const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
-    if(j&&j.ok){ if(data.marks[k])delete data.marks[k]._unsync; }
-    else { if(data.marks[k])data.marks[k]._unsync=true; }
-  }catch(e){
-    console.error('氧氣寫回失敗',e);
-    if(data.marks[k])data.marks[k]._unsync=true;
-  }
-  save(); syncBanner();
-}
+
+// （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
 /* ★ 一次寫多筆：原本「一鍵完成」會同時送出 6 支 POST，
    後端會平行跑 6 個執行環境、各自算 appendRow 的位置，互相搶同一列，
    甚至把資料寫到標題列上面（o2_check 第 1~3 列就是這樣被塞進資料的）。
    改成一支請求帶 items[]，後端一次寫完，不可能再搶。 */
-async function o2WriteBatch(codes,day,si){
-  if(!API_URL||!codes.length)return;
+/* ★ 同一天同一班只會有一個請求在飛；期間再勾選只會累加到待送清單，
+   不會每勾一項就送一次（那樣後端會被 6 支平行請求灌爆，也是重複列的來源）。
+   失敗自動重試（3→6→12…最多 60 秒），不必人工按重試。 */
+const WQ={inflight:{},pending:{},timer:{},backoff:{}};
+function gkeyOf(day,si){ return day+'|'+SHIFTS[si]; }
+function o2WriteBatch(codes,day,si){
+  if(!API_URL||!codes.length)return Promise.resolve();
+  const g=gkeyOf(day,si);
+  WQ.pending[g]=WQ.pending[g]||{};
+  codes.forEach(function(c){ WQ.pending[g][c]=true;
+    const k=ck(c,day,si); if(data.marks[k])data.marks[k]._sending=true; });
+  save();
+  pumpWQ(g,day,si);
+  return Promise.resolve();          // 不讓呼叫端等後端
+}
+async function pumpWQ(g,day,si){
+  if(WQ.inflight[g])return;
+  const codes=Object.keys(WQ.pending[g]||{}); if(!codes.length)return;
+  delete WQ.pending[g];
+  WQ.inflight[g]=true;
+  const mark=(bad)=>codes.forEach(c=>{const k=ck(c,day,si); const m=data.marks[k]; if(!m)return;
+    delete m._sending; if(bad)m._unsync=true; else delete m._unsync;});
+  let ok=false;
   const payload={dept:data.dept,ym:data.ym,day:day,shift:SHIFTS[si],qty:data.qty||'',
                  by:curName(),at:new Date().toISOString(),items:codes.slice()};
-  const mark=(bad)=>codes.forEach(c=>{const k=ck(c,day,si);
-    if(!data.marks[k])return; if(bad)data.marks[k]._unsync=true; else delete data.marks[k]._unsync;});
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check_batch',payload:payload})});
     const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
-    mark(!(j&&j.ok));
-    if(!(j&&j.ok))alert('氧氣紀錄沒有存到後端。\n請確認 GS 已「重新部署為新版本」（版本需為 '+EXPECT_VER+'）。');
-  }catch(e){ console.error('氧氣批次寫回失敗',e); mark(true); }
-  save(); syncBanner();
+    ok=!!(j&&j.ok);
+  }catch(e){ console.error('氧氣批次寫回失敗',e); }
+  WQ.inflight[g]=false;
+  mark(!ok);
+  if(ok){ WQ.backoff[g]=0; }
+  else{
+    WQ.pending[g]=WQ.pending[g]||{};
+    codes.forEach(function(c){ WQ.pending[g][c]=true; });
+    const wait=Math.min((WQ.backoff[g]?WQ.backoff[g]*2:3000),60000);
+    WQ.backoff[g]=wait;
+    clearTimeout(WQ.timer[g]);
+    WQ.timer[g]=setTimeout(function(){ pumpWQ(g,day,si); },wait);
+  }
+  save(); syncBanner(); render();
+  if(ok&&WQ.pending[g]) pumpWQ(g,day,si);
 }
 function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
 function syncBanner(){
@@ -138,14 +154,15 @@ function syncBanner(){
     <button onclick="retrySync()" style="border:none;background:#c0392b;color:#fff;font-weight:800;
       padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">重試上傳</button>`;
 }
-async function retrySync(){
+// 手動重試：把未完成的重新排入佇列（背景送）。平常不必按，會自動重試。
+function retrySync(){
   const ks=unsyncList(); if(!ks.length)return;
-  // 同一天同一班的併成一支請求送
   const g={};
   ks.forEach(k=>{ const p=String(k).split('_'); const gk=p[1]+'|'+p[2]; (g[gk]=g[gk]||[]).push(p[0]); });
-  for(const gk in g){ const p=gk.split('|'); await o2WriteBatch(g[gk], +p[0], SHIFTS.indexOf(p[1])); }
+  for(const gk in g){ const p=gk.split('|');
+    WQ.backoff[gk.replace('_','|')]=0;
+    o2WriteBatch(g[gk], +p[0], SHIFTS.indexOf(p[1])); }
   syncBanner();
-  alert(unsyncList().length?'仍有資料上傳失敗，請回冰箱表點「🔧 測試後端連線」查原因':'全部已上傳成功');
 }
 
 const P=new URLSearchParams(location.search);
@@ -158,7 +175,26 @@ syncBanner();
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
 function loadFor(dept,ym){ try{const s=localStorage.getItem('o2_'+(dept||'')+'_'+ym);if(s)return JSON.parse(s);}catch(e){} return blank(dept,ym); }
-function thisYM(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+/* ★ 一律用台北時間，不看裝置時區。
+   出過的問題：早上 11:22 卻被判成大夜班 —— 因為 getHours() 讀的是裝置設定的時區，
+   那台電腦還停在美國時區。日期也會整天差一天，於是「別台登錄了我這台看不到」。 */
+function tpeParts(d){
+  d = d || new Date();
+  try{
+    const f = new Intl.DateTimeFormat("en-CA",{ timeZone:"Asia/Taipei", hour12:false,
+      year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+    const o = {};
+    f.formatToParts(d).forEach(function(p){ if(p.type!=="literal") o[p.type]=p.value; });
+    const h = (o.hour==="24"?"00":o.hour);
+    if(o.year&&o.month&&o.day&&h!==undefined)
+      return { y:+o.year, m:+o.month, d:+o.day, h:+h, mi:+o.minute };
+  }catch(e){}
+  const t = new Date(d.getTime()+8*3600e3);
+  return { y:t.getUTCFullYear(), m:t.getUTCMonth()+1, d:t.getUTCDate(), h:t.getUTCHours(), mi:t.getUTCMinutes() };
+}
+// 裝置時區與台北不一致時回傳裝置的 UTC 偏移（小時），一致則回 null
+function tzMismatch(){ try{ const dev=-new Date().getTimezoneOffset()/60; return Math.abs(dev-8)>0.01?dev:null; }catch(e){ return null; } }
+function thisYM(){const t=tpeParts();return t.y+'-'+String(t.m).padStart(2,'0');}
 function startData(){
   // ★ 年月不可為空，否則寫入與同步都會對不起來（同 fridge.html）
   const dept=P.get('dept')||'', ym=(P.get('ym')||'').trim()||thisYM();
@@ -213,7 +249,7 @@ async function syncFromServer(){
 
 var wkIdx=null;
 function monthChunks(){ const days=daysInMonth(data.ym); const a=[]; for(let s=1;s<=days;s+=7){const c=[];for(let d=s;d<=Math.min(s+6,days);d++)c.push(d);a.push(c);} return a; }
-function defaultWk(){ const t=new Date(),ym=data.ym; if(ym){const[y,m]=ym.split('-').map(Number); if(t.getFullYear()===y&&t.getMonth()+1===m)return Math.floor((t.getDate()-1)/7);} return 0; }
+function defaultWk(){ const t=tpeParts(),ym=data.ym; if(ym){const[y,m]=ym.split('-').map(Number); if(t.y===y&&t.m===m)return Math.floor((t.d-1)/7);} return 0; }
 function headBlock(mg){
   return `<div class="f-top">
       <div class="f-hosp">${HOSP_ZH}<br><span class="en">${HOSP_EN}</span></div>
@@ -261,9 +297,9 @@ function render(){
   const days=daysInMonth(data.ym), mg=minguo(data.ym);
   const chunks=monthChunks();
   if(wkIdx==null||wkIdx>=chunks.length) wkIdx=Math.min(defaultWk(),Math.max(0,chunks.length-1));
-  const t=new Date();
-  const defDay=(()=>{const ym=data.ym;if(ym){const[y,m]=ym.split('-').map(Number);if(t.getFullYear()===y&&t.getMonth()+1===m)return t.getDate();}return chunks.length?chunks[wkIdx][0]:1;})();
-  const defShift=(()=>{const h=t.getHours();return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N';})();
+  const t=tpeParts();                     // ★ 預設的日與班別都以台北時間為準
+  const defDay=(()=>{const ym=data.ym;if(ym){const[y,m]=ym.split('-').map(Number);if(t.y===y&&t.m===m)return t.d;}return chunks.length?chunks[wkIdx][0]:1;})();
+  const defShift=(()=>{const h=t.h;return (h>=7&&h<15)?'D':(h>=15&&h<23)?'E':'N';})();
   const dayOpts=Array.from({length:days},(_,i)=>`<option ${(i+1)===defDay?'selected':''}>${i+1}</option>`).join('');
   const shOpts=SHIFTS.map(s=>`<option ${s===defShift?'selected':''}>${s}</option>`).join('');
   const qc=`<div class="qc"><b>快速完成</b>　日 <select id="qcDay">${dayOpts}</select>　班 <select id="qcShift">${shOpts}</select>
@@ -288,10 +324,11 @@ function toggle(code,day,si){
   if(!data.ym){alert('請先選擇年月');return;}
   const k=ck(code,day,si);
   if(data.marks[k]) delete data.marks[k];
-  else { const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm); data.marks[k]={by:nm,at:stamp()}; o2Write(code,day,si); }
+  else { const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm); data.marks[k]={by:nm,at:stamp()};
+         o2WriteBatch([code],day,si); }    // ★ 走佇列，立刻顯示、背景上傳
   save(); render();
 }
-function stamp(){const d=new Date();return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function stamp(){const t=tpeParts();return t.m+'/'+t.d+' '+String(t.h).padStart(2,'0')+':'+String(t.mi).padStart(2,'0');}
 function editNote(day){
   const cur=data.notes[day]||'';
   document.getElementById('modalHost').innerHTML=`<div style="position:fixed;inset:0;background:rgba(15,32,43,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px" onclick="if(event.target===this)this.innerHTML=''">
