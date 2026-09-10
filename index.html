@@ -1860,7 +1860,7 @@ function renderAdminHub(){
   if(isBoss()||isWitnessRank(state.user)) secs.push(g('📋 簽核與紀錄',[
     b('主管簽核 · 完成總表','openLeader()'),
     b('簽核／點班紀錄','openRecords()'),
-    b('歷史點班紀錄',"state.screen='history';render()")]));
+    b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
   const mg=[];
   if(can('items.edit'))mg.push(b('點班項目管理','openItemsAdmin()',ITEM_REPORTS.length?ITEM_REPORTS.length+' 則待處理':''));
@@ -1893,7 +1893,7 @@ function analytics(){
   });
   const dupKey={};
   L.forEach(function(r){ if(!isDoneRec_(r))return;
-    const k=dOf(r)+'|'+shiftOf(r)+'|'+sheetIdOf(r); dupKey[k]=(dupKey[k]||0)+1; });
+    const k=dOf(r)+'|'+logShiftOf(r)+'|'+sheetIdOf(r); dupKey[k]=(dupKey[k]||0)+1; });
   const dupN=Object.keys(dupKey).filter(k=>dupKey[k]>1).length;
 
   // 異常明細 → 器械／耗材
@@ -2021,13 +2021,28 @@ function isShiftLeader(){
   if(isBoss(u))return true;
   return isWitnessRank(u);         // 小組長以上
 }
-function myTodoSheets(){
-  // leader 看全部；一般人員依排班帶入的分區，抓不到就顯示自己所在分區
-  if(isShiftLeader())return SHEETS.slice();
+/* ★ 我今天被指派到哪些分區——一律以「班表指派」為準。
+   注意變數是 state.todayBind（不是 state.bind），而且要從 target 取分區；
+   之前用錯變數又混入 state.areaId（瀏覽時殘留的分區），才會冒出不相干的急救室。 */
+function myBindAreas(){
   const areas=new Set();
-  if(state.bind&&state.bind.areaId)areas.add(state.bind.areaId);
-  if(state.areaId)areas.add(state.areaId);
-  if(!areas.size)return SHEETS.slice();     // 無從判斷就全列，寧可多提醒
+  const b=state.todayBind;
+  if(b&&b.status==='ok'&&b.target){
+    const t=b.target;
+    if(t.type==='area'&&t.areaId)areas.add(t.areaId);
+    if(t.type==='sheet'&&t.sheetId){const s=sheetById(t.sheetId);if(s)areas.add(s.area);}
+    (t.options||[]).forEach(function(o){                 // 複合班（一人顧兩區）
+      if(o.areaId)areas.add(o.areaId);
+      if(o.sheetId){const s=sheetById(o.sheetId);if(s)areas.add(s.area);}
+    });
+  }
+  return areas;
+}
+function myTodoSheets(){
+  // 全區模式（leader 手動切換）才看全部
+  if(state.todoAll&&isShiftLeader())return SHEETS.slice();
+  const areas=myBindAreas();
+  if(!areas.size)return SHEETS.slice();     // 班表抓不到就全列，寧可多提醒
   return SHEETS.filter(s=>areas.has(s.area));
 }
 function todoList(){
@@ -2060,10 +2075,15 @@ function todoList(){
 }
 function renderTodoCard(){
   const t=todoList(), n=t.sheets.length+t.extra.length;
-  const scope=isShiftLeader()?'全區':'我的分區';
+  const areas=myBindAreas();
+  const areaNames=[...areas].map(a=>{const x=areaById(a);return x?x.name:a;}).join('、');
+  const all=!!(state.todoAll&&isShiftLeader());
+  const scope=all?'全區':(areaNames||'全部（班表未帶入）');
+  const toggle=isShiftLeader()?`<button class="btn btn-ghost" style="font-size:12px;padding:5px 10px;margin-right:6px"
+      onclick="state.todoAll=${all?'false':'true'};render()">${all?'只看我的分區':'看全區'}</button>`:'';
   if(!n){
     return `<div class="card" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);background:#ebfbee">
-      <div style="font-weight:800;color:#1f7a43">✓ 本班已全部完成（${esc(scope)}）</div>
+      <div style="font-weight:800;color:#1f7a43">✓ 本班已全部完成（${esc(scope)}）</div>${toggle?('<div style="margin-top:8px">'+toggle+'</div>'):''}
       <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">點班表與附加查核都沒有待辦項目。</div></div>`;
   }
   const rows=t.sheets.map(function(x){
@@ -2079,7 +2099,7 @@ function renderTodoCard(){
   return `<div class="card" style="padding:0;margin-bottom:12px;border-left:4px solid var(--warn,#e8590c);overflow:hidden">
     <div style="padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center">
       <span>📌 我的待辦 · 本班未完成 ${n} 項<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">（${esc(scope)}）</span></span>
-      <button class="btn btn-ghost" style="font-size:12.5px;padding:5px 10px" onclick="refreshDoneStatus()">↻</button></div>
+      <span>${toggle}<button class="btn btn-ghost" style="font-size:12.5px;padding:5px 10px" onclick="refreshDoneStatus()">↻</button></span></div>
     <div style="padding:0 6px 8px">${rows}${ex}</div></div>`;
 }
 
@@ -2521,52 +2541,68 @@ function histShiftRow(s,id){
 }
 function toggleShift(id){state._openShift=state._openShift||{};state._openShift[id]=!state._openShift[id];render()}
 
+function openHistory(){ state.screen='history'; render();
+  Promise.all([loadSignLog(),loadIssues()]).then(function(){ if(state.screen==='history')render(); }); }
+/* ★ 歷史點班紀錄：改讀真實的 rollcall_log（原本是 genHistDemo() 假資料）。
+   依日期→班別分組，顯示各表由誰完成、耗時、異常數。 */
 function renderHistory(){
-  const days=genHistDemo();
-  const isLeader=(state.user.role==='護理長'||state.user.role==='副護理長');
-  const recent=days.slice(0,7), older=days.slice(7);
-  state._foldMonths=state._foldMonths||{};
-  const recentHtml=recent.map((d,di)=>{
-    const rows=d.shifts.map((s,si)=>histShiftRow(s,'r'+di+'-'+si)).join('');
-    return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
+  const isLeader=isBoss()||isWitnessRank(state.user);
+  const logs=(SIGNLOG||[]).slice();
+  // 依日期分組
+  const byDate={};
+  logs.forEach(function(r){
+    const d=dateOfLog(r); if(!d)return;
+    (byDate[d]=byDate[d]||[]).push(r);
+  });
+  const dates=Object.keys(byDate).sort().reverse();
+  const limit=isLeader?dates.length:Math.min(dates.length,7);   // 一般人員近 7 天
+  const shown=dates.slice(0,limit);
+  const num=(r,a,b)=>{const v=Number(fld(r,[a,b]));return isNaN(v)?0:v;};
+  const dayHtml=shown.map(function(d){
+    const rows=byDate[d];
+    const byShift={};
+    rows.forEach(function(r){ const s=logShiftOf(r)||'—'; (byShift[s]=byShift[s]||[]).push(r); });
+    const shHtml=['D','E','N','—'].filter(k=>byShift[k]).map(function(k){
+      const rs=byShift[k];
+      const done=rs.filter(isDoneRec_).length;
+      const items=rs.map(function(r){
+        const dur=num(r,'durationSec','耗時秒');
+        const bad=num(r,'bad','異常數');
+        return `<div class="hd-row">
+          <span>${esc(fld(r,['sheet','點班表'])||sheetIdOf(r))}
+            <span style="color:var(--ink-soft);font-size:11.5px">· ${esc(nameOf(r)||'—')}${fld(r,['assign','分工'])?(' · '+esc(fld(r,['assign','分工']))+'半'):''}</span></span>
+          <span style="font-size:12px">
+            ${isDoneRec_(r)?'<b style="color:var(--ok,#2f9e44)">完成</b>':'<b style="color:var(--warn)">'+num(r,'done','完成項數')+'/'+num(r,'total','總項數')+'</b>'}
+            ${dur?(' · '+fmtDur(dur)):''}${bad?(' · <span style="color:var(--bad,#c0392b)">異常'+bad+'</span>'):''}</span></div>`;
+      }).join('');
+      return `<div style="margin:6px 0 2px;font-size:12.5px;font-weight:800;color:var(--ink-soft)">
+          ${SHIFT_NAME[k]||k} · 完成 ${done}/${rs.length} 張</div>${items}`;
+    }).join('');
+    return `<div class="hist-day"><div class="hist-date">📅 ${esc(d)} ${weekday(parseISO(d))}</div>${shHtml}</div>`;
   }).join('');
-  // 按月封存（僅護理長可見更早紀錄）
-  const byMonth={};older.forEach(d=>{const k=`${d.date.getFullYear()}/${String(d.date.getMonth()+1).padStart(2,'0')}`;(byMonth[k]=byMonth[k]||[]).push(d)});
-  const monthHtml=Object.keys(byMonth).map(m=>{
-    const open=state._foldMonths[m];
-    const inner=open?byMonth[m].map((d,di)=>{
-      const rows=d.shifts.map((s,si)=>histShiftRow(s,'m'+m.replace(/\D/g,'')+'-'+di+'-'+si)).join('');
-      return `<div class="hist-day"><div class="hist-date">📅 ${fmtDate(d.date)} ${weekday(d.date)}</div>${rows}</div>`;
-    }).join(''):'';
-    return `<div class="month-fold" onclick="toggleMonth('${m}')">
-        <div><b>${m}</b> <span class="mf-r">${byMonth[m].length} 天紀錄</span></div>
-        <span style="font-size:18px;color:var(--ink-soft)">${open?'▾':'▸'}</span></div>${inner}`;
+  // 當日異常明細
+  const issueByDate={};
+  (ISSUES||[]).forEach(function(r){ const d=dateOfLog(r); if(!d)return; (issueByDate[d]=issueByDate[d]||[]).push(r); });
+  const recentIssues=shown.slice(0,7).filter(d=>issueByDate[d]).map(function(d){
+    return `<div class="hist-day"><div class="hist-date">⚠ ${esc(d)}</div>`
+      + issueByDate[d].map(r=>`<div class="hd-row"><span>${esc(fld(r,['item','項目']))}
+          <span style="font-size:11.5px;color:var(--ink-soft)">· ${esc(fld(r,['sheet','點班表']))}</span></span>
+          <span style="font-size:12px">${esc(fld(r,['reason','原因']))}${fld(r,['note','備註'])?(' · '+esc(fld(r,['note','備註']))):''}</span></div>`).join('')
+      + '</div>';
   }).join('');
-  const years=[2026,2025];const months=Array.from({length:12},(_,i)=>i+1);
-
-  // 權限分級：一般人員只能看 7 天；護理長不限
-  const olderSection=isLeader?`
-    <div class="section-h" style="margin-top:18px">更早紀錄（按月封存）</div>
-    <div class="picker">
-      <select onchange="alert('正式版：依年份查詢')"><option>${years[0]} 年</option><option>${years[1]} 年</option></select>
-      <select onchange="alert('正式版：依月份查詢')">${months.map(m=>`<option>${m} 月</option>`).join('')}</select>
-    </div>
-    ${monthHtml}`
-    :`<div class="card" style="margin-top:16px;text-align:center;padding:18px;color:var(--ink-soft);font-size:13px">
-        🔒 一般人員可查閱近 7 天紀錄<br>更早紀錄需護理長 / 副護理長權限</div>`;
-
-  const aiBtn=`<button class="btn btn-primary btn-block" style="margin-bottom:14px" onclick="state.screen='ai';render()">🤖 AI 點班分析</button>`;
-
+  const empty=`<div class="card" style="text-align:center;padding:20px;color:var(--ink-soft);font-size:13.5px">
+      尚無點班紀錄<br><span style="font-size:12px">人員按下「提交並簽核」後，紀錄會寫入後端並顯示於此</span></div>`;
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">📅 歷史點班紀錄</div><div class="sub">${isLeader?'護理長 · 可查閱全部':'近 7 天'}</div></div>
-    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+    <div><div class="title">📅 歷史點班紀錄</div>
+      <div class="sub">${isLeader?('可查閱全部 · 共 '+dates.length+' 天'):'近 7 天'}</div></div>
+    <button class="back" onclick="state.screen=(state.histBack||'home');render()">返回</button></div></div>
   <div class="screen wide lvl2">
-    ${aiBtn}
-    <div class="section-h">近 7 天</div>
-    ${recentHtml}
-    ${olderSection}
-    <div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">＊demo 為示意資料；正式版由後端依日期查詢真實紀錄</div>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="openHistory()">↻ 重新載入</button>
+    ${dayHtml||empty}
+    ${recentIssues?('<div class="section-h">異常明細（近 7 天）</div>'+recentIssues):''}
+    ${!isLeader&&dates.length>7?`<div class="card" style="margin-top:12px;text-align:center;padding:16px;color:var(--ink-soft);font-size:13px">
+        🔒 更早紀錄需護理長／副護理長權限</div>`:''}
   </div>`;
 }
 function toggleMonth(m){state._foldMonths=state._foldMonths||{};state._foldMonths[m]=!state._foldMonths[m];render()}
@@ -2637,7 +2673,7 @@ function activeOf(sheetId,half){
   (ACTIVE||[]).forEach(function(r){
     if(sheetIdOf(r)!==String(sheetId))return;
     if(dateOfLog(r)!==d)return;
-    const rs=shiftOf(r); if(rs&&rs!==sh)return;
+    const rs=logShiftOf(r); if(rs&&rs!==sh)return;
     if(fld(r,['狀態','status'])==='已結束')return;
     if(half){ const a=assignOf(r); if(a&&a!==String(half))return; }
     if(me&&fld(r,['empId','員編'])===me)return;          // 自己不算
@@ -2663,9 +2699,11 @@ function isDoneRec_(r){
 /* ★ 欄名容錯：Sheet 上的欄名可能帶括號說明，例如「班別(D/E/N)」、「分工(A/B)」，
    直接用 r['班別'] 會抓不到。這裡用「開頭相符」去找。 */
 function fld(r,names){
-  if(!r)return '';
-  for(const n of names){ if(r[n]!==undefined&&r[n]!==null&&String(r[n]).trim()!=='')return String(r[n]).trim(); }
+  if(!r||typeof r!=='object')return '';
+  const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);   // ★ 不讀原型，否則會抓到 Array.prototype.shift
+  for(const n of names){ if(own(r,n)&&r[n]!==undefined&&r[n]!==null&&typeof r[n]!=='function'&&String(r[n]).trim()!=='')return String(r[n]).trim(); }
   for(const k in r){
+    if(!own(r,k)||typeof r[k]==='function')continue;
     const kk=String(k).replace(/[（(].*$/,'').trim();
     for(const n of names){ if(kk===String(n)){ const v=r[k]; if(v!==undefined&&v!==null&&String(v).trim()!=='')return String(v).trim(); } }
   }
@@ -2673,7 +2711,7 @@ function fld(r,names){
 }
 // 統一取 sheetId（欄名可能是中文）
 function sheetIdOf(r){ return fld(r,['sheetId','sheetid','點班表ID']); }
-function shiftOf(r){ return fld(r,['shift','班別']); }
+function logShiftOf(r){ return fld(r,['shift','班別']); }
 function assignOf(r){ return fld(r,['assign','分工']); }
 function nameOf(r){ return fld(r,['name','姓名']); }
 
@@ -2685,7 +2723,7 @@ function shiftDoneOf(sheetId, half){
   const hits=(SIGNLOG||[]).filter(function(r){
     if(sheetIdOf(r)!==String(sheetId))return false;
     if(dateOfLog(r)!==d)return false;
-    const rs=shiftOf(r);
+    const rs=logShiftOf(r);
     if(rs&&rs!==sh)return false;          // 班別空白就不排除（舊資料可能沒填）
     if(half){ const a=assignOf(r); if(a&&a!==String(half))return false; }
     return true;
@@ -2734,7 +2772,7 @@ function doneDiag(){
   if((SIGNLOG||[]).length){
     out+='\n  第一筆的欄位名：'+Object.keys(SIGNLOG[0]).join(' | ');
     out+='\n  解讀 sheetId="'+sheetIdOf(SIGNLOG[0])+'" 日期="'+dateOfLog(SIGNLOG[0])
-       +'" 班別="'+shiftOf(SIGNLOG[0])+'" 姓名="'+nameOf(SIGNLOG[0])+'"';
+       +'" 班別="'+logShiftOf(SIGNLOG[0])+'" 姓名="'+nameOf(SIGNLOG[0])+'"';
     out+='\n  ※ 若欄位名看起來像資料（RC17889…），代表後端表頭列讀錯 → 需更新 GS';
   }
   const today=(SIGNLOG||[]).filter(r=>dateOfLog(r)===d);
@@ -2744,7 +2782,7 @@ function doneDiag(){
   recent.forEach(function(r){
     const raw=String(r.date||r['日期']||'');
     out+='  '+(sheetIdOf(r)||'(無sheetId)')+'  '+raw+' → '+dateOfLog(r)
-       +'  班別'+(String(r.shift||r['班別']||'')||'(空)')
+       +'  班別'+(logShiftOf(r)||'(空)')
        +'  '+(r.name||r['姓名']||'')+'  '+(isDoneRec_(r)?'完成':'未完成')+'\n';
   });
   if(!today.length&&(SIGNLOG||[]).length){
@@ -2980,7 +3018,7 @@ function renderAI(){
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,#6741d9,#9c5cf0)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">🤖 AI 點班分析</div><div class="sub">近 30 天資料 · ${esc(state.user.name)}</div></div>
-    <button class="back" onclick="state.screen='history';render()">返回</button></div></div>
+    <button class="back" onclick="openHistory()">返回</button></div></div>
   <div class="screen wide lvl2">
     <div class="ai-card">
       <div class="ai-hd"><div class="ai-logo">🤖</div>
