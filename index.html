@@ -508,7 +508,7 @@ async function submitRollcall(){
   state.rcTiming[tk]={start:startMs,end:endMs};
   state.lastTiming={start:startMs,end:endMs,durationSec:durationSec,date:rcDate};
   const payload={date:rcDate, week:isoWeek(parseISO(rcDate)),
-    shift:state.shift||'', sheetId:s.id, sheet:s.name||'', assign:state.half||'',
+    shift:effShift(), sheetId:s.id, sheet:s.name||'', assign:state.half||'',
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
     startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec,
@@ -549,7 +549,7 @@ async function aiHandover(){
   list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
     const r=state.reason[k]||'未註記原因';issues.push({t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')});}});
   const box=document.getElementById('aiBox');box.style.display='block';box.textContent='AI 產生中…';
-  try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[state.shift],issues}); }
+  try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[effShift()],issues}); }
   catch(e){ box.textContent='AI 失敗:'+e; }
 }
 // ==========================================================================
@@ -747,8 +747,7 @@ function rebindForDate(){
   if(state.screen==='home')renderHome();
   bindSchedule(curRcDateObj()).then(b=>{
     state.todayBind=b;
-    if(b&&b.shift&&/^[DEN]$/.test(String(b.shift)))state.shift=String(b.shift);
-    if(state.screen==='home')renderHome();
+    if(state.screen==='home')renderHome();     // 班別由 effShift() 即時算，不再寫進 state
   }).catch(()=>{state.todayBind={status:'nomatch'};if(state.screen==='home')renderHome();});
 }
 function setRcDate(v){
@@ -1237,8 +1236,50 @@ function keyOf(o){return o.sheet+'|'+o.i}
 let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{},reason:{},note:{}};
 const store={
   save(){try{localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
-  load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}}
+  load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}
+    /* ★ 班別不可以沾黏。整包 state 都存進 localStorage，班別也被存進去，
+       舊版用錯的裝置時區算出「大夜」就一直卡在瀏覽器裡 ——
+       時區修好了也沒用，因為 state.shift||detectShift() 讓舊值優先。
+       現在每次啟動都丟掉存下來的班別，一律重新判斷（見 effShift）；
+       只有「你自己手動選的」才留著，而且只在當天有效。 */
+    delete state.shift;
+    if(state.shiftManualDate && state.shiftManualDate!==todayISO()){
+      delete state.shiftManual; delete state.shiftManualDate;
+    }
+  }
 };
+
+/* ★ 班別的唯一計算入口。優先順序：
+   ① 你自己手動選的（只在同一個點班日期內有效）
+   ② 排班表帶回來的（只認 D／E／N，其他代碼如 M 不認）
+   ③ 用台北時間的時鐘推算
+   任何地方要用班別都走這裡，不要再自己讀 state.shift。 */
+function effShift(){
+  if(state.shiftManual && /^[DEN]$/.test(state.shiftManual)
+     && state.shiftManualDate===curRcDate()) return state.shiftManual;
+  const b=state.todayBind;
+  if(b && b.shift && /^[DEN]$/.test(String(b.shift))) return String(b.shift);
+  return detectShift();
+}
+// 班別是怎麼來的（畫面上要說清楚，不然又變成猜）
+function shiftSrc(){
+  if(state.shiftManual && /^[DEN]$/.test(state.shiftManual)
+     && state.shiftManualDate===curRcDate()) return 'manual';
+  const b=state.todayBind;
+  if(b && b.shift && /^[DEN]$/.test(String(b.shift))) return 'bind';
+  return 'clock';
+}
+function setShift(s){
+  if(!/^[DEN]$/.test(s))return;
+  state.shiftManual=s; state.shiftManualDate=curRcDate();
+  render();
+  SYNC_AT=0; syncAll();          // 換班別要重抓，完成狀態才會跟著換
+}
+function resetShift(){
+  delete state.shiftManual; delete state.shiftManualDate;
+  render();
+  SYNC_AT=0; syncAll();
+}
 
 // progress for a sheet (all halves)
 function sheetProgress(sheetId){
@@ -1298,19 +1339,37 @@ async function doLogin(){
   state.rcDate=todayISO();
   state.todayBind={status:'loading'};
   state.screen='home';render();
-  try{ state.todayBind=await bindSchedule(curRcDateObj());
-       if(state.todayBind&&state.todayBind.shift&&/^[DEN]$/.test(String(state.todayBind.shift)))state.shift=String(state.todayBind.shift);
-  }catch(e){ state.todayBind={status:'nomatch'}; }
+  try{ state.todayBind=await bindSchedule(curRcDateObj()); }
+  catch(e){ state.todayBind={status:'nomatch'}; }
   if(state.screen==='home') renderHome();
 }
 function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
 
 function renderHome(){
-  const now=tpeDate(),cur=state.shift||detectShift();state.shift=cur;
+  const now=tpeDate(),cur=effShift();
   const u=state.user;const isLeader=(u.role==='護理長'||u.role==='副護理長');
-  const stat=['D','E','N'].map(s=>`<div class="sum-stat ${s===cur?'':''}" style="${s===cur?'background:var(--warn-soft)':''}">
-     <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'未開始'}</div>
+  /* ★ 班別改成可以點選切換，並且說清楚現在這個班別是哪來的。
+     之前班別只由時鐘或班表決定、又被存在 localStorage 裡沾黏，
+     顯示錯了完全沒辦法自己改 —— 補點別班、代班也做不到。 */
+  const src=shiftSrc();
+  const stat=['D','E','N'].map(s=>`<div class="sum-stat" onclick="setShift('${s}')" role="button" tabindex="0"
+     title="切換為${SHIFT_NAME[s]}"
+     style="cursor:pointer;${s===cur?'background:var(--warn-soft);border-color:var(--warn)':''}">
+     <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'切換'}</div>
      <div class="l">${SHIFT_NAME[s]}</div></div>`).join('');
+  const bindCode=(state.todayBind&&state.todayBind.shift)?String(state.todayBind.shift):'';
+  const srcText=
+    src==='manual' ? `已手動指定為 <b>${SHIFT_NAME[cur]}</b>`
+  : src==='bind'   ? `依班表帶入 <b>${SHIFT_NAME[cur]}</b>`
+  :                  `依台北時間 ${tpeHM()} 推算為 <b>${SHIFT_NAME[cur]}</b>`;
+  const bindNote=(src!=='bind'&&bindCode&&!/^[DEN]$/.test(bindCode))
+    ? `　·　班表代碼為「${esc(bindCode)}」，不是 D／E／N，系統無法判斷` : '';
+  const shiftBar=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
+      font-size:11.5px;color:var(--ink-soft);margin:6px 2px 0">
+    <span>${srcText}${bindNote}　·　點上方方塊可改</span>
+    ${src==='manual'?`<button onclick="resetShift()" style="border:1px solid var(--line);background:transparent;
+      color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">改回自動</button>`:''}
+  </div>`;
   /* ★ 首頁只留「這一班要做的事」；查詢、統計、設定全部收進管理中心。
      護理師早上七點手上有病人，要的是兩下點到目標，不是十幾顆按鈕。 */
   const hasAdmin=isLeader||can('items.edit')||can('perm.manage');
@@ -1333,8 +1392,9 @@ function renderHome(){
       <div class="day">${weekday(now)} · 目前班別 <span class="shift-pill">🕐 ${SHIFT_NAME[cur]}</span></div>
     </div></div>
     ${tzWarnCard()}
-    <div class="section-h">今日各班狀態</div>
+    <div class="section-h">今日各班狀態（點選可切換本班）</div>
     <div class="sum-row">${stat}</div>
+    ${shiftBar}
     <div class="section-h">點班日期</div>
     ${rcDatePicker()}
     ${todayBindCard()}
@@ -1361,7 +1421,7 @@ function renderAreas(){
   }).join('');
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">選擇分區</div><div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]}</div></div>
+    <div><div class="title">選擇分區</div><div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[effShift()]}</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen wide"><div class="area-tiles">${tiles}</div></div>`;
 }
@@ -1523,7 +1583,7 @@ function renderRollcall(){
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">${esc(s.name)}${halfTxt}</div>
-      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]} · ${esc(state.user.name)}</div></div>
+      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[effShift()]} · ${esc(state.user.name)}</div></div>
     <button class="back" onclick="backFromRollcall()">返回</button></div></div>
   <div class="screen wide lvl2">
     ${banner}
@@ -1531,7 +1591,7 @@ function renderRollcall(){
     ${srvBanner}
     ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
-      <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(state.shift)}）點班結果</div>
+      <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(effShift())}）點班結果</div>
       <div style="font-size:13px;color:var(--ink-soft);line-height:1.7">
         ＊正式版顯示上一班的完成狀態與異常，交接更清楚。<br>
         <span style="color:var(--bad);font-weight:700">● 未結請修</span>：x-ray 遙控器（上一班報修，維修中）— 已自動帶入本班<br>
@@ -2633,7 +2693,7 @@ function genHistDemo(){
   for(let i=0;i<14;i++){
     const d=new Date(today);d.setDate(d.getDate()-i);
     const shifts=['N','E','D'].map((sh,si)=>{
-      const total=14, done=(i===0&&sh===state.shift)?Math.floor(Math.random()*total):total;
+      const total=14, done=(i===0&&sh===effShift())?Math.floor(Math.random()*total):total;
       const issueN=(i+sh.charCodeAt(0))%4===0?1:0;
       const issues=[];for(let n=0;n<issueN;n++)issues.push(ISSUE_POOL[(i+si+n)%ISSUE_POOL.length]);
       const op=NAMES[(i+si)%NAMES.length];
@@ -2787,7 +2847,7 @@ async function postProgress(opts){
   const s=sheetById(state.sheetId), list=itemsOf(s.id,state.half);
   let done=0; list.forEach(o=>{const v=state.checks[keyOf(o)];if(v==='ok'||v==='bad')done++;});
   try{
-    await owedWrite('rollcall_progress',{date:curRcDate(),shift:state.shift||detectShift(),
+    await owedWrite('rollcall_progress',{date:curRcDate(),shift:effShift(),
       sheetId:s.id,sheet:s.name||'',assign:state.half||'',
       empId:state.user.id,name:state.user.name,done:done,total:list.length,
       clear:!!opts.clear});
@@ -2795,7 +2855,7 @@ async function postProgress(opts){
 }
 // 別人正在點這張表嗎？（排除自己、排除已完成、排除過期）
 function activeOf(sheetId,half){
-  const d=curRcDate(), sh=String(state.shift||detectShift());
+  const d=curRcDate(), sh=effShift();
   const me=state.user?String(state.user.id):'';
   let best=null;
   (ACTIVE||[]).forEach(function(r){
@@ -2847,7 +2907,7 @@ function nameOf(r){ return fld(r,['name','姓名']); }
    原本清單的進度只看本機 state.checks，所以 A 在別台點完，B 這台完全看不到，
    結果同一區被重複點好幾次。這裡改成從後端 rollcall_log 判斷。 */
 function shiftDoneOf(sheetId, half){
-  const d=curRcDate(), sh=String(state.shift||detectShift());
+  const d=curRcDate(), sh=effShift();
   const hits=(SIGNLOG||[]).filter(function(r){
     if(sheetIdOf(r)!==String(sheetId))return false;
     if(dateOfLog(r)!==d)return false;
@@ -2934,7 +2994,7 @@ function syncLabel(){
 /* 🔍 完成狀態診斷：直接印出「這台在比對什麼」與「後端實際有什麼」，
    若別台點完這台卻沒顯示，一看就知道是日期、班別還是 sheetId 對不上。 */
 function doneDiag(){
-  const d=curRcDate(), sh=String(state.shift||detectShift());
+  const d=curRcDate(), sh=effShift();
   let out='這台的比對條件\n  日期＝'+d+'\n  班別＝'+sh+'\n';
   out+='\n上次同步耗時：'+(SIGNLOG_MS===null?'尚未同步':(SIGNLOG_MS<0?'失敗':(SIGNLOG_MS/1000).toFixed(2)+' 秒'))
      +(SIGNLOG_AT?('（'+Math.round((Date.now()-SIGNLOG_AT)/1000)+' 秒前）'):'')+'\n';
@@ -3240,7 +3300,7 @@ function renderSummary(){
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">點班摘要 · ${esc(s.name)}${state.half?(' '+state.half+'半'):''}</div>
-      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[state.shift]}</div></div>
+      <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[effShift()]}</div></div>
     <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
   <div class="screen narrow">
     <div class="sum-row">
@@ -3291,7 +3351,6 @@ function renderDone(){
 // ---------- start ----------
 applyTheme();
 store.load();
-state.shift=state.shift||detectShift();
 if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=todayISO(); rebindForDate(); }
