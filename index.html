@@ -145,7 +145,8 @@
   .badge{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
   .badge-2p{background:#7a5cc71a;color:#7a5cc7}
   .st-tag{font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap}
-  .st-todo{background:#eef2f5;color:var(--ink-soft)} .st-doing{background:var(--warn-soft);color:var(--warn)} .st-done{background:var(--ok-soft);color:var(--ok)}
+  .st-todo{background:#eef2f5;color:var(--ink-soft)}
+  .st-warn{background:#fff4e6;color:#e8590c;border:1px solid #ffd8a8;font-weight:800} .st-doing{background:var(--warn-soft);color:var(--warn)} .st-done{background:var(--ok-soft);color:var(--ok)}
 
   /* half select */
   .half-card{background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:22px;text-align:center;cursor:pointer;font-weight:800;font-size:18px}
@@ -1143,11 +1144,17 @@ function sheetProgress(sheetId){
   let done=0;all.forEach(o=>{if(state.checks[keyOf(o)])done++});
   return {total:all.length,done};
 }
+/* ★ 狀態標籤要說實話。原本只要本機把項目勾完就顯示「已完成」，
+   但那時可能還沒按「提交並簽核」，後端沒紀錄、別台也看不到 ——
+   人員會誤以為完成了。改成分清「勾完但未提交」與「真的已提交」。 */
 function sheetStatus(sheetId){
   const p=sheetProgress(sheetId);
-  if(p.done===0)return ['st-todo','未開始'];
-  if(p.done<p.total)return ['st-doing',`進行中 ${p.done}/${p.total}`];
-  return ['st-done','已完成'];
+  const sd=(typeof shiftDoneOf==='function')?shiftDoneOf(sheetId,null):null;
+  if(sd&&sd.isDone)return ['st-done','已完成'];              // 後端有完成紀錄＝真的完成
+  if(p.total>0&&p.done>=p.total)return ['st-warn','待提交'];  // 勾完了但後端沒紀錄
+  if(p.done>0)return ['st-doing',`進行中 ${p.done}/${p.total}`];
+  if(sd)return ['st-doing',`他人 ${sd.done}/${sd.total}`];    // 別台點到一半
+  return ['st-todo','未開始'];
 }
 
 // ---------- render ----------
@@ -2311,8 +2318,7 @@ let SIGNLOG=[];   // 提交寫回的完成紀錄 rollcall_log
    一律從紀錄裡取出日期再自己算週次，才不會全部變成「未點」。 */
 function dateOfLog(r){
   if(!r)return '';
-  const v=r.date||r['日期']||'';
-  const s=String(v).trim();
+  const s=fld(r,['date','日期']);
   if(!s)return '';
   /* ★ Sheets 可能把日期存成 Date，後端 JSON 化後變成 '2026-09-09T16:00:00.000Z'
      （台北 9/10 午夜換算 UTC 會退一天）。含 T 時間的字串一律交給瀏覽器
@@ -2327,8 +2333,8 @@ function dateOfLog(r){
   return isNaN(d.getTime())?'':fmtISO(d);
 }
 function weekOfLog(r){
-  const w=r&&(r.week||r['週次']);
-  if(w&&String(w).trim())return String(w).trim();
+  const w=fld(r,['week','週次']);
+  if(w)return w;
   const d=dateOfLog(r);
   return d?isoWeek(parseISO(d)):'';
 }
@@ -2336,14 +2342,28 @@ function logsOfWeek(wk){ return (SIGNLOG||[]).filter(r=>weekOfLog(r)===String(wk
 // 是否完成：舊資料可能寫「是」，也可能只有完成項數/總項數
 function isDoneRec_(r){
   if(!r)return false;
-  const v=r.isDone!==undefined?r.isDone:r['是否完成'];
-  if(v==='是'||v===true||String(v).toUpperCase()==='TRUE')return true;
-  const done=Number(r.done!==undefined?r.done:r['完成項數']);
-  const tot =Number(r.total!==undefined?r.total:r['總項數']);
+  const v=fld(r,['isDone','是否完成']);
+  if(v==='是'||String(v).toUpperCase()==='TRUE')return true;
+  const done=Number(fld(r,['done','完成項數']));
+  const tot =Number(fld(r,['total','總項數']));
   return (!isNaN(done)&&!isNaN(tot)&&tot>0&&done>=tot);
 }
+/* ★ 欄名容錯：Sheet 上的欄名可能帶括號說明，例如「班別(D/E/N)」、「分工(A/B)」，
+   直接用 r['班別'] 會抓不到。這裡用「開頭相符」去找。 */
+function fld(r,names){
+  if(!r)return '';
+  for(const n of names){ if(r[n]!==undefined&&r[n]!==null&&String(r[n]).trim()!=='')return String(r[n]).trim(); }
+  for(const k in r){
+    const kk=String(k).replace(/[（(].*$/,'').trim();
+    for(const n of names){ if(kk===String(n)){ const v=r[k]; if(v!==undefined&&v!==null&&String(v).trim()!=='')return String(v).trim(); } }
+  }
+  return '';
+}
 // 統一取 sheetId（欄名可能是中文）
-function sheetIdOf(r){ return String((r&&(r.sheetId||r['sheetId']))||'').trim(); }
+function sheetIdOf(r){ return fld(r,['sheetId','sheetid','點班表ID']); }
+function shiftOf(r){ return fld(r,['shift','班別']); }
+function assignOf(r){ return fld(r,['assign','分工']); }
+function nameOf(r){ return fld(r,['name','姓名']); }
 
 /* ★★ 跨裝置「本班是否已有人點過」——這是人員端最重要的資訊。
    原本清單的進度只看本機 state.checks，所以 A 在別台點完，B 這台完全看不到，
@@ -2353,17 +2373,17 @@ function shiftDoneOf(sheetId, half){
   const hits=(SIGNLOG||[]).filter(function(r){
     if(sheetIdOf(r)!==String(sheetId))return false;
     if(dateOfLog(r)!==d)return false;
-    const rs=String(r.shift||r['班別']||'').trim();
+    const rs=shiftOf(r);
     if(rs&&rs!==sh)return false;          // 班別空白就不排除（舊資料可能沒填）
-    if(half){ const a=String(r.assign||r['分工']||''); if(a&&a!==String(half))return false; }
+    if(half){ const a=assignOf(r); if(a&&a!==String(half))return false; }
     return true;
   });
   if(!hits.length)return null;
   const fin=hits.filter(isDoneRec_);
   const pick=(fin.length?fin:hits)[ (fin.length?fin:hits).length-1 ];
-  const num=(a,b)=>{const v=Number(pick[a]!==undefined?pick[a]:pick[b]);return isNaN(v)?0:v;};
-  return { by:String(pick.name||pick['姓名']||''),
-           at:String(pick.submittedAt||pick['簽核時間']||''),
+  const num=(a,b)=>{const v=Number(fld(pick,[a,b]));return isNaN(v)?0:v;};
+  return { by:nameOf(pick),
+           at:fld(pick,['submittedAt','簽核時間']),
            done:num('done','完成項數'), total:num('total','總項數'),
            isDone:fin.length>0, times:hits.length };
 }
@@ -2382,6 +2402,12 @@ function doneDiag(){
   const d=curRcDate(), sh=String(state.shift||detectShift());
   let out='這台的比對條件\n  日期＝'+d+'\n  班別＝'+sh+'\n';
   out+='\n後端 rollcall_log 共 '+(SIGNLOG||[]).length+' 筆';
+  if((SIGNLOG||[]).length){
+    out+='\n  第一筆的欄位名：'+Object.keys(SIGNLOG[0]).join(' | ');
+    out+='\n  解讀 sheetId="'+sheetIdOf(SIGNLOG[0])+'" 日期="'+dateOfLog(SIGNLOG[0])
+       +'" 班別="'+shiftOf(SIGNLOG[0])+'" 姓名="'+nameOf(SIGNLOG[0])+'"';
+    out+='\n  ※ 若欄位名看起來像資料（RC17889…），代表後端表頭列讀錯 → 需更新 GS';
+  }
   const today=(SIGNLOG||[]).filter(r=>dateOfLog(r)===d);
   out+='\n  其中日期符合今天的：'+today.length+' 筆\n';
   const recent=(SIGNLOG||[]).slice(-8);
@@ -2399,6 +2425,17 @@ function doneDiag(){
   if(!(SIGNLOG||[]).length){
     out+='\n★ 後端一筆都沒有 → 提交並沒有真的寫進 Sheet。\n'
        +'  請在點班完成畫面確認有出現「✓ 已存入後端」。';
+  }
+  // 本機勾完但後端沒紀錄 → 最常見是「只勾項目、沒按提交並簽核」
+  const pend=SHEETS.filter(function(s){
+    const p=sheetProgress(s.id); const sd=shiftDoneOf(s.id,null);
+    return p.total>0&&p.done>=p.total&&!(sd&&sd.isDone);
+  });
+  if(pend.length){
+    out+='\n\n★ 這台已勾完但後端查無紀錄的點班表：\n  '
+       + pend.map(function(s){return s.name;}).join('、')
+       + '\n  → 最常見原因：項目勾完了，但沒有按最下面的「提交並簽核」。\n'
+       + '  勾選只存在本機，一定要提交才會寫進後端、別台才看得到。';
   }
   alert(out);
 }
