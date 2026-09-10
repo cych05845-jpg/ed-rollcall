@@ -1162,7 +1162,6 @@ function render(){
 
 function renderLogin(){
   $app.innerHTML=`
-  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 登入碼初始＝員編</div>
   <div class="login-wrap">
     <div class="login-logo">🩺</div>
     <h1>急診護理站點班</h1>
@@ -1210,7 +1209,6 @@ function renderHome(){
    + (can('perm.manage')?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="openPermAdmin()">👥 權限設定（財管組・見證資格）</button>`:'');
   $app.innerHTML=`
-  <div class="demo-banner">⚙️ Demo · 真實名冊與項目 · 已連動排班系統（依今日班表帶入分區）</div>
   <div class="topbar"><div class="topbar-in">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div><div class="title">🩺 急診護理站點班</div>
@@ -1287,7 +1285,10 @@ function renderPick(){
   <div class="screen wide lvl2">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <div style="font-size:12px;color:var(--ink-soft)">綠底＝本班已有人點完（跨裝置同步）</div>
-      <button class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="refreshDoneStatus()">↻ 更新狀態</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost" style="font-size:13px;padding:6px 10px" onclick="doneDiag()" title="別台點完這台卻沒顯示時點這">🔍</button>
+        <button class="btn btn-ghost" style="font-size:13px;padding:6px 12px" onclick="refreshDoneStatus()">↻ 更新狀態</button>
+      </div>
     </div>
     <div class="sheet-list">${rows}</div></div>`;
 }
@@ -2312,6 +2313,14 @@ function dateOfLog(r){
   if(!r)return '';
   const v=r.date||r['日期']||'';
   const s=String(v).trim();
+  if(!s)return '';
+  /* ★ Sheets 可能把日期存成 Date，後端 JSON 化後變成 '2026-09-09T16:00:00.000Z'
+     （台北 9/10 午夜換算 UTC 會退一天）。含 T 時間的字串一律交給瀏覽器
+     依本地時區還原，才不會整整差一天而永遠比對不到。 */
+  if(/T\d{2}:\d{2}/.test(s)){
+    const d=new Date(s);
+    if(!isNaN(d.getTime()))return fmtISO(d);
+  }
   const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
   if(m)return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
   const d=new Date(s);
@@ -2344,7 +2353,8 @@ function shiftDoneOf(sheetId, half){
   const hits=(SIGNLOG||[]).filter(function(r){
     if(sheetIdOf(r)!==String(sheetId))return false;
     if(dateOfLog(r)!==d)return false;
-    if(String(r.shift||r['班別']||'')!==sh)return false;
+    const rs=String(r.shift||r['班別']||'').trim();
+    if(rs&&rs!==sh)return false;          // 班別空白就不排除（舊資料可能沒填）
     if(half){ const a=String(r.assign||r['分工']||''); if(a&&a!==String(half))return false; }
     return true;
   });
@@ -2365,6 +2375,32 @@ function shortTime(s){
 async function refreshDoneStatus(){
   await loadSignLog();
   if(state.screen==='pick'||state.screen==='rollcall'||state.screen==='half')render();
+}
+/* 🔍 完成狀態診斷：直接印出「這台在比對什麼」與「後端實際有什麼」，
+   若別台點完這台卻沒顯示，一看就知道是日期、班別還是 sheetId 對不上。 */
+function doneDiag(){
+  const d=curRcDate(), sh=String(state.shift||detectShift());
+  let out='這台的比對條件\n  日期＝'+d+'\n  班別＝'+sh+'\n';
+  out+='\n後端 rollcall_log 共 '+(SIGNLOG||[]).length+' 筆';
+  const today=(SIGNLOG||[]).filter(r=>dateOfLog(r)===d);
+  out+='\n  其中日期符合今天的：'+today.length+' 筆\n';
+  const recent=(SIGNLOG||[]).slice(-8);
+  out+='\n最近 '+recent.length+' 筆（原始日期 → 解讀後）：\n';
+  recent.forEach(function(r){
+    const raw=String(r.date||r['日期']||'');
+    out+='  '+(sheetIdOf(r)||'(無sheetId)')+'  '+raw+' → '+dateOfLog(r)
+       +'  班別'+(String(r.shift||r['班別']||'')||'(空)')
+       +'  '+(r.name||r['姓名']||'')+'  '+(isDoneRec_(r)?'完成':'未完成')+'\n';
+  });
+  if(!today.length&&(SIGNLOG||[]).length){
+    out+='\n★ 後端有資料但日期都對不上今天 → 多半是 GS 還沒更新到 v7，\n'
+       +'  日期被存成日期物件、讀回來差一天。請重新部署後端。';
+  }
+  if(!(SIGNLOG||[]).length){
+    out+='\n★ 後端一筆都沒有 → 提交並沒有真的寫進 Sheet。\n'
+       +'  請在點班完成畫面確認有出現「✓ 已存入後端」。';
+  }
+  alert(out);
 }
 async function loadSignLog(){
   if(!API_URL)return;
