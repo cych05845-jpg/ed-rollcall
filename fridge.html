@@ -92,10 +92,6 @@ const EXPECT_VER='2026-09-10-v10';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
-initControls();
-render();
-syncFromServer();
-syncBanner();
 
 /* ★ 自動向後端同步（25 秒一次）＋ 切回這個分頁時立刻同步。
    別台剛登錄的溫度會自己出現，不必手動重整、也不會誤以為沒人登錄。
@@ -107,9 +103,15 @@ async function autoSync(force){
   SRV_AT=Date.now();
   await syncFromServer();
 }
-setInterval(function(){ if(!document.hidden) autoSync(); },25000);
-document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
-window.addEventListener('focus',function(){ autoSync(); });
+
+/* ★★★ 啟動程序移到整份程式的最後面（見檔尾 boot()）。
+   原本這裡就直接呼叫 syncFromServer() 與 syncBanner()，
+   但它們用到的 serverCount（第 210 行 let）與 WQ（第 362 行 const）
+   都宣告在後面 —— JS 的 let/const 在宣告前存取會直接拋
+   「Cannot access 'serverCount' before initialization」。
+   結果 syncFromServer() 每次載入都在第一行就死掉，
+   從來沒有真的讀過後端 → 徽章永遠顯示「後端 0 筆」，
+   於是讓人以為沒存到、又重新存一次。這是冰箱溫度不一致的另一個獨立原因。 */
 
 function keyOf(){return 'fridge_'+data.unit+'_'+data.ym;}
 function blank(unit,ym){return {unit,ym,readings:{},abn:{},superv:[]};}
@@ -591,6 +593,18 @@ function exportCSV(){
   const blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url; a.download=`藥品冰箱溫度_${data.unit}_${data.ym||''}.csv`; a.click(); URL.revokeObjectURL(url);
 }
+
+/* ★ 啟動：一定要放在所有 let/const 宣告之後，否則會踩到 TDZ（見上方說明） */
+function boot(){
+  initControls();
+  render();
+  syncBanner();
+  syncFromServer();
+  setInterval(function(){ if(!document.hidden) autoSync(); },25000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
+  window.addEventListener('focus',function(){ autoSync(); });
+}
+boot();
 </script>
 </body>
 </html>

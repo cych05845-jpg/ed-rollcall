@@ -167,10 +167,7 @@ function retrySync(){
 
 const P=new URLSearchParams(location.search);
 let data=startData();
-initControls();
-render();
 syncFromServer();
-syncBanner();
 
 function keyOf(){return 'o2_'+(data.dept||'')+'_'+data.ym;}
 function blank(dept,ym){return {dept,ym,marks:{},notes:{}};}
@@ -351,6 +348,15 @@ function exportCSV(){
   const blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=`氧氣桶審核_${data.dept||''}_${data.ym||''}.csv`;a.click();URL.revokeObjectURL(url);
 }
+
+/* ★ 啟動放在所有 let/const 宣告之後，避免「Cannot access X before initialization」
+   （冰箱表就踩過這個坑：syncFromServer 每次載入都在第一行就死掉）。 */
+function boot(){
+  initControls();
+  render();
+  syncBanner();
+}
+boot();
 </script>
 </body>
 </html>

@@ -734,8 +734,10 @@ function curRcDate(){return state.rcDate||todayISO();}
 function curRcDateObj(){return parseISO(curRcDate());}
 function isLeaderUser(){const u=state.user;return !!(u&&(u.role==='護理長'||u.role==='副護理長'));}
 const NIGHT_OPEN_MIN=23*60+30;        // 23:30 起可補「明天」大夜(0-8),上班前完成
-function maxRcDate(){const d=tpeDate();
-  if(n.getHours()*60+n.getMinutes()>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);return d;}
+function maxRcDate(){
+  const t=tpeParts(), d=tpeDate();      // ★ 台北時間為準（別再用裝置時區）
+  if(t.h*60+t.mi>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);
+  return d;}
 function minRcDate(){const n=tpeDate();
   if(isLeaderUser())return new Date(n.getFullYear(),n.getMonth()-1,1);  // 護理長/副護理長:上月1號起(更寬,可跨月)
   const b=new Date(n.getFullYear(),n.getMonth(),n.getDate());b.setDate(b.getDate()-14);
