@@ -2271,6 +2271,36 @@ function toggleMonth(m){state._foldMonths=state._foldMonths||{};state._foldMonth
 // ===== Leader：未完成點班 / 儀保 提醒 =====
 // ===== 簽核資料(往回一個月) =====
 let SIGNLOG=[];   // 提交寫回的完成紀錄 rollcall_log
+/* ★ 完成紀錄的「週次」：舊資料的 rollcall_log 沒有週次欄，
+   而且 Sheets 會把日期存成 Date、讀回來可能是 '2026-09-10' 之類。
+   一律從紀錄裡取出日期再自己算週次，才不會全部變成「未點」。 */
+function dateOfLog(r){
+  if(!r)return '';
+  const v=r.date||r['日期']||'';
+  const s=String(v).trim();
+  const m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m)return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  const d=new Date(s);
+  return isNaN(d.getTime())?'':fmtISO(d);
+}
+function weekOfLog(r){
+  const w=r&&(r.week||r['週次']);
+  if(w&&String(w).trim())return String(w).trim();
+  const d=dateOfLog(r);
+  return d?isoWeek(parseISO(d)):'';
+}
+function logsOfWeek(wk){ return (SIGNLOG||[]).filter(r=>weekOfLog(r)===String(wk)); }
+// 是否完成：舊資料可能寫「是」，也可能只有完成項數/總項數
+function isDoneRec_(r){
+  if(!r)return false;
+  const v=r.isDone!==undefined?r.isDone:r['是否完成'];
+  if(v==='是'||v===true||String(v).toUpperCase()==='TRUE')return true;
+  const done=Number(r.done!==undefined?r.done:r['完成項數']);
+  const tot =Number(r.total!==undefined?r.total:r['總項數']);
+  return (!isNaN(done)&&!isNaN(tot)&&tot>0&&done>=tot);
+}
+// 統一取 sheetId（欄名可能是中文）
+function sheetIdOf(r){ return String((r&&(r.sheetId||r['sheetId']))||'').trim(); }
 async function loadSignLog(){
   if(!API_URL)return;
   try{const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=rollcall_log',{cache:'no-store'});
@@ -2361,9 +2391,9 @@ async function retrySignoff(week,empId){
 }
 // 統一推播提醒(v1：本裝置通知；後端FCM接通後升級為跨裝置廣播)
 function undoneSheetsOfWeek(){
-  const logs=SIGNLOG.filter(r=>String(r.week)===String(state.signWeek));
-  const bySheet={};logs.forEach(r=>{(bySheet[r.sheetId]=bySheet[r.sheetId]||[]).push(r);});
-  return SHEETS.filter(s=>!(bySheet[s.id]||[]).some(r=>(r.isDone==='是'||r.isDone===true)));
+  const logs=logsOfWeek(state.signWeek);
+  const bySheet={};logs.forEach(r=>{const k=sheetIdOf(r);(bySheet[k]=bySheet[k]||[]).push(r);});
+  return SHEETS.filter(s=>!(bySheet[s.id]||[]).some(isDoneRec_));
 }
 async function pushRemind(){
   if(!('Notification' in window)){alert('此裝置／瀏覽器不支援系統通知');return;}
@@ -2397,9 +2427,9 @@ function renderLeader(){
   if(!weeks.some(w=>w.key===state.signWeek))state.signWeek=weeks[0].key;
   const wsel=weeks.map(w=>`<option value="${w.key}" ${w.key===state.signWeek?'selected':''}>${w.label}（${w.key}）${w.isThis?' · 本週':''}</option>`).join('');
   const hasAny=SIGNLOG.length>0;
-  const logs=SIGNLOG.filter(r=>String(r.week)===String(state.signWeek));
-  const bySheet={};logs.forEach(r=>{(bySheet[r.sheetId]=bySheet[r.sheetId]||[]).push(r);});
-  const isDoneRec=r=>(r.isDone==='是'||r.isDone===true);
+  const logs=logsOfWeek(state.signWeek);
+  const bySheet={};logs.forEach(r=>{const k=sheetIdOf(r);(bySheet[k]=bySheet[k]||[]).push(r);});
+  const isDoneRec=isDoneRec_;
   const rowsHtml=SHEETS.map(s=>{
     const es=bySheet[s.id]||[],n=es.length,done=es.some(isDoneRec);
     const tag=n?(done?`<span class="pill-ok">已完成 · ${n}次</span>`:`<span class="pill-warn">部分 · ${n}次</span>`):`<span class="pill-bad">未點</span>`;
