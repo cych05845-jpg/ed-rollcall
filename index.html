@@ -419,6 +419,197 @@ async function getJSON(q){
    spec 寫法：[['items'],['rollcall_log',7],['fridge_temp',30]]
    後端不支援 ?tables= 時（GS 還沒更新）會自動退回逐張抓，功能不會壞。 */
 let BUNDLE_OK=true;
+/* ★ 後端實際跑的版本（批次讀取時後端會回 _version）。
+   為什麼一定要知道：v11 不認識 cart_seal_check 這類新任務，doPost 會讓它
+   「掉進 AI 分支」—— 等於每次提交點班都白打一次 Gemini，吃掉每日 AI 額度。
+   所以封籤相關的寫入一律先確認後端夠新才送。 */
+let API_VER_SEEN='';
+function apiVerNum(){ const m=String(API_VER_SEEN||'').match(/v(\d+)\s*$/); return m?+m[1]:0; }
+function sealWriteOK(){ return apiVerNum()>=12; }
+/* ===================== 封籤式急救車（留觀急救車） =====================
+   留觀的急救車可以上鎖，用的是「一次性數字封籤」——封籤沒斷就代表車內沒被動過。
+   所以每班點的是封籤號，不是 45 個品項；只有開封過才做全品項清點與期限重登。
+   全點的觸發時機（護理長指定）：① 開封後 ② 系統提醒快到期時，不設固定月排程。 */
+let CART_SEAL=[], CART_EXPIRY=[];
+/* ★ 手建分頁的欄名容錯。
+   護理長是自己在 Sheet 上開分頁貼欄名的，很容易出現「封籤號 」這種前後帶空白、
+   或「車號(必填)」這種加註記的寫法。用原字串當 key 取值就會取到 undefined ——
+   畫面只會顯示「尚未建立封籤」，完全看不出是一個空格造成的。
+   所以這裡一律先把欄名去空白、去括號註記再比對。 */
+function cellOfRow(o,names){
+  if(!o) return '';
+  const map={};
+  Object.keys(o).forEach(k=>{
+    const kk=String(k).replace(/[（(].*$/,'').replace(/\s+/g,'').trim();
+    if(kk&&map[kk]===undefined) map[kk]=o[k];
+  });
+  for(let i=0;i<names.length;i++){
+    const kk=String(names[i]).replace(/[（(].*$/,'').replace(/\s+/g,'').trim();
+    const v=map[kk];
+    if(v!=null&&String(v).trim()!=='') return String(v).trim();
+  }
+  return '';
+}
+async function loadCartSeal(pre){
+  if(!API_URL&&!pre)return;
+  try{
+    const a=pre||await getJSON('table=cart_seal');
+    if(Array.isArray(a)) CART_SEAL=a.map(o=>{
+      const seal=cellOfRow(o,['封籤號','封籤','籤號','seal']);
+      return {
+        cartId  :cellOfRow(o,['車號','cartId','車輛','車'])||String(o&&o.cartId||'').trim(),
+        cartName:cellOfRow(o,['車名','名稱','cartName']),
+        seal    :seal,
+        /* ★ 狀態欄留空就當「封存中」——建立封籤只要填號碼那一格。
+           只有明確寫「已開封」「待清點」才是異常狀態。 */
+        status  :(cellOfRow(o,['狀態','status'])||(seal?'封存中':'')),
+        byId    :cellOfRow(o,['封車員編']),
+        by      :cellOfRow(o,['封車人','封車者']),
+        witness :cellOfRow(o,['見證人','見證']),
+        at      :cellOfRow(o,['封車時間','時間']),
+        openAt  :cellOfRow(o,['上次開封時間','開封時間']),
+        openWhy :cellOfRow(o,['上次開封原因','開封原因'])
+      };
+    }).filter(x=>x.cartId);
+  }catch(e){console.error('讀封籤狀態失敗',e);}
+}
+async function loadCartExpiry(pre){
+  if(!API_URL&&!pre)return;
+  try{
+    const a=pre||await getJSON('table=cart_expiry');
+    if(Array.isArray(a)) CART_EXPIRY=a.map(o=>({
+      cartId:cellOfRow(o,['車號','cartId']),
+      item  :cellOfRow(o,['品項','項目','品名']),
+      type  :cellOfRow(o,['類別','類型']),
+      qty   :cellOfRow(o,['標準數量','數量']),
+      exp   :cellOfRow(o,['有效期限','效期','到期日']),
+      status:cellOfRow(o,['狀態']),
+      by    :cellOfRow(o,['登錄人','登錄者']),
+      at    :cellOfRow(o,['更新時間','時間'])
+    })).filter(x=>x.item);
+  }catch(e){console.error('讀有效期限失敗',e);}
+}
+const SEAL_SHEETS=()=>SHEETS.filter(s=>s.mode==='seal');
+function cartIdOf(sheetId){ const s=sheetById(sheetId); return s.cartId||String(sheetId||'').toUpperCase(); }
+function sealOf(sheetId){
+  const k=cartIdOf(sheetId);
+  for(let i=CART_SEAL.length-1;i>=0;i--) if(CART_SEAL[i].cartId.toUpperCase()===k) return CART_SEAL[i];
+  return null;
+}
+/* 有號碼、而且沒有被標成異常 → 就是封存中。
+   狀態欄留空一律視為封存中（建立封籤只要填號碼那一格）。 */
+function sealSealed(sheetId){
+  const c=sealOf(sheetId);
+  if(!c||!c.seal) return false;
+  const st=String(c.status||'').trim();
+  return st===''||st==='封存中';
+}
+/* ★★ 封籤模式「由資料啟用」，不是由檔案版本啟用。
+   後端 cart_seal 有這台車的紀錄 → 才切換成封籤式（上鎖物品不打勾、最上方出現核籤卡）。
+   還沒建立 → 這張表就跟以前完全一樣，逐項全部照舊點。
+
+   為什麼這樣做：不然「上傳 index」與「建立 cart_seal 分頁」的先後順序會決定
+   人員看到什麼 —— 順序錯了就是紅字或少一半品項。改成看資料，兩件事誰先做都不會壞。 */
+function sealActive(sheetId){
+  const s=sheetById(sheetId);
+  if(!s||s.mode!=='seal') return false;
+  const c=sealOf(sheetId);
+  if(!c) return false;
+  /* ★ 只有車號、封籤號還空著的「空殼列」不算啟用 ——
+     那是還沒填號碼的狀態，這時候該跟以前一樣逐項點，不要跳紅字嚇人。
+     明確標「已開封／待清點」才算（那是真的要處理）。 */
+  return !!(c.seal || c.status==='已開封' || c.status==='待清點');
+}
+/* 有效期限字串 → yyyy-MM-dd。紙本上寫法很雜：2027.3.2 / 2027,3,4 / 2029.5 / 2031.12
+   只有年月就算到那個月的最後一天（藥檢慣例：標到月份就是月底前可用）。 */
+function expISO(v){
+  const s=String(v==null?'':v).trim(); if(!s) return '';
+  const m=s.match(/(\d{4})\D{0,3}(\d{1,2})?\D{0,3}(\d{1,2})?/);
+  if(!m) return '';
+  const y=+m[1]; if(y<2000||y>2100) return '';
+  const mo=m[2]?+m[2]:12; if(mo<1||mo>12) return '';
+  const last=new Date(Date.UTC(y,mo,0)).getUTCDate();
+  let dd=m[3]?+m[3]:last; if(dd<1||dd>last) dd=last;
+  return y+'-'+String(mo).padStart(2,'0')+'-'+String(dd).padStart(2,'0');
+}
+function expDays(v){
+  const iso=expISO(v); if(!iso) return null;
+  const t=todayISO();
+  const a=Date.UTC(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10));
+  const b=Date.UTC(+t.slice(0,4),+t.slice(5,7)-1,+t.slice(8,10));
+  return Math.round((a-b)/86400000);
+}
+const EXP_WARN_DAYS=60;
+/* ★ 內建的「上鎖物品名冊」＝紙本【附件三 急救車上鎖物品有效期限登錄表】。
+   為什麼放在前端：這樣只上傳 index.html 就看得到期限與到期提醒，不必先部署 GS。
+   後端 cart_expiry 一旦有資料就以後端為準（那時在 App 裡改才存得下來）。
+   狀態：'' 正常／無日期／欠物／待確認（紙本手寫判讀不準，要核對實物）。 */
+const CART_EXPIRY_FALLBACK=[
+  ['OBS-CART','張口器','器械','1','2027-03-02',''],
+  ['OBS-CART','鼻夾','器械','1','','欠物'],
+  ['OBS-CART','剪刀','器械','1','','無日期'],
+  ['OBS-CART','氣管內管鉗','器械','1','2027-03-02',''],
+  ['OBS-CART','舌夾','器械','1','2027-03-02',''],
+  ['OBS-CART','止血鉗','器械','1','2027-02-15',''],
+  ['OBS-CART','喉頭鏡葉 4 號','器械','1','2026-12-23',''],
+  ['OBS-CART','喉頭鏡葉 3 號','器械','1','2027-02-23',''],
+  ['OBS-CART','手電筒','器械','1','','待確認'],
+  ['OBS-CART','瞳孔尺','器械','1','','無日期'],
+  ['OBS-CART','電池2號','耗材','2顆','2031-12-31',''],
+  ['OBS-CART','電池4號','耗材','2顆','2032-12-31',''],
+  ['OBS-CART','Jelly','耗材','10','2028-12-29',''],
+  ['OBS-CART','宜拉膠','耗材','10','','無日期'],
+  ['OBS-CART','oral air way(OP-A)','耗材','1','2027-03-04',''],
+  ['OBS-CART','nasal air way(NP-A)','耗材','1','2027-12-01',''],
+  ['OBS-CART','Bite','耗材','2','2027-04-01',''],
+  ['OBS-CART','Endo tube 7.0 號','耗材','1','2030-05-26',''],
+  ['OBS-CART','Endo tube 7.5 號','耗材','1','2030-04-11',''],
+  ['OBS-CART','Endo tube 8.0 號','耗材','1','2027-06-20',''],
+  ['OBS-CART','通條','耗材','2','2027-02-23','待確認'],
+  ['OBS-CART','N-G tube 16 號','耗材','1','2029-05-31',''],
+  ['OBS-CART','灌食空針','耗材','1','2030-03-16','待確認'],
+  ['OBS-CART','尿袋','耗材','1','2028-06-03',''],
+  ['OBS-CART','輸血set','耗材','1','2028-06-03',''],
+  ['OBS-CART','一般輸液套','耗材','1','2028-10-04',''],
+  ['OBS-CART','精密輸液套','耗材','1','2028-10-26',''],
+  ['OBS-CART','Pre-mixed Dopamin 250 ml','藥水','1','2027-11-16','待確認'],
+  ['OBS-CART','N/S 500 ml','藥水','1','2027-12-22',''],
+  ['OBS-CART','D10W 500 ml','藥水','1','2027-02-14',''],
+  ['OBS-CART','全罩面罩','耗材','2','2027-03-07','待確認'],
+  ['OBS-CART','N95 口罩','耗材','2','2027-05-03',''],
+  ['OBS-CART','隔離衣','耗材','2','2027-07-10',''],
+  ['OBS-CART','護目鏡','器械','1','2026-12-31',''],
+  ['OBS-CART','Ambu+蓄氧袋(大)','器械','1','2026-10-31',''],
+  ['OBS-CART','Mask 5號','耗材','1','2027-01-10','']
+].map(a=>({cartId:a[0],item:a[1],type:a[2],qty:a[3],exp:a[4],status:a[5],by:'紙本附件三',at:''}));
+// 後端有這台車的資料就用後端；還沒部署就用內建（紙本）值
+function expSrcOf(sheetId){
+  const k=cartIdOf(sheetId);
+  const srv=CART_EXPIRY.filter(x=>x.cartId.toUpperCase()===k);
+  if(srv.length) return {rows:srv,fallback:false};
+  return {rows:CART_EXPIRY_FALLBACK.filter(x=>x.cartId.toUpperCase()===k),fallback:true};
+}
+function expIsFallback(sheetId){ return expSrcOf(sheetId).fallback; }
+// 這台車的期限清單（帶天數），依剩餘天數排序；沒填日期的排最後
+function expListOf(sheetId){
+  return expSrcOf(sheetId).rows
+    .map(x=>Object.assign({},x,{days:expDays(x.exp)}))
+    .sort((a,b)=>(a.days==null?99999:a.days)-(b.days==null?99999:b.days));
+}
+function expSoonOf(sheetId,d){ d=(d==null?EXP_WARN_DAYS:d);
+  return expListOf(sheetId).filter(x=>x.days!=null&&x.days<=d); }
+// 期限要不要登：藥品比照紙本附件三不登（藥局管控），其餘器材與耗材都要
+function needExp(o){ return String(o&&o.type||'')!=='藥品'; }
+function expClass(days){ return days==null?'':days<0?'bad':days<=30?'warn':days<=EXP_WARN_DAYS?'soon':''; }
+function expText(x){
+  if(x.status&&!x.exp) return x.status;              // 無日期／欠物／待確認（紙本空白）
+  const w=(x.status==='待確認')?'・待確認':'';       // 紙本手寫判讀不準，要核對實物
+  if(x.days==null) return (x.exp||'—')+w;
+  if(x.days<0) return x.exp+'（已過期 '+(-x.days)+' 天）'+w;
+  return x.exp+'（'+x.days+' 天）'+w;
+}
+// 「待確認」的項目數（紙本手寫看不準，需要核對實物）
+function expUnsureOf(sheetId){ return expListOf(sheetId).filter(x=>x.status==='待確認'); }
 async function loadBundle(spec){
   const apply={
     items:       a=>loadItems(a),
@@ -432,7 +623,9 @@ async function loadBundle(spec){
     rtls:        a=>loadRtls(a),
     rollcall_active:a=>loadActive(a),
     rollcall_issue: a=>loadIssues(a),
-    rollcall_signoff:a=>loadSignoffs(a)
+    rollcall_signoff:a=>loadSignoffs(a),
+    cart_seal:   a=>loadCartSeal(a),
+    cart_expiry: a=>loadCartExpiry(a)
   };
   const fallback=()=>Promise.all(spec.map(x=>{
     const f=apply[x[0]]; if(!f)return Promise.resolve();
@@ -446,6 +639,7 @@ async function loadBundle(spec){
   try{
     const q='tables='+encodeURIComponent(spec.map(x=>x[1]?(x[0]+':'+x[1]):x[0]).join(','));
     const j=await getJSON(q);
+    if(j&&j._version) API_VER_SEEN=String(j._version);
     if(!j||typeof j!=='object'||Array.isArray(j)||!j._version){
       BUNDLE_OK=false;                      // 後端還是舊版 → 之後都走逐張抓
       console.warn('後端不支援批次讀取（?tables=），改為逐張抓。請更新 GS 並重新部署。');
@@ -459,8 +653,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-10-v11';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-10-b15';
+const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-14-b26';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -574,7 +768,7 @@ const SHEETS=[
   {id:"room-ob",name:"OB診間",area:"room",sort:2,ops:1},
   {id:"obs-1",name:"留觀區-1",area:"obs",sort:1,ops:1},
   {id:"obs-2",name:"留觀區-2",area:"obs",sort:2,ops:1},
-  {id:"obs-cart",name:"留觀急救車",area:"obs",sort:3,ops:1},
+  {id:"obs-cart",name:"留觀急救車",area:"obs",sort:3,ops:1,mode:"seal",cartId:"OBS-CART"},
   {id:"leader",name:"Leader",area:"leader",sort:1,ops:1}
 ];
 // ===================== 後端(Google Sheet + AI,單一來源) =====================
@@ -610,7 +804,25 @@ function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((
 // 點班提交 → 寫回後端完成紀錄(週五簽核/找未完成的地基)
 async function submitRollcall(){
   const s=sheetById(state.sheetId), list=itemsOf(s.id,state.half);
+  // ★ 封籤式急救車：沒登錄封籤號就不算點完（上鎖物品是靠封籤保證的）
+  if(sealActive(s.id)&&!String(state.sealInput||'').trim()){
+    alert('這台車是上鎖的。\n\n請先回點班表最上方，登錄你在車上看到的封籤號。');
+    state.screen='rollcall'; render(); return;
+  }
   let done=0,bad=0; list.forEach(o=>{const v=state.checks[keyOf(o)]; if(v==='ok'||v==='bad')done++; if(v==='bad')bad++;});
+  /* ★ 封籤結果一併寫進這一班的點班紀錄（rollcall_log 的「分工」欄）。
+     紙本那一欄記的就是「這一班核過封籤」，不記的話電子版反而比紙本少資訊，稽核查不到。
+     ★ 只記結果（封籤✓／封籤✗），不記號碼 —— 號碼寫進紀錄的話，
+       下一班從「點班紀錄」就抄得到，遮蔽就白做了。
+     不符時另外送一筆異常明細（含人員看到的號碼），異常數也 +1 —— 封籤不符本來就是異常。 */
+  let sealTag='', sealBad=false, sealSeen='';
+  if(sealActive(s.id)){
+    const _c=sealOf(s.id)||{};
+    sealSeen=String(state.sealInput||'').trim();
+    sealBad=(sealNorm(sealSeen)!==sealNorm(_c.seal));
+    sealTag='封籤'+(sealBad?'✗ 不符':'✓ 相符');
+    if(sealBad) bad++;
+  }
   const rcDate=curRcDate();
   state.rcTiming=state.rcTiming||{}; const tk=timingKey(); const tm=state.rcTiming[tk]||{};
   const startMs=tm.start||Date.now(), endMs=Date.now();
@@ -618,7 +830,7 @@ async function submitRollcall(){
   state.rcTiming[tk]={start:startMs,end:endMs};
   state.lastTiming={start:startMs,end:endMs,durationSec:durationSec,date:rcDate};
   const payload={date:rcDate, week:isoWeek(parseISO(rcDate)),
-    shift:effShift(), sheetId:s.id, sheet:s.name||'', assign:state.half||'',
+    shift:effShift(), sheetId:s.id, sheet:s.name||'', assign:state.half||sealTag,
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
     startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec,
@@ -626,10 +838,12 @@ async function submitRollcall(){
     issues: list.filter(o=>state.checks[keyOf(o)]==='bad').map(function(o){
       const k=keyOf(o);
       return { item:o.name, type:o.type||'', reason:state.reason[k]||'未註記', note:state.note[k]||'' };
-    })};
+    }).concat(sealBad?[{ item:'上鎖物品封籤', type:'器械', reason:'封籤不符',
+      note:'人員在車上看到 '+sealSeen+'，與系統紀錄不一致' }]:[])};
   state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
   postProgress({clear:true,force:true});          // 清掉「進行中」標記
   await pushRollcall(payload);
+  if(sealActive(s.id)) await sealAfterSubmit(s);  // ★ 另外寫一筆封籤核對紀錄
 }
 /* ★ 確認後端真的寫進去了。失敗時在完成畫面顯示紅色警示＋重試，
    避免「畫面說完成、Sheet 裡沒有」——這是最危險的情況。 */
@@ -1336,10 +1550,63 @@ const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理�
 const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失'];
 
 // item key & filtering
-function itemsOf(sheetId,half){
+// 原始清單（含上鎖物品）。只有「上鎖物品名冊」與後台管理會用到。
+function itemsAllOf(sheetId,half){
   return ITEMS.map((it,i)=>({i,sheet:it[0],name:it[1],qty:it[2],type:it[3],assign:it[4],off:it[5]==='停用'}))
               .filter(o=>o.sheet===sheetId && !o.off && (!half || o.assign===half));
 }
+/* ★★★ 封籤式（留觀急救車）：上鎖物品不出現在打勾清單。
+
+   看紙本才發現的事 —— 留觀急救車那張日常點班表，上面那一段（藥品到流量表）
+   每一欄「由上往下」讀是 M・E・T・R・O・0・0・3・1・7・9…，一格一個字，
+   拼起來就是那一班的封籤號（METRO 牌封籤）。那些格子從來不是逐項打勾。
+   真正每班逐項 ✓ 的只有下面那一段：抽吸壓力表／空針／喉頭鏡葉／抽痰管／
+   楊克式／手套／口罩／髮帽／錶式血壓計。
+
+   所以上鎖那一段由「封籤號」一格代表，逐項點只點沒上鎖的。
+   判斷順序：後端 items 的「分工」欄標 `鎖`（最準，可在 Sheet 直接改）→ 內建名單。 */
+function normItem(v){
+  return String(v==null?'':v)
+    .replace(/[（]/g,'(').replace(/[）]/g,')')
+    .replace(/[／]/g,'/').replace(/[〈<]/g,'(').replace(/[〉>]/g,')')
+    .replace(/\s+/g,'').toUpperCase();
+}
+// 內建名單＝紙本日常表上「寫封籤號那一段」的列，含合併列拆開後的單品名
+const OBS_LOCKED_NAMES=new Set([
+  // 藥品 10 項
+  'Bosmin','Adenocor','Atropine','Lidocaine 2%','Lidocaine','Valium','Sod.bicarbonate',
+  'Sod. bicarbonate','Cordarone','Mg Sulfate','Mag sulfate','Dopamin','Dopamine',
+  'Cal chloride','Cal gluconate',
+  // 紙本上的合併列寫法
+  '張口器 / 止血鉗','繃帶剪 / 鼻夾','氣管內管鉗 / 舌夾','Jelly/宜拉膠','手電筒 / 瞳孔尺',
+  '電池2號 / 4號','NG16號/灌食空針/尿袋','一般輸液套/精密輸液套','Endo tube7/7.5/8 號',
+  'N/S 500ML/D10W 500ML','N95 口罩/防護面罩','隔離衣 / 護目鏡','流量表/D/W 500ML',
+  'oral air way(OP-A)(大)','nasla air way(NP-A)(7.5)','nasal air way(NP-A)(7.5)',
+  // 拆開後的單品（items 分頁可能是一項一列）
+  '張口器','止血鉗','繃帶剪','剪刀','鼻夾','氣管內管鉗','舌夾',
+  'oral air way(OP-A)','nasal air way(NP-A)','nasla air way(NP-A)',
+  'Jelly','宜拉膠','bite','Bite','手電筒','瞳孔尺','電池2號','電池4號',
+  'NG16號','N-G tube 16 號','NG tube 16 號','灌食空針','尿袋',
+  '一般輸液套','精密輸液套','輸血set','輸血 set',
+  'Endo tube 7.0 號','Endo tube 7.5 號','Endo tube 8.0 號','通條',
+  'Pre-mixed Dopamine','Pre-mixed Dopamin 250 ml','Pre-mixed Dopamin',
+  'N/S 500 ml','N/S 500ML','D10W 500 ml','D10W 500ML',
+  'N95 口罩','防護面罩','全罩面罩','隔離衣','護目鏡',
+  'Ambu + 蓄氧袋(大)','Ambu+蓄氧袋(大)','Mask 5號','Mask 5 號',
+  '氧氣連接管','流量表','D/W 500ML'
+].map(normItem));
+function isLockedItem(o){
+  if(String(o&&o.assign||'').trim()==='鎖') return true;
+  return OBS_LOCKED_NAMES.has(normItem(o&&o.name));
+}
+// 每班要逐項打勾的清單（封籤式會扣掉上鎖物品）
+function itemsOf(sheetId,half){
+  const all=itemsAllOf(sheetId,half);
+  if(!sealActive(sheetId)) return all;      // 還沒建立封籤紀錄 → 跟以前一樣，全部逐項點
+  return all.filter(o=>!isLockedItem(o));
+}
+// 這台車被封籤代表的那些品項（唯讀顯示用）
+function lockedItemsOf(sheetId){ return itemsAllOf(sheetId,null).filter(isLockedItem); }
 function keyOf(o){return o.sheet+'|'+o.i}
 
 // ---------- state ----------
@@ -1353,6 +1620,9 @@ const store={
        現在每次啟動都丟掉存下來的班別，一律重新判斷（見 effShift）；
        只有「你自己手動選的」才留著，而且只在當天有效。 */
     delete state.shift;
+    /* ★ 封籤號絕對不能沾黏。存在 localStorage 裡的話，下一班一開 App
+       輸入框就已經填著上一班打的號碼，按下去就過了 —— 等於沒有核籤。 */
+    delete state.sealInput; delete state.sealMismatch; delete state.sealPeek;
     if(state.shiftManualDate && state.shiftManualDate!==todayISO()){
       delete state.shiftManual; delete state.shiftManualDate;
     }
@@ -1418,7 +1688,9 @@ function render(){
     rollcall:renderRollcall,summary:renderSummary,done:renderDone,map:renderMap,
     history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed,
     owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin,
-    adminHub:renderAdminHub,analytics:renderAnalytics}[state.screen]||renderLogin)();
+    adminHub:renderAdminHub,analytics:renderAnalytics,
+    seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,
+    sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
 }
 
 function renderLogin(){
@@ -1427,17 +1699,55 @@ function renderLogin(){
     <div class="login-logo">🩺</div>
     <h1>急診護理站點班</h1>
     <div class="tag">儀器 · 保養 · 耗材 電子點檢</div>
+    <!-- ★ 包成真正的 <form>：手機鍵盤右下角會變成「前往／Go」，按了就直接登入。
+         display:contents 讓 form 不影響原本的版面。 -->
+    <form id="loginForm" style="display:contents" onsubmit="event.preventDefault();doLogin();return false">
     <div class="field"><label>員編（5 碼）</label>
-      <input id="empIn" inputmode="numeric" maxlength="5" placeholder="例：05845" value="${state.user?state.user.id:''}"></div>
+      <span style="display:flex;gap:8px;align-items:center">
+        <button type="button" onclick="scanSeal('empIn','emp')" title="掃描識別證條碼"
+          style="flex:0 0 auto;padding:10px 13px;font-size:19px;line-height:1;border:1px solid var(--line);
+            border-radius:10px;background:rgba(15,122,134,.1);color:inherit;font-family:inherit;
+            cursor:pointer">📷</button>
+        <input id="empIn" inputmode="numeric" maxlength="12" enterkeyhint="next" autocomplete="username"
+          style="flex:1;min-width:0" placeholder="掃識別證或輸入員編"
+          value="${state.user?state.user.id:''}" onkeydown="loginKey(event,'emp')">
+      </span></div>
     <div class="field"><label>登入碼</label>
-      <input id="pwIn" type="password" inputmode="numeric" placeholder="初始＝員編"></div>
+      <input id="pwIn" type="password" inputmode="numeric" enterkeyhint="go" autocomplete="current-password"
+        placeholder="初始＝員編" onkeydown="loginKey(event,'pw')"></div>
     <div id="loginErr" style="color:var(--bad);font-size:13px;font-weight:600;min-height:18px;margin-bottom:10px"></div>
-    <button class="btn btn-primary btn-block" onclick="doLogin()">登入</button>
+    <button type="submit" class="btn btn-primary btn-block">登入</button>
+    </form>
     <div style="font-size:11.5px;color:#9aa7b0;margin-top:14px;line-height:1.6">
+      員編與登入碼都打完後，直接按 Enter（手機鍵盤的「前往」）就會登入<br>
       試登入：護理長 05845／副護理長 06843／護理師 03451（登入碼皆＝員編）</div>
   </div>`;
+  /* 游標自動落在該打的那一格：員編已經記住了就直接跳登入碼。
+     手機不自動叫出鍵盤（會把畫面頂掉），電腦上才 focus。 */
+  if(!matchMedia('(pointer:coarse)').matches){
+    const e1=document.getElementById('empIn'), e2=document.getElementById('pwIn');
+    if(e1&&!e1.value) e1.focus(); else if(e2) e2.focus();
+  }
 }
+/* Enter 的行為：
+   ・在「員編」按 Enter → 登入碼還沒填就跳去填，填好了就直接登入
+   ・在「登入碼」按 Enter → 直接登入
+   （form 的 submit 也會走到 doLogin，這裡只是把「跳下一格」做得更順） */
+function loginKey(ev,which){
+  if(ev.key!=='Enter'&&ev.keyCode!==13) return;
+  ev.preventDefault();
+  const e1=document.getElementById('empIn'), e2=document.getElementById('pwIn');
+  if(which==='emp' && e2 && !e2.value.trim()){ e2.focus(); return; }
+  if(which==='pw'  && e1 && !e1.value.trim()){ e1.focus(); return; }
+  doLogin();
+}
+let LOGIN_BUSY=false;
 async function doLogin(){
+  if(LOGIN_BUSY) return;                 // Enter 按住不放會連送，擋掉
+  LOGIN_BUSY=true;
+  try{ await doLogin_(); } finally{ LOGIN_BUSY=false; }
+}
+async function doLogin_(){
   const emp=document.getElementById('empIn').value.trim();
   const pw=document.getElementById('pwIn').value.trim();
   const err=document.getElementById('loginErr');
@@ -1514,6 +1824,7 @@ function renderHome(){
     ${todayBindCard()}
     <div class="section-h">我的待辦</div>
     ${syncBar()}
+    ${sealCard()}
     ${renderTodoCard()}
     ${renderAuxCard()}
     ${owedDutyCard()}
@@ -1560,7 +1871,7 @@ function renderPick(){
       :'';
     return `<div class="sheet-row ${sd&&sd.isDone?'srv-done':''}" style="border-left-color:${area.color}" onclick="openSheet('${s.id}')">
       <div style="min-width:0"><div class="sheet-name">${esc(s.name)}${twop}</div>
-        <div class="sheet-meta">${n} 項</div>${srv}</div>
+        <div class="sheet-meta">${n} 項${sealActive(s.id)?('　·　'+sealMetaHtml(s)):''}</div>${srv}</div>
       <span class="st-tag ${stc}">${stt}</span></div>`;
   }).join('');
   const doneN=sheets.filter(s=>{const d=shiftDoneOf(s.id,null);return d&&d.isDone;}).length;
@@ -1589,6 +1900,12 @@ function openSheet(id){
     if(!ok)return;
   }
   state.sheetId=id;
+  /* ★ 封籤式（留觀急救車）：每班點的是封籤號，不進逐項打勾的畫面。
+     只有「已開封／待清點」時才會從封籤畫面導去全品項清點。 */
+  /* ★ 封籤式（留觀急救車）：逐項點班照舊——人員本來就在點這些東西。
+     多的是一道「封籤號核對」，取代「去開鎖、把上鎖物品也點一遍」。
+     上鎖物品只登有效期限（紙本附件三），開封時才重登。 */
+  if(s.mode==='seal'){ state.sealPeek=false; state.sealInput=''; state.sealMismatch=false; }
   if(String(s.ops)==='2'){state.screen='half';render()}
   else{state.half=null;state.screen='rollcall';render();postProgress({force:true});}
 }
@@ -1706,6 +2023,7 @@ function renderRollcall(){
     ${banner}
     ${actBanner}
     ${srvBanner}
+    ${sealActive(s.id)?sealBar(s):''}
     ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
       <div style="font-size:12.5px;font-weight:800;color:var(--ink-soft);margin-bottom:6px">📋 上一班（${prevShiftName(effShift())}）點班結果</div>
@@ -1861,8 +2179,14 @@ function owedCloseUI(id){
       <label class="owe-f">處理方式
         <select id="oc_way"><option>歸還</option><option>報失賠償</option><option>報廢</option></select></label>
       <label class="owe-f">見證人員編（另一位小組長以上人員刷卡）
-        <input id="oc_wid" inputmode="numeric" placeholder="請另一位小組長以上人員刷/輸入員編"
-               oninput="owedWitnessLookup()"></label>
+        <span style="display:flex;gap:8px;align-items:center">
+          <button type="button" onclick="scanSeal('oc_wid','emp')" title="掃描識別證條碼"
+            style="flex:0 0 auto;padding:9px 12px;font-size:18px;line-height:1;border:1px solid var(--line);
+              border-radius:8px;background:var(--brand-soft,rgba(15,122,134,.1));color:inherit;
+              font-family:inherit;cursor:pointer">📷</button>
+          <input id="oc_wid" inputmode="numeric" style="flex:1;min-width:0"
+                 placeholder="掃識別證或輸入員編" oninput="owedWitnessLookup()">
+        </span></label>
       <div id="oc_wname" style="font-size:13px;font-weight:700;margin:-4px 2px 10px;color:var(--ink-soft)">尚未見證</div>
       <label class="owe-f">備註<input id="oc_note" placeholder="選填"></label>
       <button class="btn btn-primary btn-block" style="margin-top:8px" onclick="submitOwedClose('${o.id}')">確認結案</button>
@@ -3193,7 +3517,7 @@ function renderHistory(){
         const bad=num(r,'bad','異常數');
         return `<div class="hd-row">
           <span>${esc(fld(r,['sheet','點班表'])||sheetIdOf(r))}
-            <span style="color:var(--ink-soft);font-size:11.5px">· ${esc(nameOf(r)||'—')}${fld(r,['assign','分工'])?(' · '+esc(fld(r,['assign','分工']))+'半'):''}</span></span>
+            <span style="color:var(--ink-soft);font-size:11.5px">· ${esc(nameOf(r)||'—')}${asgLabel(fld(r,['assign','分工']))}</span></span>
           <span style="font-size:12px">
             ${isDoneRec_(r)?'<b style="color:var(--ok,#2f9e44)">完成</b>':'<b style="color:var(--warn)">'+num(r,'done','完成項數')+'/'+num(r,'total','總項數')+'</b>'}
             ${dur?(' · '+fmtDur(dur)):''}${bad?(' · <span style="color:var(--bad,#c0392b)">異常'+bad+'</span>'):''}</span></div>`;
@@ -3335,6 +3659,14 @@ function fld(r,names){
 function sheetIdOf(r){ return fld(r,['sheetId','sheetid','點班表ID']); }
 function logShiftOf(r){ return fld(r,['shift','班別']); }
 function assignOf(r){ return fld(r,['assign','分工']); }
+/* 「分工」欄原本只放 A／B，顯示時會加「半」。
+   封籤式的車把核籤結果也放這一欄（後端不用改就有紀錄），所以顯示要分開處理：
+   A／B → 「· A半」；其他文字（例如「封籤✓」）→ 原樣加在後面。 */
+function asgLabel(v){
+  const t=String(v==null?'':v).trim();
+  if(!t) return '';
+  return /^[AB]$/i.test(t) ? (' · '+esc(t)+'半') : (' · '+esc(t));
+}
 function nameOf(r){ return fld(r,['name','姓名']); }
 
 /* ★★ 跨裝置「本班是否已有人點過」——這是人員端最重要的資訊。
@@ -3387,7 +3719,7 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',7],['o2_check',7]]);
+    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',7],['o2_check',7],['cart_seal']]);
     SYNC_MS=Date.now()-t0;
   }catch(e){ SYNC_MS=-1; }
   SYNC_AT=Date.now();
@@ -3523,7 +3855,7 @@ function renderRecords(){
      <div class="hd-row"><span>簽核時間</span><span>${esc(r.atText||fmtLocalFromISO(r.at)||r['簽核時間']||'')}</span></div></div>`).join('')
      :'<div class="card" style="text-align:center;color:var(--ink-soft);padding:18px">尚無週簽核紀錄</div>';
   const logs=(SIGNLOG||[]).slice().sort((a,b)=>String(b.submittedAt||b.date||b['日期']||'').localeCompare(String(a.submittedAt||a.date||a['日期']||'')));
-  const logHtml=logs.length?logs.slice(0,200).map(r=>`<div class="hist-shift"><span>${esc(r.date||r['日期']||'')} · ${SHIFT_NAME[r.shift||r['班別']]||esc(r.shift||r['班別']||'')} · ${esc(r.sheet||r['點班表']||r.sheetId||'')}${(r.assign||r['分工'])?(' '+esc(r.assign||r['分工'])+'半'):''}</span><span>${esc(r.name||r['姓名']||'')} · ${r.done||r['完成項數']||0}/${r.total||r['總項數']||0}${recDone(r)?' ✓':''}</span></div>`).join('')
+  const logHtml=logs.length?logs.slice(0,200).map(r=>`<div class="hist-shift"><span>${esc(r.date||r['日期']||'')} · ${SHIFT_NAME[r.shift||r['班別']]||esc(r.shift||r['班別']||'')} · ${esc(r.sheet||r['點班表']||r.sheetId||'')}${asgLabel(r.assign||r['分工'])}</span><span>${esc(r.name||r['姓名']||'')} · ${r.done||r['完成項數']||0}/${r.total||r['總項數']||0}${recDone(r)?' ✓':''}</span></div>`).join('')
      :'<div class="card" style="text-align:center;color:var(--ink-soft);padding:18px;line-height:1.7">尚無人員點班紀錄。<br><span style="font-size:12px">＊點班「提交並簽核」寫入(rollcall_log)接通後,這裡會列出每筆的日期／班別／表／人員／完成度。</span></div>';
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
@@ -3728,6 +4060,628 @@ function renderAI(){
   if(el){(function type(){if(i<=txt.length){el.innerHTML=esc(txt.slice(0,i))+'<span class="ai-typing">▋</span>';i++;setTimeout(type,18)}else{el.innerHTML=esc(txt)}})();}
 }
 
+/* ===================== 封籤式急救車（留觀急救車） =====================
+   設計前提（護理長 2026-09-11 確認）：
+     ・逐項點班「維持現有」—— 人員每班本來就在點這些東西，不動。
+     ・上鎖的那一格（紙本「附件三 急救車上鎖物品」）不必每班開鎖清點，
+       改成每班核對「一次性數字封籤號」。封籤沒斷＝那一格沒被動過。
+     ・上鎖物品只登有效期限，開封時才重登；藥品比照紙本不登（藥局管控）。
+     ・封新籤要兩人：封車人＋見證人刷員編，見證人不可以是自己。
+   畫面：
+     點班表最上方的封籤卡（sealBar）  每班核籤
+     sealOpen    要開封 → 選原因 → 記錄
+     sealClose   登錄有效期限 ＋ 上新封籤（需見證）
+     seal        封籤與期限總覽（唯讀入口）
+     sealExpiry  全部有效期限（唯讀）                                      */
+function sealNorm(v){ return String(v==null?'':v).replace(/[\s\-_]/g,'').toUpperCase(); }
+function sealAgeDays(at){
+  const m=String(at||'').match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m)return null;
+  const t=todayISO();
+  return Math.round((Date.UTC(+t.slice(0,4),+t.slice(5,7)-1,+t.slice(8,10))
+                   - Date.UTC(+m[1],+m[2]-1,+m[3]))/86400000);
+}
+function sealMetaHtml(s){
+  const c=sealOf(s.id);
+  if(!c||!c.seal||c.status!=='封存中')
+    return '<span style="color:var(--bad,#E03131);font-weight:700">🔓 '+esc((c&&c.status)||'尚未建立封籤')+'</span>';
+  const d=sealAgeDays(c.at);
+  return '🔒 封籤 <b>'+esc(c.seal)+'</b>'+(d!=null?('・'+d+' 天'):'');
+}
+function expRowHtml(x){
+  const cl=expClass(x.days);
+  const col=cl==='bad'?'#E03131':cl==='warn'?'#E8590C':cl==='soon'?'#B07800':'var(--ink-soft)';
+  return `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;
+      border-bottom:1px dashed var(--line);font-size:13.5px">
+    <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.item)}</span>
+    <b style="color:${col};white-space:nowrap">${esc(expText(x))}</b></div>`;
+}
+
+/* ---------- 點班表最上方：封籤核對卡 ---------- */
+function sealBar(s){
+  const c=sealOf(s.id);
+  const sealed=sealSealed(s.id);   // 狀態欄留空也算封存中（只填號碼那一格就好）
+  const soon=expSoonOf(s.id);
+  const v=String(state.sealInput||'');
+  /* ★ 系統紀錄的號碼預設遮起來。
+     整個機制的意義是「人員看車上的號碼、系統比對」；
+     號碼直接印在畫面上，抄一下就過了，等於沒有核。 */
+  const peek=state.sealPeek
+    ? `<b style="letter-spacing:2px;color:var(--brand)">${esc(c?c.seal:'—')}</b>`
+    : `<b style="letter-spacing:4px;color:var(--ink-soft)">••••</b>`;
+  if(!sealed){
+    return `<div class="card" style="padding:13px 15px;margin-bottom:14px;
+        background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a">
+      <div style="font-weight:800;font-size:14px">🔓 上鎖物品：${esc((c&&c.status)||'尚未建立封籤')}</div>
+      <div style="font-size:12.5px;margin-top:6px;line-height:1.8">
+        ${c&&c.openAt?('開封時間：'+esc(c.openAt)+'<br>'):''}
+        ${c&&c.openWhy?('原因：'+esc(c.openWhy)+'<br>'):''}
+        封籤不在了，要把上鎖那一格補齊、登好有效期限，再上新封籤。</div>
+      <button class="btn btn-primary btn-block" style="margin-top:10px"
+        onclick="state.screen='sealClose';render()">登錄期限並上新封籤 →</button>
+    </div>`;
+  }
+  return `<div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${v&&sealNorm(v)===sealNorm(c.seal)?'var(--ok)':'var(--brand)'}">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <div style="font-weight:800;font-size:13px;color:var(--ink-soft)">🔒 上鎖物品 · 封籤號核對</div>
+      <span style="font-size:11.5px;color:var(--ink-soft)">系統紀錄 ${peek}
+        <button onclick="state.sealPeek=!state.sealPeek;render()" style="border:1px solid var(--line);
+          background:transparent;color:inherit;font-family:inherit;font-size:11px;padding:2px 8px;
+          border-radius:6px;cursor:pointer;margin-left:4px">${state.sealPeek?'隱藏':'查看'}</button></span>
+    </div>
+    <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;margin:6px 0 8px">
+      請輸入你<b>在車上看到</b>的封籤號，系統會比對。
+      這一格就代表下面 <b>${lockedItemsOf(s.id).length}</b> 項上鎖物品
+      （＝紙本那一段一格一個字寫封籤號的列），不必逐項打勾。
+      <span style="color:var(--brand);cursor:pointer;font-weight:700"
+        onclick="state.sealListOpen=!state.sealListOpen;render()">
+        ${state.sealListOpen?'收起清單 ▲':'看是哪些 ▼'}</span></div>
+    ${state.sealListOpen?`<div style="font-size:12px;color:var(--ink-soft);line-height:1.9;
+        background:var(--bg-soft,rgba(0,0,0,.03));border-radius:8px;padding:8px 10px;margin-bottom:8px">
+      ${lockedItemsOf(s.id).map(x=>esc(x.name)+(x.qty?('（'+esc(x.qty)+'）'):'')).join('、')||'（後端 items 分頁還沒標「鎖」，也沒有比對到內建名單）'}
+      </div>`:''}
+    ${lockedItemsOf(s.id).length===0?`<div style="font-size:12px;color:#b35309;line-height:1.7;
+        background:#fff4e6;border:1px solid #ffd8a8;border-radius:8px;padding:8px 10px;margin-bottom:8px">
+      ⚠ 沒有比對到任何上鎖物品，所以下面還是全部品項都要打勾。<br>
+      請在後端跑一次 <b>markObsCartLocked</b>，或在 items 分頁把上鎖那些列的「分工」填 <b>鎖</b>。</div>`:''}
+    <div style="display:flex;gap:8px;align-items:center">
+      <button type="button" onclick="scanSeal('sealIn')" title="掃描封籤條碼"
+        style="flex:0 0 auto;padding:10px 12px;font-size:19px;line-height:1;border:1px solid var(--line);
+          border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:inherit;
+          font-family:inherit;cursor:pointer">📷</button>
+      <input id="sealIn" autocomplete="off" placeholder="掃描或輸入封籤號" value="${esc(v)}"
+        oninput="sealLive()" style="flex:1;min-width:0;padding:11px;font-size:18px;text-align:center;
+          letter-spacing:2px;border:1px solid var(--line);border-radius:10px;background:transparent;
+          color:inherit;font-family:inherit">
+      <span id="sealMsg" style="font-size:12.5px;font-weight:700;white-space:nowrap;min-width:64px;
+        color:var(--ink-soft)">${v?(sealNorm(v)===sealNorm(c.seal)?'✓ 相符':'✗ 不相符'):'待輸入'}</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 封籤不符／要開封</span>
+      <span class="tool-pill ${soon.length||expUnsureOf(s.id).length?'':'done'}" onclick="state.screen='seal';render()">
+        📅 上鎖物品期限${soon.length?('・'+soon.length+' 項快到期'):''}${expUnsureOf(s.id).length?('・'+expUnsureOf(s.id).length+' 項待確認'):''}${(!soon.length&&!expUnsureOf(s.id).length)?'・正常':''}</span>
+    </div>
+    ${c.by?`<div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">
+      上次封車：${esc(c.by)}${c.witness?('・'+esc(c.witness)+' 見證'):''}${c.at?('・'+esc(c.at)):''}</div>`:''}
+  </div>`;
+}
+// 邊打邊比對（不重繪整頁，避免輸入框失焦）
+function sealLive(){
+  const el=document.getElementById('sealIn'), msg=document.getElementById('sealMsg');
+  if(!el)return;
+  state.sealInput=el.value;
+  if(!msg)return;
+  const c=sealOf(state.sheetId)||{};
+  const v=String(el.value||'').trim();
+  if(!v){ msg.textContent='待輸入'; msg.style.color='var(--ink-soft)'; return; }
+  const same=sealNorm(v)===sealNorm(c.seal);
+  msg.textContent=same?'✓ 相符':'✗ 不相符';
+  msg.style.color=same?'var(--ok,#0f7a86)':'var(--bad,#E03131)';
+}
+// 摘要頁再提醒一次封籤結果（提交前最後一道）
+function sealSummaryBlock(s){
+  const c=sealOf(s.id)||{};
+  const v=String(state.sealInput||'').trim();
+  if(!v) return `<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
+      font-size:13px;line-height:1.8;margin-bottom:10px">
+    <b>還沒登錄封籤號</b><br>這台車是上鎖的，請回點班表最上方輸入車上的封籤號再提交。</div>`;
+  const same=sealNorm(v)===sealNorm(c.seal);
+  return same
+    ? `<div class="card" style="background:var(--ok-soft,#e6f4f1);border:1px solid var(--ok,#0f7a86);
+        color:var(--ok,#0f7a86);font-size:13px;font-weight:600;margin-bottom:10px">
+       🔒 封籤號 ${esc(v)} 與系統紀錄相符</div>`
+    : `<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+        font-size:13px;line-height:1.8;margin-bottom:10px">
+       <b>⚠️ 封籤號 ${esc(v)} 與系統紀錄不一致</b><br>
+       提交後系統會把這台車標成「待清點」，並帶你去登期限、上新封籤。</div>`;
+}
+/* 提交點班後補寫一筆封籤核對。
+   不符 → 後端把車標成「待清點」，首頁會亮紅燈，並當場問要不要現在封新籤。 */
+async function sealAfterSubmit(s){
+  const c=sealOf(s.id)||{};
+  const v=String(state.sealInput||'').trim();
+  const same=sealNorm(v)===sealNorm(c.seal);
+  state.sealMismatch=!same;
+  /* ★ 後端還沒到 v12 就「不要送」。
+     v11 的 doPost 不認識 cart_seal_check，會掉進 AI 分支，
+     等於每次提交點班都白打一次 Gemini，把每日 AI 額度吃掉。
+     封籤該核的還是核了（畫面與摘要頁都顯示結果），只是後端不會留下核籤流水。 */
+  if(!sealWriteOK()){
+    console.warn('後端版本 '+(API_VER_SEEN||'未知')+'（需 v12），跳過封籤核對紀錄的寫入');
+    if(!same) toast('封籤號不一致已提醒；後端更新到 v12 後才會留下紀錄');
+    if(state.screen==='done') render();
+    return;
+  }
+  try{
+    await owedWrite('cart_seal_check',{cartId:cartIdOf(s.id),cartName:s.name,
+      date:curRcDate(),shift:effShift(),seal:v,result:same?'相符':'不符',
+      empId:state.user.id,name:state.user.name,
+      note:(same?'':'車上封籤與系統紀錄不一致')+(state.sealPeek?'（曾查看系統號碼）':'')});
+  }catch(e){ console.error('封籤核對紀錄寫入失敗',e); }
+  await loadCartSeal();
+  if(!same){
+    if(confirm('封籤號「'+v+'」與系統紀錄不一致，已經記錄下來。\n\n'
+      +'這台車需要清點上鎖物品並上新封籤（要另一位人員見證）。\n\n現在就處理嗎？')){
+      state.screen='sealClose'; render(); return;
+    }
+  }
+  if(state.screen==='done') render();
+}
+
+/* ===================== 掃描封籤條碼 =====================
+   為什麼要做：METRO0031795 這種 12 碼每班用手打，一定會有人打錯或嫌麻煩，
+   最後就變成「抄系統上的號碼」—— 那整個核籤就失去意義了。
+   掃一下一秒完成，而且不可能打錯。
+
+   兩條路，手動輸入永遠保留當退路：
+     ① Android Chrome 等有原生 BarcodeDetector → 直接用，不載任何東西
+     ② iPhone Safari 沒有 → 按下去才臨時載 ZXing（平常完全不佔流量）
+   載不到、沒相機、不給權限 → 關掉並說清楚，輸入框照樣能打。            */
+let _SCAN={open:false,target:'',stream:null,timer:null,reader:null};
+function scanSupportNote(){
+  return ('BarcodeDetector' in window) ? '' : '第一次使用會載入掃碼元件，需要一點時間';
+}
+function scanOverlayHtml(){
+  return `<div id="scanWrap" style="position:fixed;inset:0;z-index:9999;background:#000;
+      display:flex;flex-direction:column">
+    <div style="flex:0 0 auto;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;
+        display:flex;justify-content:space-between;align-items:center;gap:12px;
+        background:rgba(0,0,0,.75);color:#fff;font-family:inherit">
+      <div style="min-width:0">
+        <div style="font-weight:700;font-size:15px">掃描封籤條碼</div>
+        <div id="scanHint" style="font-size:12px;opacity:.8;margin-top:2px">
+          把條碼放進框內，會自動讀取${scanSupportNote()?'（'+scanSupportNote()+'）':''}</div>
+      </div>
+      <button type="button" onclick="closeScan()" style="flex:0 0 auto;border:1px solid rgba(255,255,255,.5);
+        background:transparent;color:#fff;font-family:inherit;font-size:14px;padding:8px 16px;
+        border-radius:8px;cursor:pointer">取消</button>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden">
+      <video id="scanVid" playsinline muted autoplay
+        style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></video>
+      <div style="position:absolute;left:8%;right:8%;top:50%;transform:translateY(-50%);
+        aspect-ratio:2.4/1;max-width:100%;border:2px solid rgba(255,255,255,.9);border-radius:10px;
+        box-shadow:0 0 0 100vmax rgba(0,0,0,.45)"></div>
+    </div>
+    <div id="scanErr" style="flex:0 0 auto;padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));
+      background:rgba(0,0,0,.8);color:#ffd9d9;font-size:13.5px;line-height:1.7;display:none"></div>
+  </div>`;
+}
+function scanErr(msg){
+  const el=document.getElementById('scanErr');
+  if(el){ el.style.display='block'; el.innerHTML=esc(msg)+'<br>可以直接用鍵盤輸入號碼。'; }
+}
+function closeScan(){
+  _SCAN.open=false;
+  if(_SCAN.timer){ clearInterval(_SCAN.timer); _SCAN.timer=null; }
+  try{ if(_SCAN.reader&&_SCAN.reader.reset) _SCAN.reader.reset(); }catch(e){}
+  _SCAN.reader=null;
+  try{ if(_SCAN.stream) _SCAN.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  _SCAN.stream=null;
+  const w=document.getElementById('scanWrap'); if(w) w.remove();
+}
+/* 識別證條碼還原成員編。
+   常見的幾種：純員編「05845」、去零「5845」、帶院區前綴「CYCH05845」、
+   卡號把員編包在裡面「1234050845…」。
+   規則：先原樣比對 → 去前導零比對 → 取條碼裡的數字，從長到短找得到名冊裡的人為止。
+   都找不到就原樣填入，讓原本的「查無此員編」提示照常運作，不要自己亂猜。 */
+function empFromScan(raw){
+  const t=String(raw||'').trim();
+  if(!t) return '';
+  const hit=v=>ACCOUNTS.find(x=>x.id===v)||ACCOUNTS.find(x=>idKey(x.id)===idKey(v));
+  let a=hit(t); if(a) return a.id;
+  const digits=t.replace(/\D/g,'');
+  if(digits){
+    a=hit(digits); if(a) return a.id;
+    for(let len=6;len>=3;len--){
+      for(let i=0;i+len<=digits.length;i++){
+        a=hit(digits.slice(i,i+len));
+        if(a) return a.id;
+      }
+    }
+  }
+  return t;
+}
+function scanDone(text){
+  let v=String(text||'').trim(); if(!v) return;
+  const id=_SCAN.target, kind=_SCAN.kind;
+  closeScan();
+  const el=document.getElementById(id);
+  if(kind==='emp'){
+    const raw=v;
+    v=empFromScan(v);
+    if(el){
+      el.value=v;
+      if(id==='oc_wid') owedWitnessLookup();
+      else if(id==='sc_wid') sealWitnessLookup();
+      else if(id==='empIn'){ const pw=document.getElementById('pwIn'); if(pw&&!pw.value) pw.focus(); }
+    }
+    const a=ACCOUNTS.find(x=>idKey(x.id)===idKey(v));
+    toast(a?('已掃到 '+a.name+'（'+v+'）'):('掃到 '+raw+'，名冊查無此員編'));
+    return;
+  }
+  if(el){ el.value=v; if(id==='sealIn') sealLive(); }
+  toast('已掃到 '+v);
+}
+function loadScript(src){
+  return new Promise((ok,bad)=>{
+    const t=document.createElement('script');
+    t.src=src; t.async=true;
+    t.onload=()=>ok(); t.onerror=()=>bad(new Error('載入失敗'));
+    document.head.appendChild(t);
+    setTimeout(()=>bad(new Error('載入逾時')),15000);
+  });
+}
+/* kind：'seal' 封籤號原樣填入；'emp' 員編 —— 識別證條碼常常不是純員編
+   （會有院區代碼、卡號、前導字母），所以掃到之後要比對人員名冊還原成真正的員編。 */
+async function scanSeal(targetId,kind){
+  if(_SCAN.open) return;
+  _SCAN.kind=kind||(String(targetId||'').indexOf('wid')>=0||targetId==='empIn'?'emp':'seal');
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){
+    alert('這個瀏覽器不支援相機，請直接用鍵盤輸入封籤號。'); return;
+  }
+  _SCAN.open=true; _SCAN.target=targetId||'sealIn';
+  document.body.insertAdjacentHTML('beforeend',scanOverlayHtml());
+  const vid=document.getElementById('scanVid');
+  const FMT=['code_128','code_39','ean_13','ean_8','itf','codabar','upc_a','qr_code'];
+  try{
+    if('BarcodeDetector' in window){
+      // ① 原生：自己開相機、自己輪詢
+      _SCAN.stream=await navigator.mediaDevices.getUserMedia(
+        {video:{facingMode:{ideal:'environment'}}});
+      if(!_SCAN.open){ _SCAN.stream.getTracks().forEach(t=>t.stop()); return; }
+      vid.srcObject=_SCAN.stream;
+      let det;
+      try{ det=new window.BarcodeDetector({formats:FMT}); }
+      catch(e){ det=new window.BarcodeDetector(); }
+      _SCAN.timer=setInterval(async()=>{
+        if(!_SCAN.open||!vid.videoWidth) return;
+        try{
+          const r=await det.detect(vid);
+          if(r&&r.length&&r[0].rawValue) scanDone(r[0].rawValue);
+        }catch(e){}
+      },320);
+    }else{
+      // ② 退路：臨時載 ZXing，由它自己管相機
+      const hint=document.getElementById('scanHint');
+      if(hint) hint.textContent='正在載入掃碼元件…';
+      if(!window.ZXing)
+        await loadScript('https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js');
+      if(!_SCAN.open) return;
+      if(!window.ZXing) throw new Error('掃碼元件載入失敗');
+      if(hint) hint.textContent='把條碼放進框內，會自動讀取';
+      _SCAN.reader=new window.ZXing.BrowserMultiFormatReader();
+      _SCAN.reader.decodeFromVideoDevice(null,'scanVid',(res,err)=>{
+        if(res&&_SCAN.open) scanDone(res.getText());
+      });
+    }
+  }catch(e){
+    const m=String(e&&e.name||e||'');
+    scanErr(/NotAllowed|Permission/i.test(m) ? '沒有相機權限。請到手機設定允許這個網站使用相機。'
+      : /NotFound|Devices/i.test(m)         ? '找不到相機。'
+      : /載入/.test(String(e&&e.message||'')) ? '掃碼元件載不下來（可能沒有網路）。'
+      : '相機打不開：'+m);
+  }
+}
+
+/* ---------- 開封 ---------- */
+const SEAL_REASONS=[
+  ['使用急救車','急救／CPR 後要補齊'],
+  ['封籤不符','核籤時號碼對不起來，或封籤斷裂'],
+  ['有效期限更換','系統提醒快到期，開封換品項'],
+  ['其他','另外說明']
+];
+function renderSealOpen(){
+  const s=sheetById(state.sheetId);
+  const v=String(state.sealInput||'').trim();
+  const c=sealOf(s.id)||{};
+  const pre=(v&&sealNorm(v)!==sealNorm(c.seal))?'封籤不符':'';
+  const opts=SEAL_REASONS.map(([k,d])=>`<label style="display:flex;gap:10px;align-items:flex-start;
+      padding:11px 0;border-bottom:1px dashed var(--line);cursor:pointer">
+    <input type="radio" name="sealwhy" value="${esc(k)}" ${k===pre?'checked':''} style="margin-top:3px">
+    <span><b style="font-size:14.5px">${esc(k)}</b>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:2px">${esc(d)}</div></span></label>`).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">開封 · ${esc(s.name)}</div>
+      <div class="sub">開封會留下紀錄，之後要上新封籤</div></div>
+    <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
+  <div class="screen narrow">
+    ${pre?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;font-size:13px;line-height:1.8">
+      你輸入的封籤號是 <b>${esc(v)}</b>，與系統紀錄不一致。<br>
+      這一筆會寫進紀錄，之後可以追查這台車被誰開過。</div>`:''}
+    <div class="section-h">開封原因</div>
+    <div class="card">${opts}</div>
+    <div class="section-h">補充說明（選填）</div>
+    <div class="card"><textarea id="so_note" rows="3" placeholder="例如：09/10 D 班 CPR 後，用掉 Bosmin 3 支"
+      style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:10px;
+             background:transparent;color:inherit;font-family:inherit;font-size:14px"></textarea></div>
+    <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="startSealOpen()">
+      記錄開封，下一步登錄期限 →</button>
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.8">
+      逐項點班不受影響，照原本的方式點完提交即可。</div>
+  </div>`;
+}
+async function startSealOpen(){
+  const s=sheetById(state.sheetId);
+  const r=document.querySelector('input[name="sealwhy"]:checked');
+  if(!r){ alert('請先選一個開封原因'); return; }
+  const n=document.getElementById('so_note'), note=((n&&n.value)||'').trim();
+  if(r.value==='其他'&&!note){ alert('選「其他」請在補充說明寫一下原因'); return; }
+  const v=String(state.sealInput||'').trim();
+  if(!sealWriteOK()){
+    alert('後端還沒更新到 v12（目前 '+(API_VER_SEEN||'未知')+'），開封紀錄存不下來。\n\n'
+      +'請先把 dianban_api.gs 貼上並「重新部署為新版本」。\n'
+      +'在那之前封籤請先沿用紙本登記。');
+    return;
+  }
+  toast('記錄開封中…');
+  try{
+    await owedWrite('cart_seal_open',{cartId:cartIdOf(s.id),cartName:s.name,
+      date:curRcDate(),shift:effShift(),
+      reason:r.value+(v?('（車上為 '+v+'）'):''), note:note,
+      empId:state.user.id,name:state.user.name});
+  }catch(e){ console.error('開封紀錄寫入失敗',e); }
+  await loadCartSeal();
+  state.sealReason=r.value; state.sealNote=note;
+  state.screen='sealClose'; render();
+}
+
+/* ---------- 上新封籤（＋登錄有效期限） ---------- */
+let _sealWitness=null;
+function sealWitnessLookup(){
+  const v=(document.getElementById('sc_wid').value||'').trim();
+  const el=document.getElementById('sc_wname');
+  const a=ACCOUNTS.find(x=>x.id===v)||(v?ACCOUNTS.find(x=>idKey(x.id)===idKey(v)):null);
+  if(!a){_sealWitness=null;el.textContent=v?'查無此員編':'尚未見證';el.style.color='var(--ink-soft)';return;}
+  if(!isWitnessRank(a)){_sealWitness=null;
+    el.textContent=`${a.name}（${a.title}）— 非小組長以上，不可見證`;el.style.color='var(--bad,#E03131)';return;}
+  if(idKey(a.id)===idKey(state.user&&state.user.id)){_sealWitness=null;
+    el.textContent=`${a.name} — 見證人不可以是自己，請由另一位人員刷員編`;
+    el.style.color='var(--bad,#E03131)';return;}
+  _sealWitness=a;el.textContent=`✓ 見證人：${a.name}（${a.title}）`;el.style.color='var(--ok,#0f7a86)';
+}
+/* 要登有效期限的品項＝紙本「附件三 急救車上鎖物品」。
+   後端 cart_expiry 有名冊就以它為準（那才是上鎖的那些東西）；
+   還沒建立時退回用點班表的非藥品品項，不讓畫面空白。 */
+function sealExpItems(s){
+  const a=expListOf(s.id);
+  if(a.length) return a.filter(x=>x.type!=='藥品').map(x=>({name:x.item,type:x.type,qty:x.qty}));
+  return itemsAllOf(s.id,null).filter(needExp).map(o=>({name:o.name,type:o.type,qty:o.qty}));
+}
+function renderSealClose(){
+  const s=sheetById(state.sheetId);
+  const list=sealExpItems(s);
+  const prev={}; expListOf(s.id).forEach(x=>prev[x.item]=x);
+  const rows=list.map((o,i)=>{
+    const p=prev[o.name]||{};
+    const iso=expISO(p.exp);
+    /* ★ 只有「無日期」才勾那個框。
+       「欠物」「待確認」若被勾成無日期，這一項就永遠不會再提醒了。 */
+    const nd=(p.status==='無日期')?'checked':'';
+    const cl=expClass(p.days);
+    const flag=p.status==='待確認'?`<span style="font-size:11px;color:#B35309;font-weight:700">⚠ 待確認</span>`
+             :p.status==='欠物'   ?`<span style="font-size:11px;color:#E03131;font-weight:700">欠物</span>`:'';
+    const hint=p.exp?`<span style="font-size:11px;color:${cl==='bad'?'#E03131':'var(--ink-soft)'}">上次：${esc(p.exp)}</span>`:'';
+    return `<div style="padding:9px 0;border-bottom:1px dashed var(--line)">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <b style="font-size:14px">${esc(o.name)}</b>
+        <span style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap">${esc(o.qty||'')} ${flag} ${hint}</span></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <input id="exp_${i}" type="date" value="${iso}" ${nd?'disabled':''} style="flex:1;min-width:0;padding:8px;
+          border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;
+          font-family:inherit;font-size:14px">
+        <label style="display:flex;gap:5px;align-items:center;font-size:12.5px;color:var(--ink-soft);white-space:nowrap">
+          <input id="nd_${i}" type="checkbox" ${nd} onchange="document.getElementById('exp_${i}').disabled=this.checked">無日期</label>
+      </div></div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">上鎖物品 · 登期限並封新籤</div>
+      <div class="sub">${esc(s.name)} · ${SHIFT_NAME[effShift()]}${state.sealReason?(' · '+esc(state.sealReason)):''}</div></div>
+    <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="card" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">
+      這一頁對應紙本「附件三 急救車上鎖物品有效期限登錄表」。<br>
+      <b>藥品不登期限</b>（比照紙本，由藥局管控）；數量大於 1 的品項請登<b>最近一次</b>到期日。<br>
+      沒標期限的器械勾「無日期」。登過之後系統會自動在到期前提醒，不必每次翻表。</div>
+    ${!sealWriteOK()?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+      font-size:12.5px;line-height:1.8">⚠️ 後端目前是 <b>${esc(API_VER_SEEN||'未知')}</b>，
+      這一頁改的期限與新封籤號<b>存不下來</b>。<br>
+      請先把 <b>dianban_api.gs</b> 貼上並「重新部署為新版本」（需 v12）再回來封車。<br>
+      期限也可以直接在 Sheet 的 <b>cart_expiry</b> 分頁改。</div>`:''}
+    <div class="section-h">有效期限（${list.length} 項）</div>
+    <div class="card">${rows||'<div style="color:var(--ink-soft);font-size:13px">還沒有上鎖物品名冊。請先在後端執行 seedObsCartExpiry 建立，或在 cart_expiry 分頁貼上附件三的品項。</div>'}</div>
+    <div class="section-h">上新封籤</div>
+    <div class="card">
+      <div style="font-size:13px;color:var(--ink-soft);margin-bottom:8px">
+        剪斷舊封籤、上新封籤後，把新封籤上的號碼輸入這裡。之後每班核的就是這個號碼。</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button type="button" onclick="scanSeal('sc_seal')" title="掃描新封籤條碼"
+          style="flex:0 0 auto;padding:12px 14px;font-size:20px;line-height:1;border:1px solid var(--line);
+            border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:inherit;
+            font-family:inherit;cursor:pointer">📷</button>
+        <input id="sc_seal" autocomplete="off" placeholder="掃描或輸入新封籤號"
+          style="flex:1;min-width:0;padding:13px;font-size:20px;text-align:center;letter-spacing:2px;
+                 border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;font-family:inherit">
+      </div>
+      <div style="font-size:13px;color:var(--ink-soft);margin:12px 0 6px">
+        見證人刷員編（小組長以上或有見證資格，<b>不可以是自己</b>）</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button type="button" onclick="scanSeal('sc_wid','emp')" title="掃描識別證條碼"
+          style="flex:0 0 auto;padding:10px 13px;font-size:19px;line-height:1;border:1px solid var(--line);
+            border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:inherit;
+            font-family:inherit;cursor:pointer">📷</button>
+        <input id="sc_wid" inputmode="numeric" autocomplete="off" placeholder="掃識別證或輸入員編"
+          oninput="sealWitnessLookup()"
+          style="flex:1;min-width:0;padding:11px;font-size:16px;border:1px solid var(--line);
+                 border-radius:10px;background:transparent;color:inherit;font-family:inherit">
+      </div>
+      <div id="sc_wname" style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">尚未見證</div>
+    </div>
+    <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="submitSealClose()">
+      封車完成</button>
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.8">
+      封好之後會回到點班表，逐項點班照原本的方式完成就好。</div>
+  </div>`;
+  _sealWitness=null;
+}
+async function submitSealClose(){
+  const s=sheetById(state.sheetId);
+  const seal=((document.getElementById('sc_seal')||{}).value||'').trim();
+  if(!seal){ alert('請輸入新封籤號'); return; }
+  if(!_sealWitness){ alert('請由另一位小組長以上（或有見證資格）人員刷員編見證，不能是自己'); return; }
+  if(!sealWriteOK()){
+    alert('後端還沒更新到 v12（目前 '+(API_VER_SEEN||'未知')+'），新封籤與期限存不下來。\n\n'
+      +'請先把 dianban_api.gs 貼上並「重新部署為新版本」，再回來封車。');
+    return;
+  }
+  const list=sealExpItems(s), send=[];
+  let miss=0;
+  list.forEach((o,i)=>{
+    const d=document.getElementById('exp_'+i), nd=document.getElementById('nd_'+i);
+    const st=(nd&&nd.checked)?'無日期':'';
+    const v=st?'':(((d&&d.value)||'').trim());
+    if(!v&&!st){ miss++; return; }                     // 沒填的保留上次紀錄，不覆蓋成空白
+    send.push({item:o.name,type:o.type||'',qty:o.qty||'',exp:v,status:st});
+  });
+  if(miss&&!confirm('還有 '+miss+' 項沒有填有效期限。\n\n確定要送出嗎？（沒填的會保留上次登錄的日期）')) return;
+  toast('封車登錄中…');
+  let r2=null;
+  try{
+    if(send.length) await owedWrite('cart_expiry_set',
+      {cartId:cartIdOf(s.id),empId:state.user.id,name:state.user.name,list:send});
+    r2=await owedWrite('cart_seal_new',{cartId:cartIdOf(s.id),cartName:s.name,seal:seal,
+      date:curRcDate(),shift:effShift(),empId:state.user.id,name:state.user.name,
+      witnessId:_sealWitness.id,witness:_sealWitness.name,
+      note:(state.sealReason||'')+(state.sealNote?('・'+state.sealNote):'')});
+  }catch(e){ r2={ok:false,error:String(e)}; }
+  if(!(r2&&r2.ok===true)){
+    alert('新封籤沒有存到後端：'+((r2&&r2.error)||'請確認網路，或 GS 是否已「重新部署為新版本」')
+      +'\n\n這一筆還沒完成，請稍後再送出一次。');
+    return;
+  }
+  // 封好之後把號碼帶回點班表，人員不用再抄一次
+  state.sealInput=seal; state.sealMismatch=false; state.sealReason=''; state.sealNote=''; _sealWitness=null;
+  await Promise.all([loadCartSeal(),loadCartExpiry()]);
+  toast('已上新封籤 '+seal);
+  state.screen='rollcall'; render();
+}
+
+/* ---------- 唯讀總覽 ---------- */
+function renderSeal(){
+  const s=sheetById(state.sheetId), area=areaById(s.area);
+  const c=sealOf(s.id);
+  const sealed=sealSealed(s.id);   // 狀態欄留空也算封存中（只填號碼那一格就好）
+  const age=c?sealAgeDays(c.at):null;
+  const soon=expSoonOf(s.id), expAll=expListOf(s.id);
+  $app.innerHTML=`
+  <div class="topbar" style="background:linear-gradient(135deg,${area.color},${area.color}cc)">
+    <div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">🔒 上鎖物品 · ${esc(s.name)}</div>
+      <div class="sub">封籤狀態與有效期限</div></div>
+    <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="card" style="${sealed?'':'background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a'}">
+      <div style="font-weight:800;font-size:15px">${sealed?'🔒 封存中':'🔓 '+esc((c&&c.status)||'尚未建立封籤')}</div>
+      <div style="font-size:12.5px;margin-top:6px;line-height:1.8">
+        ${sealed?`封籤號 ${state.sealPeek?('<b>'+esc(c.seal)+'</b>'):'••••'}
+          <button onclick="state.sealPeek=!state.sealPeek;render()" style="border:1px solid var(--line);
+            background:transparent;color:inherit;font-family:inherit;font-size:11px;padding:2px 8px;
+            border-radius:6px;cursor:pointer">${state.sealPeek?'隱藏':'查看'}</button><br>
+          ${c.by?('由 '+esc(c.by)+' 封車'):''}${c.witness?('・'+esc(c.witness)+' 見證'):''}
+          ${c.at?('<br>'+esc(c.at)):''}${age!=null?('・已封存 '+age+' 天'):''}`
+        :`${c&&c.openAt?('開封時間：'+esc(c.openAt)+'<br>'):''}${c&&c.openWhy?('原因：'+esc(c.openWhy)+'<br>'):''}
+          需要清點上鎖物品、登好期限後上新封籤。`}</div>
+      ${sealed?'':`<button class="btn btn-primary btn-block" style="margin-top:10px"
+        onclick="state.screen='sealClose';render()">登錄期限並上新封籤 →</button>`}
+    </div>
+    ${expUnsureOf(s.id).length?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+        cursor:pointer" onclick="state.screen='sealExpiry';render()" role="button" tabindex="0">
+      <div style="font-weight:700">⚠ ${expUnsureOf(s.id).length} 項期限待確認</div>
+      <div style="font-size:12.5px;margin-top:4px;line-height:1.7">
+        紙本附件三上這幾項的手寫日期判讀不準，請核對實物後改掉：<br>
+        ${expUnsureOf(s.id).map(x=>esc(x.item)+(x.exp?('（'+esc(x.exp)+'？）'):'（紙本空白）')).join('、')}</div></div>`:''}
+    ${expIsFallback(s.id)?`<div class="card" style="font-size:12px;color:var(--ink-soft);line-height:1.7">
+      ℹ️ 目前顯示的是<b>紙本附件三帶入的內建值</b>（App 內建，不必部署後端就看得到）。<br>
+      等後端更新並跑過 <b>seedObsCartExpiry</b>，就會改用後端資料，那時在 App 裡修改才存得下來。</div>`:''}
+    ${expAll.length?`<div class="section-h">${soon.length?('快到期（'+soon.length+' 項）'):'有效期限'}</div>
+      <div class="card">
+        ${soon.length?soon.slice(0,8).map(expRowHtml).join('')
+          :'<div style="text-align:center;color:var(--ok);padding:10px;font-weight:600">✓ '+EXP_WARN_DAYS+' 天內沒有到期品項</div>'}
+        <button class="btn btn-ghost btn-block" style="margin-top:10px"
+          onclick="state.screen='sealExpiry';render()">查看全部 ${expAll.length} 項</button></div>`
+      :`<div class="card" style="font-size:13px;color:var(--ink-soft);line-height:1.7">
+        還沒有上鎖物品名冊。請在後端執行 <b>seedObsCartExpiry</b> 建立附件三的品項，
+        之後開封清點時登一次期限，系統就會自動在到期前提醒。</div>`}
+  </div>`;
+}
+function renderSealExpiry(){
+  const s=sheetById(state.sheetId);
+  const a=expListOf(s.id);
+  const over=a.filter(x=>x.days!=null&&x.days<0).length;
+  const soon=a.filter(x=>x.days!=null&&x.days>=0&&x.days<=EXP_WARN_DAYS).length;
+  $app.innerHTML=`
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">有效期限 · ${esc(s.name)}</div>
+      <div class="sub">共 ${a.length} 項 · 已過期 ${over} · ${EXP_WARN_DAYS} 天內到期 ${soon}${expUnsureOf(s.id).length?(' · 待確認 '+expUnsureOf(s.id).length):''}</div></div>
+    <button class="back" onclick="state.screen='seal';render()">返回</button></div></div>
+  <div class="screen narrow">
+    <div class="card">${a.length?a.map(expRowHtml).join('')
+      :'<div style="color:var(--ink-soft);font-size:13px">還沒有登錄任何有效期限</div>'}</div>
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.8">
+      期限在「開封／封新籤」時登錄。藥品比照紙本不登（藥局管控）。
+      ${expIsFallback(s.id)?'<br><span style="color:#b35309">目前為 App 內建值（Sheet 還沒有 cart_expiry 分頁）</span>'
+        :(sealWriteOK()?'':'<br><span style="color:#b35309">讀自 Sheet 的 cart_expiry；要在 App 裡改需後端 v12</span>')}</div>
+  </div>`;
+}
+/* 首頁警示：封籤被開過還沒封回去，或上鎖物品快到期。沒事就回空字串。 */
+function sealCard(){
+  const out=[];
+  SEAL_SHEETS().forEach(s=>{
+    const c=sealOf(s.id);
+    /* ★ 完全沒有封籤紀錄（後端還沒建立分頁／還沒封第一次籤）就不要在首頁亮紅燈。
+       那不是異常，是還沒設定；首頁天天紅著會讓真正的異常被忽略。
+       點班表最上方的封籤卡已經會引導去建立了。 */
+    if(!c)return;
+    if(c.seal&&String(c.status)==='封存中')return;
+    out.push(`<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
+        cursor:pointer;margin-bottom:10px" onclick="openSheet('${s.id}')" role="button" tabindex="0">
+      <div style="font-weight:800">🔓 ${esc(s.name)} 上鎖物品：${esc((c&&c.status)||'尚未建立封籤')}</div>
+      <div style="font-size:12.5px;margin-top:4px;line-height:1.7">
+        ${c&&c.openWhy?esc(c.openWhy)+'　·　':''}需要登好期限並上新封籤 ›</div></div>`);
+  });
+  SEAL_SHEETS().forEach(s=>{
+    const soon=expSoonOf(s.id); if(!soon.length)return;
+    const over=soon.filter(x=>x.days<0).length;
+    out.push(`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+        cursor:pointer;margin-bottom:10px" onclick="state.sheetId='${s.id}';state.screen='sealExpiry';render()"
+        role="button" tabindex="0">
+      <div style="font-weight:700">⏰ ${esc(s.name)} 上鎖物品：${soon.length} 項 ${EXP_WARN_DAYS} 天內到期${over?('（已過期 '+over+'）'):''}</div>
+      <div style="font-size:12.5px;margin-top:4px">最近：${esc(soon[0].item)} · ${esc(expText(soon[0]))} ›</div></div>`);
+  });
+  return out.join('');
+}
+
 function renderSummary(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
   const issues=[];
@@ -3752,6 +4706,7 @@ function renderSummary(){
     <div class="card">${issuesHtml}</div>
     <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
     <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
+    ${sealActive(state.sheetId)?sealSummaryBlock(sheetById(state.sheetId)):''}
     <button class="btn btn-primary btn-block" onclick="submitRollcall()">提交並簽核</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openItemReport(state.sheetId,'')">🚩 回報項目有誤（送財管組長）</button>
   </div>`;
@@ -3797,7 +4752,8 @@ render();
 if(state.user){ state.rcDate=todayISO(); rebindForDate(); }
 /* ★ 啟動只發一支請求（原本 10 支）。大表都只要最近幾天，回傳量也小很多。 */
 (async()=>{ await loadBundle([['items'],['devices'],['owed'],['item_report'],['staff_perm'],
-  ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30]]);
+  ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30],
+  ['cart_seal'],['cart_expiry']]);
   render(); })();
 /* ★ 自動更新完成狀態（20 秒一次）。
    涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
