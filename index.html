@@ -496,13 +496,19 @@ function sealOf(sheetId){
   for(let i=CART_SEAL.length-1;i>=0;i--) if(CART_SEAL[i].cartId.toUpperCase()===k) return CART_SEAL[i];
   return null;
 }
-/* 有號碼、而且沒有被標成異常 → 就是封存中。
-   狀態欄留空一律視為封存中（建立封籤只要填號碼那一格）。 */
+/* ★★ 判斷方向：有封籤號就是「封著的」，除非狀態欄明講開封了。
+   原本寫成「只認『封存中』四個字」是錯的 —— 護理長在 Sheet 上手打的是「上鎖」，
+   程式就當成沒封，反而叫人全點。狀態欄是人打的，不能要求他打出特定字串；
+   真正可靠的訊號是「封籤號在不在」。 */
+function sealStatusOpen(st){
+  const t=String(st==null?'':st).trim();
+  if(!t) return false;
+  return /開封|待清點|未封|沒封|無封|解除|剪斷|斷了|清點中/.test(t);
+}
 function sealSealed(sheetId){
   const c=sealOf(sheetId);
-  if(!c||!c.seal) return false;
-  const st=String(c.status||'').trim();
-  return st===''||st==='封存中';
+  if(!c||!c.seal) return false;          // 沒號碼就談不上封著
+  return !sealStatusOpen(c.status);      // 有號碼＋沒明講開封 → 封著
 }
 /* ★★ 封籤模式「由資料啟用」，不是由檔案版本啟用。
    後端 cart_seal 有這台車的紀錄 → 才切換成封籤式（上鎖物品不打勾、最上方出現核籤卡）。
@@ -517,8 +523,8 @@ function sealActive(sheetId){
   if(!c) return false;
   /* ★ 只有車號、封籤號還空著的「空殼列」不算啟用 ——
      那是還沒填號碼的狀態，這時候該跟以前一樣逐項點，不要跳紅字嚇人。
-     明確標「已開封／待清點」才算（那是真的要處理）。 */
-  return !!(c.seal || c.status==='已開封' || c.status==='待清點');
+     除非狀態欄明講已開封／待清點（那是真的要處理）。 */
+  return !!(c.seal || sealStatusOpen(c.status));
 }
 /* 有效期限字串 → yyyy-MM-dd。紙本上寫法很雜：2027.3.2 / 2027,3,4 / 2029.5 / 2031.12
    只有年月就算到那個月的最後一天（藥檢慣例：標到月份就是月底前可用）。 */
@@ -654,7 +660,7 @@ async function loadBundle(spec){
 }
 
 const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-14-b28';
+const APP_VER='2026-09-14-b29';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -4095,7 +4101,7 @@ function sealAgeDays(at){
 }
 function sealMetaHtml(s){
   const c=sealOf(s.id);
-  if(!c||!c.seal||c.status!=='封存中')
+  if(!sealSealed(s.id))
     return '<span style="color:var(--bad,#E03131);font-weight:700">🔓 '+esc((c&&c.status)||'尚未建立封籤')+'</span>';
   const d=sealAgeDays(c.at);
   return '🔒 封籤 <b>'+esc(c.seal)+'</b>'+(d!=null?('・'+d+' 天'):'');
@@ -4617,7 +4623,7 @@ function renderSeal(){
     <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
   <div class="screen narrow">
     <div class="card" style="${sealed?'':'background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a'}">
-      <div style="font-weight:800;font-size:15px">${sealed?'🔒 封存中':'🔓 '+esc((c&&c.status)||'尚未建立封籤')}</div>
+      <div style="font-weight:800;font-size:15px">${sealed?('🔒 '+esc((c&&c.status)||'封存中')):('🔓 '+esc((c&&c.status)||'尚未建立封籤'))}</div>
       <div style="font-size:12.5px;margin-top:6px;line-height:1.8">
         ${sealed?`封籤號 ${state.sealPeek?('<b>'+esc(c.seal)+'</b>'):'••••'}
           <button onclick="state.sealPeek=!state.sealPeek;render()" style="border:1px solid var(--line);
@@ -4704,7 +4710,7 @@ function sealCard(){
        那不是異常，是還沒設定；首頁天天紅著會讓真正的異常被忽略。
        點班表最上方的封籤卡已經會引導去建立了。 */
     if(!c)return;
-    if(c.seal&&String(c.status)==='封存中')return;
+    if(sealSealed(s.id))return;      // 封著就不用在首頁亮紅燈
     out.push(`<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
         cursor:pointer;margin-bottom:10px" onclick="openSheet('${s.id}')" role="button" tabindex="0">
       <div style="font-weight:800">🔓 ${esc(s.name)} 上鎖物品：${esc((c&&c.status)||'尚未建立封籤')}</div>
