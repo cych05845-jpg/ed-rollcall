@@ -755,7 +755,7 @@ async function loadBundle(spec){
 }
 
 const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-15-b33';
+const APP_VER='2026-09-15-b34';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1750,9 +1750,27 @@ function keyOf(o){return o.sheet+'|'+o.i}
 
 // ---------- state ----------
 let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{},reason:{},note:{}};
+/* ★★ 換版本時要自己清掉「暫時性」的本機資料。
+   這幾個月已經踩過兩次：舊版算錯的班別、上一班打的封籤號，都被整包存進
+   localStorage，改好程式也沒用，因為舊值優先。
+   規則：
+     ・批次快取（ed_bundle1）本來就綁版本，換版自動作廢 ✓
+     ・sw.js 每次啟動清空所有快取，所以 HTML 不會卡舊版 ✓
+     ・這裡處理 state：換版時只留「不能掉的」，其餘全部重算
+   ★ 一定要留下來的是 rcPending —— 那是還沒送出去的點班紀錄，清掉就真的不見了。 */
+const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs',
+                             'checks','reason','note','theme'];
 const store={
-  save(){try{localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
+  save(){try{state._v=APP_VER;localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
   load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}
+    if(state&&state._v&&state._v!==APP_VER){
+      const keep={};
+      STATE_KEEP_ON_UPGRADE.forEach(function(k){ if(state[k]!==undefined)keep[k]=state[k]; });
+      console.info('版本從 '+state._v+' 換到 '+APP_VER+'，已清掉本機暫存（保留登入與未送出的紀錄）');
+      state=Object.assign({screen:'home',areaId:null,sheetId:null,half:null,
+        checks:{},reason:{},note:{}},keep);
+    }
+    if(state) state._v=APP_VER;
     /* ★ 班別不可以沾黏。整包 state 都存進 localStorage，班別也被存進去，
        舊版用錯的裝置時區算出「大夜」就一直卡在瀏覽器裡 ——
        時區修好了也沒用，因為 state.shift||detectShift() 讓舊值優先。
@@ -2616,6 +2634,7 @@ function renderAdminHub(){
     b('主管簽核 · 完成總表','openLeader()'),
     b('簽核／點班紀錄','openRecords()'),
     b('🖨 每週點班紀錄（可列印·主管審閱）','openPrintWeek()'),
+    b('🧹 清除本機暫存（畫面怪怪的時候用）','clearLocalCache()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
   const mg=[];
@@ -2656,6 +2675,27 @@ function pwMonday(){
 function pwShift(n){
   const m=pwMonday(); m.setDate(m.getDate()+n*7);
   state.pwWeek=fmtISO(m); render();
+}
+/* 畫面顯示怪怪的、或懷疑還在用舊版資料時用這個。
+   只清這支手機裡的暫存，後端 Sheet 完全不動。
+   ★ 有還沒送出的點班紀錄時會先擋下來 —— 那一筆清掉就真的不見了。 */
+async function clearLocalCache(){
+  if(state.rcPending){
+    alert('有一筆點班紀錄還沒送到後端，先送出再清。\n\n'
+      +'請到完成畫面按「重新上傳」，或確認網路後再回來。');
+    return;
+  }
+  if(!confirm('要清掉這支手機的本機暫存嗎？\n\n'
+    +'會清掉：批次快取、勾選進度、班別與封籤號的暫存\n'
+    +'不會動到：後端 Sheet 的任何資料、你的登入\n\n'
+    +'清完會自動重新載入。')) return;
+  try{ localStorage.removeItem('ed_bundle1'); }catch(e){}
+  try{
+    const u=state.user;
+    localStorage.setItem('ed_rc2',JSON.stringify({user:u,_v:APP_VER}));
+  }catch(e){}
+  try{ if(window.caches&&caches.keys) (await caches.keys()).forEach(k=>caches.delete(k)); }catch(e){}
+  location.reload();
 }
 function openPrintWeek(){
   state.screen='printWeek';
