@@ -285,8 +285,10 @@
   font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif}
 .pw-head{border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:10px}
 .pw-org{font-size:11px;color:#555;letter-spacing:.04em}
-.pw-ttl{font-size:19px;font-weight:700;letter-spacing:.08em;margin:2px 0 3px}
-.pw-meta{font-size:12px;color:#333}
+.pw-ttl{font-size:17px;font-weight:700;letter-spacing:.08em;margin:2px 0 2px}
+/* 單位名稱是這張表最重要的辨識資訊（歸檔、抽查都先看它），所以放大 */
+.pw-unit{font-size:26px;font-weight:700;letter-spacing:.04em;line-height:1.15;margin:4px 0 3px;color:#111}
+.pw-meta{font-size:12.5px;color:#333;font-variant-numeric:tabular-nums}
 .pw-tbl{border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #2b2b2b}
 .pw-tbl th,.pw-tbl td{border:.5px solid #9a9a9a;padding:4px 5px;font-size:11.5px;
   text-align:center;vertical-align:middle;color:#111}
@@ -305,8 +307,8 @@
 .pw-iss th,.pw-iss td{border:.5px solid #9a9a9a;padding:3px 6px;font-size:10.5px;color:#111;text-align:left}
 .pw-iss thead th{background:#f1f1f1;font-weight:500}
 .pw-none{font-size:11px;color:#555;border:1px dashed #bbb;padding:7px 9px}
-.pw-sign{display:flex;gap:10px;margin-top:14px}
-.pw-sign-a,.pw-sign-b{flex:1;border:1px solid #2b2b2b;padding:8px 10px;min-height:76px}
+.pw-sign{display:block;margin-top:14px}
+.pw-sign-a{border:1px solid #2b2b2b;padding:8px 12px;min-height:84px}
 .pw-sign-t{font-size:10.5px;color:#555;margin-bottom:6px}
 .pw-stamp{display:inline-block;border:2px solid #a0232b;color:#a0232b;border-radius:6px;
   padding:5px 12px;font-weight:700;font-size:14px;text-align:center;line-height:1.35}
@@ -755,7 +757,7 @@ async function loadBundle(spec){
 }
 
 const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-15-b34';
+const APP_VER='2026-09-15-b37';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -837,6 +839,9 @@ function can(cap,u){ u=u||state.user; if(!u)return false;
     case 'items.report':  return true;                          // 全員可回報項目有誤
     case 'witness':       return isWitnessRank(u);              // 當歸還見證人
     case 'perm.manage':   return isBoss(u);                     // 指派權限（僅 HN／AHN）
+    /* ★ 每週點班紀錄要開放給各班 Leader —— 抽查時是他要拿得出來的東西。
+       條件：主管、小組長以上（含額外授予見證資格者）、或今天班表是 Leader。 */
+    case 'record.print':  return isBoss(u)||isWitnessRank(u)||isLeaderToday();
     default: return false;
   }
 }
@@ -902,6 +907,22 @@ async function itemsWrite(task,payload){
   catch(e){return {ok:false,error:String(e)};}
 }
 function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((d.getDay()+6)%7));const w1=new Date(d.getFullYear(),0,4);return d.getFullYear()+'-W'+String(1+Math.round(((d-w1)/86400000-3+((w1.getDay()+6)%7))/7)).padStart(2,'0');}
+/* ★ 逐項紀錄（存，不印）。
+   後端本來只存「完成幾項」，答不出「是哪一項沒點」；評鑑若哪天要求逐項表，
+   舊資料是補不回來的，所以現在每班存一欄字串。畫面與列印一律不呈現。
+   ★ 用「例外編碼」而不是逐項清單：正常項目占絕大多數，只記未點／異常最省，
+     而且是記「項目名」不是索引 —— 品項順序以後改了，舊紀錄還讀得懂。
+   格式：OK=38｜未點:氧氣鋼瓶、喉頭鏡｜異常:AMBU    全部正常時只有 OK=42 */
+function itemLogOf(list){
+  const un=[], bd=[]; let ok=0;
+  list.forEach(o=>{ const v=state.checks[keyOf(o)];
+    if(v==='ok') ok++; else if(v==='bad') bd.push(o.name); else un.push(o.name); });
+  const cut=(a)=>{ let s=a.join('、'); return s.length>600?s.slice(0,600)+'…(共'+a.length+'項)':s; };
+  const seg=['OK='+ok];
+  if(un.length) seg.push('未點:'+cut(un));
+  if(bd.length) seg.push('異常:'+cut(bd));
+  return seg.join('｜');
+}
 // 點班提交 → 寫回後端完成紀錄(週五簽核/找未完成的地基)
 async function submitRollcall(){
   const s=sheetById(state.sheetId), list=rcListOf(s.id,state.half);
@@ -944,6 +965,8 @@ async function submitRollcall(){
     empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
     done:done, total:list.length, bad:bad, isDone:(list.length>0&&done>=list.length)?'是':'否',
     startedAt:new Date(startMs).toISOString(), submittedAt:new Date(endMs).toISOString(), durationSec:durationSec,
+    // ★ 逐項紀錄：存進 rollcall_log 的「逐項紀錄」欄，不在任何畫面／列印呈現
+    itemLog:itemLogOf(list),
     // ★ 異常明細：一筆異常一列，之後才分析得出「哪些器械最常壞、哪些耗材最常短少」
     issues: list.filter(o=>state.checks[keyOf(o)]==='bad').map(function(o){
       const k=keyOf(o);
@@ -1989,6 +2012,8 @@ function renderHome(){
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     ${reviewBtn}
+    ${(!hasAdmin&&can('record.print'))?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+      onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>`:''}
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px;line-height:1.8">
       ＊冰箱、氧氣等附加查核也列在上方「輔助單張」，可展開看三個時段誰登錄了<br>
       <span style="opacity:.75">前端版本 ${APP_VER}</span></div>
@@ -2698,6 +2723,7 @@ async function clearLocalCache(){
   location.reload();
 }
 function openPrintWeek(){
+  if(!can('record.print')){ alert('每週點班紀錄開放給主管與各班 Leader（小組長以上）。'); return; }
   state.screen='printWeek';
   if(!state.pwWeek) state.pwWeek=fmtISO(weekMonday(tpeDate()));
   if(!state.pwArea) state.pwArea='all';
@@ -2727,11 +2753,33 @@ function pwIssues(sheetId,days){
     return String(fld(r,['sheetId','sheetId'])||'')===String(sheetId) && set[String(fld(r,['date','日期'])||'')];
   });
 }
+/* ★ 簽核時間顯示。
+   後端存的可能是「2026-09-15 14:02」這種台北字串，也可能是舊的 ISO UTC
+   「2026-09-15T06:02:00.000Z」—— 後者直接印出來就是一串看不懂的東西，
+   而且時間還差 8 小時。這裡統一轉成台北時間。 */
+function pwSignTime(so){
+  const raw=String((so&&(so.atText||so['簽核時間']||so.at))||'').trim();
+  if(!raw)return '';
+  if(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)&&/(Z|[+-]\d{2}:?\d{2})$/.test(raw)){
+    const d=new Date(raw);
+    if(!isNaN(d.getTime())){
+      const t=tpeParts(d);
+      return t.y+'-'+p2(t.m)+'-'+p2(t.d)+' '+p2(t.h)+':'+p2(t.mi);
+    }
+  }
+  return raw.replace('T',' ').replace(/\.\d+Z?$/,'').replace(/Z$/,'');
+}
+/* ★ 取「最後寫入的那一列」，不是「簽核時間最大的那一列」。
+   護理長如果把簽核時間往前改（例如原本填錯成晚上，要改回下午），
+   用時間排序會讓舊的那筆一直贏，改了等於沒改。
+   後端是依序附加／覆蓋，所以「最後一列」才是最新的意思。
+   本機還沒上傳的簽核優先（那是剛剛才按的）。 */
 function pwSignoff(mon){
   const wk=isoWeek(mon);
-  const all=(SIGNOFFLOG||[]).concat(state.signoffs||[]);
-  return all.filter(function(r){ return String(r.week||r['週次']||'')===wk; })
-            .sort(function(a,b){ return String(b.at||b['簽核時間']||'').localeCompare(String(a.at||a['簽核時間']||'')); })[0]||null;
+  const mine=(state.signoffs||[]).filter(function(r){ return String(r.week||'')===wk; });
+  if(mine.length) return mine[mine.length-1];
+  const srv=(SIGNOFFLOG||[]).filter(function(r){ return String(r.week||r['週次']||'')===wk; });
+  return srv.length?srv[srv.length-1]:null;
 }
 function renderPrintWeek(){
   const mon=pwMonday(), days=weekDays(mon);
@@ -2776,7 +2824,8 @@ function renderPrintWeek(){
     return '<section class="pw-page">'
       + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
       + '<div class="pw-ttl">每週點班紀錄</div>'
-      + '<div class="pw-meta">單位：<b>'+esc(sh.name)+'</b>　週次：'+esc(wk)+'　'+esc(label)+'</div></div>'
+      + '<div class="pw-unit">'+esc(sh.name)+'</div>'
+      + '<div class="pw-meta">週次 '+esc(wk)+'　'+esc(label)+'</div></div>'
       + '<table class="pw-tbl"><colgroup><col style="width:88px"><col><col><col></colgroup>'
       + '<thead><tr><th>日期</th><th>大夜 N<br><span class="pw-h2">23–07</span></th>'
       + '<th>白班 D<br><span class="pw-h2">07–15</span></th>'
@@ -2784,12 +2833,11 @@ function renderPrintWeek(){
       + '<tbody>'+rows+'</tbody></table>'
       + '<div class="pw-sec">本週異常摘要</div>'+issHtml
       + '<div class="pw-sign">'
-      +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱（系統簽核）</div>'
-      +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已簽核</div>'
-              + '<div class="pw-stamp-d">'+esc(String(so.atText||so['簽核時間']||fmtLocalFromISO(so.at)||''))+'</div></div>')
-              :'<div class="pw-nosign">本週尚未簽核</div>')
+      +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱／簽章</div>'
+      +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已審閱</div>'
+              + '<div class="pw-stamp-d">'+esc(pwSignTime(so))+'</div></div>')
+              :'<div class="pw-nosign">本週尚未審閱</div>')
       +   '</div>'
-      +   '<div class="pw-sign-b"><div class="pw-sign-t">主管簽章</div><div class="pw-box"></div></div>'
       + '</div>'
       + '<div class="pw-foot">✓ 完成　◍ 部分完成　空白 未點班　／　格子內第二行為點班人員'
       + '　／　資料來源：rollcall_log・rollcall_issue　／　列印 '+esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
@@ -4211,7 +4259,8 @@ function last4Weeks(){
   const dow=(base.getDay()+6)%7,thisMon=new Date(base);thisMon.setDate(base.getDate()-dow);
   for(let i=0;i<4;i++){const mon=new Date(thisMon);mon.setDate(thisMon.getDate()-i*7);
     const sun=new Date(mon);sun.setDate(mon.getDate()+6);
-    arr.push({key:isoWeek(mon),label:`${mon.getMonth()+1}/${mon.getDate()}–${sun.getMonth()+1}/${sun.getDate()}`,isThis:i===0});}
+    arr.push({key:isoWeek(mon),start:fmtISO(mon),   // ★ start：要能從週次回推那一週的週一
+      label:`${mon.getMonth()+1}/${mon.getDate()}–${sun.getMonth()+1}/${sun.getDate()}`,isThis:i===0});}
   return arr;
 }
 function setSignWeek(k){state.signWeek=k;render();}
@@ -4335,6 +4384,13 @@ function renderLeader(){
       <div style="font-weight:700;font-size:14px">🖊 簽核時間（可修改）</div>
       <input type="datetime-local" id="signAt" value="${tpeDTLocal()}" style="flex:1;max-width:230px;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)">
     </div>
+    ${(function(){
+      const ex=pwSignoff(parseISO(((last4Weeks().find(w=>w.key===state.signWeek)||{}).start)||todayISO()));
+      return ex?`<div class="card" style="background:var(--ok-soft,#e6f4f1);border:1px solid var(--ok,#0f7a86);
+        color:var(--ok,#0f7a86);font-size:13px;line-height:1.7;margin-bottom:8px">
+        這一週已由 <b>${esc(String(ex.by||ex['簽核人']||''))}</b> 審閱（${esc(pwSignTime(ex))}）。<br>
+        時間填錯了可以直接改上面的時間再按一次，會覆蓋掉舊的那一筆。</div>`:'';
+    })()}
     <button class="btn btn-primary btn-block" onclick="doSignoff()">✅ 簽核本週（${state.signWeek}）</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openRecords()">📜 查看簽核／點班紀錄</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="pushRemind()">🔔 推播提醒未完成</button>
@@ -5027,6 +5083,14 @@ function renderSealExpiry(){
      ・財管組長／財管負責人（要管期限與清點）
      ・已經手動選到留觀在點班的人
    看不到卡片不影響任何事 —— 走進留觀急救車點班表一樣會看到封籤卡。 */
+// 今天班表是不是 Leader（含 L+OB 複合班）
+function isLeaderToday(){
+  const t=state.todayBind&&state.todayBind.target;
+  const hit=x=>!!(x&&((x.type==='sheet'&&x.sheetId==='leader')||(x.type==='area'&&x.areaId==='leader')));
+  if(!t)return false;
+  if(t.type==='multi')return (t.options||[]).some(hit);
+  return hit(t);
+}
 function sealAreasToday(){
   const set={};
   const t=state.todayBind&&state.todayBind.target;
