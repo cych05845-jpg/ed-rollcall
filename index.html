@@ -353,6 +353,19 @@
 .ic-sec{font-size:11px;font-weight:700;margin:9px 0 3px;color:#111}
 .ic-who{border:1px solid #9a9a9a;padding:4px 7px}
 .ic-who-r{font-size:10px;line-height:1.75;color:#111;font-variant-numeric:tabular-nums}
+/* 班別欄底下的「點到幾項」 */
+.ic-cnt{display:block;font-weight:400;font-size:8px;line-height:1.1;color:#555;
+  font-variant-numeric:tabular-nums}
+.ic-cnt-lo{color:#a0232b;font-weight:700}
+/* 異常明細／欠物本 */
+.ic-iss{border-collapse:collapse;width:100%;border:1px solid #2b2b2b;table-layout:fixed}
+.ic-iss th,.ic-iss td{border:.5px solid #9a9a9a;padding:3px 5px;font-size:10px;color:#111;
+  text-align:center;vertical-align:top;line-height:1.5}
+.ic-iss thead th{background:#f1f1f1;font-weight:500}
+.ic-il{text-align:left!important;word-break:break-all}
+.ic-none{font-size:10.5px;color:#555;border:1px dashed #bbb;padding:6px 9px}
+.ic-sup{font-size:7px;font-weight:700;vertical-align:super;line-height:0}
+.ic-no{background:#f6f6f6;font-weight:700}
 /* ===== 雙月效期盤點（附件一）=====
    刻意照紙本：四個月份一欄一個月，反灰處＝異常時的後續處理方式。 */
 .ca-att{font-size:11px;font-weight:400;color:#555;margin-left:5px}
@@ -403,7 +416,7 @@
   .screen{padding:0!important;max-width:none!important}
   .pw-page{border:0;padding:0;margin:0;page-break-after:always}
   .pw-page:last-child{page-break-after:auto}
-  .pw-tbl tr,.pw-iss tr,.pw-sign,.ic-tbl tr,.ca-tbl tr{page-break-inside:avoid}
+  .pw-tbl tr,.pw-iss tr,.pw-sign,.ic-tbl tr,.ca-tbl tr,.ic-iss tr{page-break-inside:avoid}
   @page{size:A4 portrait;margin:12mm 10mm}
 }
 </style>
@@ -844,6 +857,7 @@ async function loadBundle(spec){
   const fallback=()=>Promise.all(spec.map(x=>{
     const f=apply[x[0]]; if(!f)return Promise.resolve();
     // 退回模式：各自發請求（帶天數）
+    // 退回模式（後端太舊）沒有封存功能，照舊只抓 live
     if(x[0]==='rollcall_log')return loadSignLog(x[1]);
     if(x[0]==='fridge_temp') return loadFridgeLog(x[1]);
     if(x[0]==='o2_check')    return loadO2Log(x[1]);
@@ -851,7 +865,12 @@ async function loadBundle(spec){
   }));
   if(!BUNDLE_OK) return fallback();
   try{
-    const q='tables='+encodeURIComponent(spec.map(x=>x[1]?(x[0]+':'+x[1]):x[0]).join(','));
+    /* spec 第三個值＝要不要一起帶封存資料（<表名>_archive）。
+       ['rollcall_log',400,true] → rollcall_log:400:arch
+       ['rollcall_log',null,true] → rollcall_log::arch（中間留空＝不限天數） */
+    const q='tables='+encodeURIComponent(spec.map(function(x){
+      return x[0] + (x[1]?(':'+x[1]):(x[2]?':':'')) + (x[2]?':arch':'');
+    }).join(','));
     const j=await getJSON(q);
     if(j&&j._version) API_VER_SEEN=String(j._version);
     if(!j||typeof j!=='object'||Array.isArray(j)||!j._version){
@@ -869,8 +888,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-16-v14';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-16-b42';
+const EXPECT_API_VER='2026-09-16-v15';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-16-b46';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1804,6 +1823,12 @@ function tzWarnCard(){
   </div>`;
 }
 const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
+/* ★★★ 班別的顯示順序：一律 大夜 → 白班 → 小夜（N 是一天的第一班）。
+   之前有兩套順序在跑 —— 冰箱那幾列是 00-08／08-16／16-24（N 先），
+   氧氣那幾列和首頁的班別切換卻是 白班／小夜／大夜（N 最後）。
+   同一張畫面上下兩段順序相反，人看了會對錯格，這是會出事的那種不一致。
+   所有「三個班並排」的地方都用這一個常數，不要再各寫各的。 */
+const SHIFT_SEQ=['N','D','E'];
 function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
 const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
 /* ★「其他」是護理長指定要加的 —— 現場一定有不在這六種裡面的狀況。
@@ -2083,7 +2108,7 @@ function renderHome(){
      之前班別只由時鐘或班表決定、又被存在 localStorage 裡沾黏，
      顯示錯了完全沒辦法自己改 —— 補點別班、代班也做不到。 */
   const src=shiftSrc();
-  const stat=['D','E','N'].map(s=>`<div class="sum-stat" onclick="setShift('${s}')" role="button" tabindex="0"
+  const stat=SHIFT_SEQ.map(s=>`<div class="sum-stat" onclick="setShift('${s}')" role="button" tabindex="0"
      title="切換為${SHIFT_NAME[s]}"
      style="cursor:pointer;${s===cur?'background:var(--warn-soft);border-color:var(--warn)':''}">
      <div class="n" style="font-size:15px;color:${s===cur?'var(--warn)':'var(--ink-soft)'}">${s===cur?'進行中':'切換'}</div>
@@ -2797,6 +2822,7 @@ function renderAdminHub(){
     b('🔍 急救車逐項查看（哪一項有沒有被點）','openItemCheck()'),
     b('📅 急救車雙月效期盤點（附件一・2/5/8/11 月）','openCartAudit()'),
     b('🩺 後端連線診斷（畫面顯示都沒點時用）','openNetDiag()'),
+    b('🗄 封存說明（每 3 個月歸檔，查得到）','archHelp()'),
     b('🧹 清除本機暫存（畫面怪怪的時候用）','clearLocalCache()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
@@ -3006,6 +3032,7 @@ function renderPrintWeek(){
     +   '<select onchange="state.pwArea=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
     +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+areaOpts+'</select>'
     +   '<button class="btn btn-ghost" onclick="openItemCheck()">🔍 急救車逐項查看</button>'
+    +   archBtn(400)
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
@@ -3394,6 +3421,21 @@ async function runNetDiag(){
 
     // ⑤ 這一支 /exec 綁到哪份試算表
     if(j2&&j2._ss) add(ndRow('後端綁定的試算表',true,String(j2._ss)));
+    /* ⑤a 封存現況：live 列數就是讀取速度的直接來源。
+       archived 不是 0 表示歸檔有在跑，而且舊資料還在（沒有被刪掉）。 */
+    try{
+      const jd=JSON.parse(d.body||'{}');
+      if(jd&&jd.archive){
+        const a=jd.archive;
+        const line=Object.keys(a).filter(k=>k.charAt(0)!=='_')
+          .map(k=>k+'：現行 '+a[k].live+' 列／已封存 '+a[k].archived+' 列').join('\n');
+        add(ndRow('封存現況', (a.rollcall_log?a.rollcall_log.live:0)<5000,
+          line+'\n每月自動封存：'+(a._autoMonthly?'已開啟':'尚未設定（可在 GS 跑 setupArchiveTrigger）'),
+          (a.rollcall_log&&a.rollcall_log.live>=5000)
+            ? 'rollcall_log 現行列數偏多，讀取會變慢 —— 在 GS 執行 archiveOldRows 把 3 個月前的搬到封存'
+            : ''));
+      }
+    }catch(e){}
     /* ⑤b 初次同步耗時。她實測 39.9 秒，所以這一行要看得到數字，
        改版之後才知道到底有沒有變快。 */
     add(ndRow('這支批次讀取花了多久', b.ms<15000,
@@ -3588,8 +3630,21 @@ function openItemCheck(sheetId){
     state.icSheet=(icSheets()[0]||{}).id||'';
   if(!state.icDate) state.icDate=todayISO();       // ★ icDate＝區間的「最後一天」
   render();
-  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff']]).then(function(){
+  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff'],['owed']]).then(function(){
     if(state.screen==='itemCheck')render(); });
+}
+/* ★ 欠物本的「分區」是人填的區名（檢傷／急救室／治療／留觀區…），
+   不是 sheetId，所以要用分區名對照，而且要寬鬆比對（留觀＝留觀區）。 */
+const IC_ZONE={obs:['留觀'],resus:['急救室'],peds:['兒童','兒科'],
+               triage:['檢傷'],treat:['治療'],room:['診間']};
+function icOwed(sheetId){
+  const sh=sheetById(sheetId), keys=IC_ZONE[sh&&sh.area]||[];
+  if(!keys.length) return [];
+  return (OWED||[]).filter(function(o){
+    if(String(o.status||'')==='已返還結案') return false;
+    const z=String(o.zone||'').replace(/\s+/g,'');
+    return keys.some(function(k){ return z.indexOf(k)>=0; });
+  });
 }
 // 翻頁一次移動一整段（3／5／7 天），不會有重疊看不完的問題
 function icMove(dir){
@@ -3634,6 +3689,32 @@ function renderItemCheck(){
   items.forEach(function(o){ const t=o.type||'其他';
     if(!group[t]){ group[t]=[]; order.push(t); } group[t].push(o); });
 
+  /* 這段期間的異常明細（依日期、班別排序），以及這一區還沒結案的欠物。
+     ★ 格子裡只放得下一個 ✗，原因與備註一定要另外列出來 ——
+       不然稽核看到 ✗ 還是得回去翻 Sheet，這張表就只做了一半。 */
+  const daySet={}; days.forEach(function(d){ daySet[fmtISO(d)]=1; });
+  const shOrd={N:0,D:1,E:2};
+  const issRows=(ISSUES||[]).filter(function(r){
+    return String(fld(r,['sheetId','sheetId'])||'')===String(sid)
+        && daySet[String(fld(r,['date','日期'])||'')];
+  }).sort(function(a,b){
+    const da=String(fld(a,['date','日期'])||''), db=String(fld(b,['date','日期'])||'');
+    if(da!==db) return da.localeCompare(db);
+    return (shOrd[fld(a,['shift','班別'])]||9)-(shOrd[fld(b,['shift','班別'])]||9);
+  });
+  const owedRows=icOwed(sid);
+  /* ★ 讓格子裡的 ✗ 帶得出原因：給每一筆異常一個編號，格子印成 ✗¹、✗²…
+     下面「異常明細」同一個編號寫出原因與備註。
+     紙本上只有一個 ✗ 是沒有用的 —— 看到 ✗ 還要回頭翻 Sheet 才知道發生什麼事。 */
+  const issNo={};
+  issRows.forEach(function(r,i){
+    const k=String(fld(r,['date','日期'])||'')+'|'+String(fld(r,['shift','班別'])||'')
+          +'|'+normItem(fld(r,['item','項目'])||'');
+    if(!issNo[k]) issNo[k]=i+1;
+  });
+  const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹';
+  function supNum(n){ return String(n).split('').map(function(c){ return SUP.charAt(+c); }).join(''); }
+
   const NCOL=1+n*3+1;
   let body='';
   order.forEach(function(t){
@@ -3646,8 +3727,17 @@ function renderItemCheck(){
           const st=icCell(sid,idx[ymd+'|'+p[0]]||null,o);
           const m=IC_MARK[st];
           if(st==='ok'||st==='seal') seen++;
+          let mark=m[0], tip=ymd+' '+p[1]+'：'+m[2];
+          if(st==='bad'){
+            const no=issNo[ymd+'|'+p[0]+'|'+normItem(o.name)];
+            if(no){ mark+='<sup class="ic-sup">'+supNum(no)+'</sup>';
+              const r=issRows[no-1];
+              tip+='（'+(fld(r,['reason','原因'])||'未註記')
+                 +(fld(r,['note','備註'])?('・'+fld(r,['note','備註'])):'')+'）'; }
+            else tip+='（原因未登錄）';
+          }
           tds+='<td class="'+m[1]+(pi===2?' ic-dend':'')+'" title="'
-             + esc(ymd+' '+p[1]+'：'+m[2])+'">'+m[0]+'</td>';
+             + esc(tip)+'">'+mark+'</td>';
         });
       });
       const stat=cells?('<span class="ic-wk '+(seen<cells?'ic-wk-lo':'')+'">'+seen+'/'+cells+'</span>'):'—';
@@ -3666,13 +3756,19 @@ function renderItemCheck(){
       + '<span class="ic-dw">'+'日一二三四五六'.charAt(d.getDay())+'</span></th>';
   });
   h1+='<th class="ic-sum" rowspan="2">合計<span class="ic-dw">已點/班</span></th></tr>';
+  /* ★ 班別欄底下直接寫「這一班點到幾項」——原本只放在滑鼠提示與下方名單裡，
+     等於要停著看或往下捲才知道，紙本印出來更是完全看不到。
+     沒點完的用紅色，一眼看得出是哪一班沒做完。 */
   let h2='<tr>';
   days.forEach(function(d){
     const ymd=fmtISO(d);
     PW_SHIFTS.forEach(function(p,pi){
       const c=idx[ymd+'|'+p[0]];
+      const cnt=c?(c.done+'/'+c.total):'—';
+      const lo=!!(c&&c.total&&c.done<c.total);
       h2+='<th class="ic-sh'+(pi===2?' ic-dend':'')+(c?'':' ic-sh-off')+'" title="'
-        + esc(c?(String(c.by||'')+' '+c.done+'/'+c.total):'未點班')+'">'+p[0]+'</th>';
+        + esc(c?(String(c.by||'')+' '+c.done+'/'+c.total):'未點班')+'">'+p[0]
+        + '<span class="ic-cnt'+(lo?' ic-cnt-lo':'')+'">'+cnt+'</span></th>';
     });
   });
   h2+='</tr>';
@@ -3709,6 +3805,36 @@ function renderItemCheck(){
     + '<tbody>'+(body||'<tr><td colspan="'+NCOL+'" class="pw-empty" style="height:36px">這張表沒有品項資料</td></tr>')
     + '</tbody></table>'
     + '<div class="ic-sec">各班點班人員</div><div class="ic-who">'+whoRows+'</div>'
+    + '<div class="ic-sec">異常明細（'+esc(label)+'）</div>'
+    + (issRows.length
+      ? '<table class="ic-iss"><colgroup><col style="width:24px"><col style="width:56px">'
+        + '<col style="width:26px"><col><col style="width:76px"><col><col style="width:60px"></colgroup>'
+        + '<thead><tr><th>#</th><th>日期</th><th>班</th><th>品項</th><th>原因</th><th>備註</th><th>點班人</th></tr></thead><tbody>'
+        + issRows.map(function(r,i){
+            return '<tr><td class="ic-no">'+(i+1)+'</td>'
+                 + '<td>'+esc(String(fld(r,['date','日期'])||'').slice(5))+'</td>'
+                 + '<td>'+esc(String(fld(r,['shift','班別'])||''))+'</td>'
+                 + '<td class="ic-il">'+esc(String(fld(r,['item','項目'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['reason','原因'])||'未註記'))+'</td>'
+                 + '<td class="ic-il">'+esc(String(fld(r,['note','備註'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['name','姓名'])||''))+'</td></tr>';
+          }).join('')+'</tbody></table>'
+      : '<div class="ic-none">這段期間沒有異常紀錄</div>')
+    /* ★ 欠物本：異常裡「借出未還／數量短少」最後都會進欠物本。
+       兩份分開看就會漏掉「這一項到底補回來沒有」，所以印在同一張。只列未結案的。 */
+    + '<div class="ic-sec">欠物本 · 尚未結案（'+esc((areaById(s.area)||{}).name||'')+'）</div>'
+    + (owedRows.length
+      ? '<table class="ic-iss"><colgroup><col style="width:56px"><col><col style="width:88px">'
+        + '<col style="width:62px"><col></colgroup>'
+        + '<thead><tr><th>登記日</th><th>物品</th><th>名單</th><th>狀態</th><th>備註</th></tr></thead><tbody>'
+        + owedRows.map(function(o){
+            return '<tr><td>'+esc(String(o.date||'').slice(5))+'</td>'
+                 + '<td class="ic-il">'+esc(o.item||'')+'</td>'
+                 + '<td>'+esc(o.names||'')+'</td>'
+                 + '<td>'+esc(o.status||'欠物中')+'</td>'
+                 + '<td class="ic-il">'+esc(o.note||'')+'</td></tr>';
+          }).join('')+'</tbody></table>'
+      : '<div class="ic-none">目前沒有未結案的欠物</div>')
     + '<div class="pw-sign">'
     +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱／簽章（週次 '+esc(wk)+'）</div>'
     +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已審閱</div>'
@@ -3719,8 +3845,10 @@ function renderItemCheck(){
     + '<div class="pw-foot">✓ 已點　✗ 異常　— 未點　'
     + (seal?'🔒 封籤代表（上鎖品項該班不必逐項點）　':'')
     + '· 無逐項資料（舊版後端）　? 名單過長已截斷　斜線格 該班未點班<br>'
-    + '「合計」欄＝這一項在這 '+n+' 天<b>實際有人點班的 '+cells+' 個班</b>當中被點到幾次。<br>'
-    + '資料來源：rollcall_log「逐項紀錄」欄　／　列印 '
+    + '「合計」欄＝這一項在這 '+n+' 天<b>實際有人點班的 '+cells+' 個班</b>當中被點到幾次；'
+    + '班別代號下方的數字＝那一班點到幾項（未點完顯示紅色）。<br>'
+    + '✗ 右上角的小數字對應下方「異常明細」的編號，可以直接查到原因與處理備註。<br>'
+    + '資料來源：rollcall_log「逐項紀錄」・rollcall_issue（異常）・owed（欠物本）　／　列印 '
     + esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
     + '</section>';
 
@@ -3743,6 +3871,7 @@ function renderItemCheck(){
     +   '<button class="btn btn-ghost" onclick="icMove(-1)">← 前 '+n+' 天</button>'
     +   '<button class="btn btn-ghost" onclick="state.icDate=todayISO();render()">到今天</button>'
     +   '<button class="btn btn-ghost" onclick="icMove(1)">後 '+n+' 天 →</button>'
+    +   archBtn(400)
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
@@ -3855,7 +3984,7 @@ function analytics(){
   const o2={need:0,got:0,miss:[],by:{},pending:0};
   o2Depts().forEach(function(dp){
     auxDates.forEach(function(dt){
-      ['D','E','N'].forEach(function(sh){
+      SHIFT_SEQ.forEach(function(sh){
         const by=o2ShiftBy(dp,dt,sh);
         if(!shiftEnded(dt,sh)){
           if(by){ o2.by[by]=(o2.by[by]||0)+1; } else o2.pending++;
@@ -3870,8 +3999,44 @@ function analytics(){
   o2.miss.sort((a,b)=>b.date.localeCompare(a.date));
   o2.pct=o2.need?Math.round(o2.got/o2.need*100):0;
 
+  /* ★★★ 點班耗時 —— 這是可以自動化追蹤的改善指標，不需要 AI 就算得出來。
+     後端從 v13 起每一筆都存了「耗時秒」與「開始時間」，之前只是沒拿來用。
+
+     為什麼要「依點班表」而不是只看人：同一個人點檢傷區 2 分鐘、點急救車 12 分鐘，
+     混在一起平均就什麼都看不出來。要改善的是「哪一張表花太久」——
+     那通常代表品項排列不合理、或東西不好找，是動得了的。
+
+     用中位數不用平均：一次補點拖到 40 分鐘就會把平均整個拉歪，中位數不會。
+     兩種都標出來：
+       ⏱ 偏慢 = 中位數 > 全站中位數 × 2，而且至少 5 筆（樣本太少不下結論）
+       ⚡ 過快 = 中位數 < 品項數 × 2 秒，代表很可能沒有真的逐項看
+     AI 只在最後負責解讀這幾筆離群值，不負責算數字。 */
+  const med=function(a){ if(!a.length)return 0; const b=a.slice().sort(function(x,y){return x-y;});
+    const m=b.length>>1; return b.length%2?b[m]:Math.round((b[m-1]+b[m])/2); };
+  const bySheet={};
+  L.forEach(function(r){
+    const sec=num(r,'durationSec','耗時秒'); if(!sec||sec<=0)return;      // 舊紀錄沒存耗時就不算
+    const id=sheetIdOf(r)||'(未知)';
+    const o=bySheet[id]=bySheet[id]||{id:id,name:fld(r,['sheet','點班表'])||id,secs:[],items:0};
+    o.secs.push(sec);
+    const t=num(r,'total','總項數'); if(t>o.items)o.items=t;
+  });
+  const allSecs=[]; Object.keys(bySheet).forEach(function(k){ allSecs.push.apply(allSecs,bySheet[k].secs); });
+  const allMed=med(allSecs);
+  const speed=Object.keys(bySheet).map(function(k){
+    const o=bySheet[k], m=med(o.secs);
+    const sorted=o.secs.slice().sort(function(x,y){return x-y;});
+    return { id:o.id, name:o.name, n:o.secs.length, items:o.items, med:m,
+             min:sorted[0]||0, max:sorted[sorted.length-1]||0,
+             perItem:o.items?Math.round(m/o.items):0,
+             slow:(o.secs.length>=5 && allMed>0 && m>allMed*2),
+             fast:(o.secs.length>=5 && o.items>=10 && m < o.items*2) };
+  }).sort(function(a,b){ return b.med-a.med; });
+  const watch=speed.filter(function(x){ return x.slow||x.fast; });
+
   return {L:L,byPerson:byPerson,dupN:dupN,byItem:byItem,byReason:byReason,owe:owe,dev:dev,
-          fr:fr,o2:o2,auxDays:AUX_DAYS};
+          fr:fr,o2:o2,auxDays:AUX_DAYS,
+          speed:speed,speedMed:allMed,watch:watch,timedN:allSecs.length};
 }
 function openAnalytics(){ state.screen='analytics'; state.aiText=''; render();
   // ★ 一定要把冰箱／氧氣也載進來，之前沒載，那個「冰箱超標」數字是開 App 時的舊值
@@ -3889,6 +4054,27 @@ function renderAnalytics(){
   const li=(l,r)=>`<div class="rem-li"><span>${l}</span><span style="font-weight:800">${r}</span></div>`;
   const card=(t,body)=>`<div class="cat"><div class="cat-h"><span class="cat-ic" style="background:#0f7a861f;color:#0f7a86">${t[0]}</span>${t.slice(1)}</div>
     <div class="card" style="padding:6px 12px">${body}</div></div>`;
+
+  /* ⏱ 點班耗時：程式算得出來的就不要交給 AI。
+     每一列顯示「中位數、每項幾秒、次數」，偏慢／過快直接標出來。 */
+  const spd=A.timedN
+    ? (A.watch.length
+        ? '<div style="font-size:12px;line-height:1.7;background:#fff4e6;color:#b5680f;'
+          +'border-radius:8px;padding:8px 10px;margin:6px 0 4px">值得追蹤 '+A.watch.length+' 張：'
+          + A.watch.map(x=>esc(x.name)+(x.slow?'（偏慢）':'（過快）')).join('、')
+          +'<br>全站中位數 '+fmtDur(A.speedMed)+'　⏱偏慢＝中位數超過全站兩倍　⚡過快＝每項不到 2 秒</div>'
+        : '<div style="font-size:12px;color:var(--ink-soft);padding:6px 2px">'
+          +'全站中位數 '+fmtDur(A.speedMed)+'，目前沒有明顯偏慢或過快的點班表。</div>')
+      + A.speed.slice(0,10).map(function(x){
+          const tag=x.slow?'<span style="color:var(--warn);font-weight:800">⏱ 偏慢</span> '
+                  :(x.fast?'<span style="color:var(--bad);font-weight:800">⚡ 過快</span> ':'');
+          return li(tag+esc(x.name)
+            +`<div style="font-size:11.5px;color:var(--ink-soft)">${x.n} 次 · ${x.items||'?'} 項 · 每項約 ${x.perItem||'?'} 秒 · 最快 ${fmtDur(x.min)} / 最慢 ${fmtDur(x.max)}</div>`,
+            fmtDur(x.med));
+        }).join('')
+    : '<div style="font-size:13px;color:var(--ink-soft);padding:8px 2px">'
+      +'近 30 天還沒有存到耗時的紀錄。<br>「耗時秒」是後端 '+esc(EXPECT_API_VER)
+      +' 之後才寫的，之前點的班沒有這個數字。</div>';
 
   const ppl=Object.keys(A.byPerson).sort((a,b)=>A.byPerson[b].n-A.byPerson[a].n).slice(0,8)
     .map(function(n){const p=A.byPerson[n];
@@ -3908,6 +4094,7 @@ function renderAnalytics(){
       <div><div style="font-size:22px;font-weight:800;color:${A.fr.pct>=95?'inherit':'var(--warn)'}">${A.fr.pct}%</div><div style="font-size:11.5px;color:var(--ink-soft)">冰箱登錄率</div></div>
       <div><div style="font-size:22px;font-weight:800;color:${A.o2.pct>=95?'inherit':'var(--warn)'}">${A.o2.pct}%</div><div style="font-size:11.5px;color:var(--ink-soft)">氧氣登錄率</div></div>
     </div>
+    ${card('⏱ 點班耗時（近30天・依點班表）',spd)}
     ${card('👤 人員（近30天・依點班次數）',ppl)}
     ${card('🔧 器械／耗材異常 TOP（近90天）',
       top(A.byItem,8,(k,v)=>li(esc(k)+`<div style="font-size:11.5px;color:var(--ink-soft)">${esc(Object.keys(v.reasons).slice(0,3).join('、'))}</div>`,v.n+' 次')))}
@@ -3956,6 +4143,14 @@ async function askAnalysis(){
   const brief={
     期間:'點班近30天／異常近90天',
     點班次數:A.L.length, 重複點班組數:A.dupN,
+    /* ★ 數字都由程式算好，AI 只負責解讀「為什麼這幾張偏慢／過快、可以怎麼改」，
+       不要它重算 —— AI 算數字既慢又不可靠。 */
+    點班耗時:{ 全站中位數秒:A.speedMed, 有耗時資料筆數:A.timedN,
+      判定規則:'偏慢＝該表中位數 > 全站中位數×2 且樣本≥5；過快＝中位數 < 品項數×2 秒',
+      值得追蹤:A.watch.map(x=>({點班表:x.name,中位數秒:x.med,每項秒:x.perItem,
+        品項數:x.items,次數:x.n,判定:x.slow?'偏慢':'過快'})),
+      各表:A.speed.slice(0,12).map(x=>({點班表:x.name,中位數秒:x.med,每項秒:x.perItem,
+        品項數:x.items,次數:x.n,最快秒:x.min,最慢秒:x.max})) },
     人員:Object.keys(A.byPerson).slice(0,10).map(n=>({姓名:n,次數:A.byPerson[n].n,
       平均耗時秒:A.byPerson[n].n?Math.round(A.byPerson[n].sec/A.byPerson[n].n):0,
       異常數:A.byPerson[n].bad, 補點次數:A.byPerson[n].late})),
@@ -4199,10 +4394,10 @@ function renderAuxCard(){
   }).join('');
   const o2Rows=depts.map(function(dp){
     const qty=(Object.values(O2_SHEETS).find(o=>o.dept===dp)||{}).qty||'';
-    const cells=['D','E','N'].map(sh=>cell(o2ShiftBy(dp,d,sh),`openO2('${dp.replace(/'/g,"\\'")}',${qty||0})`)).join('');
+    const cells=SHIFT_SEQ.map(sh=>cell(o2ShiftBy(dp,d,sh),`openO2('${dp.replace(/'/g,"\\'")}',${qty||0})`)).join('');
     return `<div style="padding:8px 12px;border-top:1px solid var(--line)">
       <div style="font-size:12.5px;font-weight:700;margin-bottom:5px">🫧 ${esc(dp)}<span style="font-weight:400;color:var(--ink-soft)">　應有 ${esc(String(qty))} 支</span></div>
-      <div style="display:flex;gap:5px;margin-bottom:3px">${['D','E','N'].map(x=>
+      <div style="display:flex;gap:5px;margin-bottom:3px">${SHIFT_SEQ.map(x=>
         `<span style="flex:1;text-align:center;font-size:10.5px;font-weight:${x===sh?'800':'400'};
           color:${x===sh?'var(--warn,#e8590c)':'var(--ink-soft)'}">${SHIFT_NAME[x]}${x===sh?' ◀本班':''}</span>`).join('')}</div>
       <div style="display:flex;gap:5px">${cells}</div></div>`;
@@ -4787,6 +4982,44 @@ function histShiftRow(s,id){
 }
 function toggleShift(id){state._openShift=state._openShift||{};state._openShift[id]=!state._openShift[id];render()}
 
+/* ★★★ 封存（歸檔）之後怎麼查得到：
+   後端每 3 個月把舊列搬到 <表名>_archive，原表只留最近的 —— 這是讀取變快的關鍵。
+   舊資料沒有消失，要查的時候在讀取請求加上 :arch，後端就會把封存那張一起帶回來。
+   因為封存資料量大、抓起來慢，所以不自動帶，改成「畫面上一個按鈕」由使用者決定。 */
+let ARCH_ON=false, ARCH_LOADING=false;
+function archHelp(){
+  alert('封存（歸檔）是怎麼運作的\n\n'
+   +'• 每 3 個月，後端把舊紀錄從 rollcall_log／rollcall_issue／fridge_temp／o2_check\n'
+   +'  搬到同名的 _archive 分頁（欄位完全一樣）。\n'
+   +'• 搬移順序是「先寫進封存 → 驗證寫成功 → 才從原表刪」，中途失敗原表不動。\n'
+   +'• 舊資料沒有消失：在「歷史點班紀錄」「每週點班紀錄」「急救車逐項查看」\n'
+   +'  按〔＋ 載入封存〕就查得回來，也可以直接在 Google Sheet 上翻 _archive 分頁。\n\n'
+   +'為什麼要這樣做：讀取速度跟「現行分頁有幾列」直接相關。\n'
+   +'一年約 15,000 列，不歸檔的話每次開 App 都要掃過一遍。\n\n'
+   +'怎麼開自動歸檔：Apps Script 函式選單選 setupArchiveTrigger → 執行\n'
+   +'（每月 1 號 03:00 自動跑）。想手動跑一次就選 archiveOldRows。');
+}
+function archLabel(){ return ARCH_ON?'✓ 已含封存資料':'＋ 載入封存（更久以前）'; }
+function archBtn(days){
+  return '<button class="btn btn-ghost" '+(ARCH_LOADING?'disabled ':'')
+    +'style="font-size:12.5px;padding:6px 12px" onclick="toggleArchive('+(days||400)+')">'
+    +(ARCH_LOADING?'⏳ 讀取中…':archLabel())+'</button>';
+}
+async function toggleArchive(days){
+  if(ARCH_LOADING) return;
+  if(ARCH_ON){                       // 關掉＝只留最近的，重抓一次比較快
+    ARCH_ON=false; ARCH_LOADING=true; render();
+    try{ await loadBundle([['rollcall_log',90],['rollcall_issue',90]]); }catch(e){}
+    ARCH_LOADING=false; render(); return;
+  }
+  ARCH_LOADING=true; render();
+  try{
+    await loadBundle([['rollcall_log',days,true],['rollcall_issue',days,true],
+                      ['rollcall_signoff',null,true]]);
+    ARCH_ON=true;
+  }catch(e){ alert('讀取封存資料失敗：'+(e&&e.message||e)); }
+  ARCH_LOADING=false; render();
+}
 function openHistory(){ state.screen='history'; render();
   loadBundle([['rollcall_log',90],['rollcall_issue',90]]).then(function(){ if(state.screen==='history')render(); }); }
 /* ★ 歷史點班紀錄：改讀真實的 rollcall_log（原本是 genHistDemo() 假資料）。
@@ -4808,7 +5041,7 @@ function renderHistory(){
     const rows=byDate[d];
     const byShift={};
     rows.forEach(function(r){ const s=logShiftOf(r)||'—'; (byShift[s]=byShift[s]||[]).push(r); });
-    const shHtml=['D','E','N','—'].filter(k=>byShift[k]).map(function(k){
+    const shHtml=SHIFT_SEQ.concat(['—']).filter(k=>byShift[k]).map(function(k){
       const rs=byShift[k];
       const done=rs.filter(isDoneRec_).length;
       const items=rs.map(function(r){
@@ -4844,7 +5077,12 @@ function renderHistory(){
       <div class="sub">${isLeader?('可查閱全部 · 共 '+dates.length+' 天'):'近 7 天'}</div></div>
     <button class="back" onclick="state.screen=(state.histBack||'home');render()">返回</button></div></div>
   <div class="screen wide lvl2">
-    <button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="openHistory()">↻ 重新載入</button>
+    <div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <button class="btn btn-ghost" style="font-size:12.5px;padding:6px 12px" onclick="openHistory()">↻ 重新載入</button>
+      ${isLeader?archBtn(400):''}
+      <span style="font-size:11.5px;color:var(--ink-soft);line-height:1.6">
+        ${ARCH_ON?'目前含封存資料（查得到 3 個月以前）':'目前只讀最近 90 天（比較快）'}</span>
+    </div>
     ${dayHtml||empty}
     ${recentIssues?('<div class="section-h">異常明細（近 7 天）</div>'+recentIssues):''}
     ${!isLeader&&dates.length>7?`<div class="card" style="margin-top:12px;text-align:center;padding:16px;color:var(--ink-soft);font-size:13px">
@@ -5334,7 +5572,8 @@ function renderAI(){
     {ic:'🔧',bg:'#efe7fc',col:'#6741d9',t:'設備異常熱區',
      d:'兒科手機近期報修 3 次，可能需更換；x-ray 遙控器維修中已跨 2 班未結。'},
   ];
-  const completion=[['白班',96],['小夜',88],['大夜',79]];
+  // 順序同 SHIFT_SEQ（大夜→白班→小夜），跟畫面其他地方一致
+  const completion=[['大夜',79],['白班',96],['小夜',88]];
   const insightHtml=insights.map(i=>`<div class="ai-insight">
       <div class="ai-ic" style="background:${i.bg};color:${i.col}">${i.ic}</div>
       <div><div class="ai-t">${i.t}</div><div class="ai-d">${i.d}</div></div></div>`).join('');
