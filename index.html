@@ -317,13 +317,34 @@
 .pw-nosign{font-size:11.5px;color:#a0232b}
 .pw-box{height:46px;border:1px dashed #999}
 .pw-foot{font-size:9.5px;color:#555;margin-top:8px;line-height:1.6}
+/* ===== 逐項查看（急救車）=====
+   共用上面的「紙」風格；品項名靠左、狀態格窄，一頁塞得下 45 項。 */
+.ic-tbl{border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #2b2b2b}
+.ic-tbl th,.ic-tbl td{border:.5px solid #9a9a9a;padding:3px 5px;font-size:11px;
+  text-align:center;vertical-align:middle;color:#111}
+.ic-tbl thead th{background:#f1f1f1;font-weight:500;font-size:10.5px;line-height:1.3}
+.ic-it{text-align:left!important;font-size:11px;line-height:1.3}
+.ic-qty{color:#666;font-weight:400;font-size:9.5px;margin-left:3px}
+.ic-lk{color:#0f5f68;font-size:9px;margin-left:3px}
+.ic-grp{background:#f8f8f8;text-align:left!important;font-weight:700;font-size:10.5px;
+  letter-spacing:.04em;color:#333}
+.ic-ok{color:#146b3a;font-weight:700;font-size:13px}
+.ic-bad{color:#a0232b;font-weight:700;font-size:13px}
+.ic-un{color:#a0232b;font-weight:700;font-size:13px;background:#fdf1f1}
+.ic-seal{color:#0f5f68;font-size:12px;background:#f2f8f9}
+.ic-na{color:#999;font-size:12px;background:repeating-linear-gradient(135deg,#fff,#fff 5px,#f4f4f4 5px,#f4f4f4 10px)}
+.ic-qm{color:#8a6d00;font-weight:700;font-size:13px;background:#fdfaf0}
+.ic-wk{font-variant-numeric:tabular-nums;font-size:11px;font-weight:700}
+.ic-wk-lo{color:#a0232b}
+.ic-warn{border:1px solid #a0232b;background:#fdf1f1;color:#7d1b22;padding:8px 11px;
+  font-size:11.5px;line-height:1.7;margin:0 0 10px}
 @media print{
   .noprint,.topbar{display:none!important}
   body{background:#fff!important}
   .screen{padding:0!important;max-width:none!important}
   .pw-page{border:0;padding:0;margin:0;page-break-after:always}
   .pw-page:last-child{page-break-after:auto}
-  .pw-tbl tr,.pw-iss tr,.pw-sign{page-break-inside:avoid}
+  .pw-tbl tr,.pw-iss tr,.pw-sign,.ic-tbl tr{page-break-inside:avoid}
   @page{size:A4 portrait;margin:12mm 10mm}
 }
 </style>
@@ -757,7 +778,7 @@ async function loadBundle(spec){
 }
 
 const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-15-b37';
+const APP_VER='2026-09-15-b39';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1870,6 +1891,7 @@ function render(){
     owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin,
     adminHub:renderAdminHub,analytics:renderAnalytics,
     seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
+    itemCheck:renderItemCheck,
     sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
 }
 
@@ -2013,7 +2035,9 @@ function renderHome(){
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     ${reviewBtn}
     ${(!hasAdmin&&can('record.print'))?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-      onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>`:''}
+      onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>
+    <button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+      onclick="openItemCheck()">🔍 急救車逐項查看（抽查用）</button>`:''}
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px;line-height:1.8">
       ＊冰箱、氧氣等附加查核也列在上方「輔助單張」，可展開看三個時段誰登錄了<br>
       <span style="opacity:.75">前端版本 ${APP_VER}</span></div>
@@ -2659,6 +2683,7 @@ function renderAdminHub(){
     b('主管簽核 · 完成總表','openLeader()'),
     b('簽核／點班紀錄','openRecords()'),
     b('🖨 每週點班紀錄（可列印·主管審閱）','openPrintWeek()'),
+    b('🔍 急救車逐項查看（哪一項有沒有被點）','openItemCheck()'),
     b('🧹 清除本機暫存（畫面怪怪的時候用）','clearLocalCache()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
@@ -2677,10 +2702,11 @@ function renderAdminHub(){
 
 /* ===================== 每週點班紀錄（可列印、可歸檔） =====================
    對應現行紙本：一張涵蓋一週，下方有「主管審閱」。
-   ★ 為什麼列的是日期而不是品項：後端存的是「這一班完成幾項／異常幾項」，
-     沒有存「哪一項被勾了」。硬畫成逐項打勾格會是假的 ——
-     所以格子裡寫的是「✓ 10/10 姓名」，下面再列本週所有異常明細。
-     真的要逐項打勾格，得從現在開始多存每一項的狀態（舊資料補不回來）。 */
+   ★ 為什麼這張表列的是日期而不是品項：42 項 × 21 班 ＝ 882 格／週／一張表，
+     14 張表 ＝ 12,348 格，印出來沒有人會看。這張表回答的是
+     「這一班有沒有點／誰點的／異常怎麼處理」。
+     急救車要看「哪一項到底有沒有被點」→ 另外一張「急救車逐項查看」
+     （screen itemCheck，讀 rollcall_log 的「逐項紀錄」欄，v13 起才有資料）。 */
 function weekMonday(d){
   const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());
   const w=(x.getDay()+6)%7;            // 週一=0
@@ -2745,7 +2771,9 @@ function pwCell(sheetId,ymd,sh){
   const num=function(a,b){ const v=Number(fld(pick,[a,b])); return isNaN(v)?0:v; };
   return { by:nameOf(pick), done:num('done','完成項數'), total:num('total','總項數'),
            bad:num('bad','異常數'), isDone:fin.length>0,
-           assign:String(fld(pick,['assign','分工'])||'') };
+           assign:String(fld(pick,['assign','分工'])||''),
+           // ★ 逐項紀錄：每週表不印它，是「逐項查看」畫面在用
+           itemLog:String(fld(pick,['itemLog','逐項紀錄'])||'') };
 }
 function pwIssues(sheetId,days){
   const set={}; days.forEach(function(d){ set[fmtISO(d)]=1; });
@@ -2859,14 +2887,209 @@ function renderPrintWeek(){
     +   '<button class="btn btn-ghost" onclick="pwShift(1)">下一週 →</button>'
     +   '<select onchange="state.pwArea=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
     +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+areaOpts+'</select>'
+    +   '<button class="btn btn-ghost" onclick="openItemCheck()">🔍 急救車逐項查看</button>'
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
     +   '這一週有紀錄的點班表各印一張（A4 直式），沒紀錄的不印以免浪費紙。<br>'
+    +   '要看急救車「哪一項到底有沒有被點」，按上面的<b>🔍 急救車逐項查看</b>。<br>'
     +   '主管審閱有兩格：左邊是<b>系統的週簽核</b>（在「主管簽核 · 完成總表」按過就會自動印出來），'
     +   '右邊留空白給<b>實體簽章</b>。'
     + '</div>'
     + pages
+    + '</div>';
+}
+
+/* ===================== 逐項查看（急救車）=====================
+   為什麼急救車要逐項、別的表不用：
+   急救車是「用到的時候沒有就會死人」的那一台，稽核問的不是「點了幾項」
+   而是「這一項到底有沒有被看過」。所以這裡把後端的「逐項紀錄」攤開成
+   品項 × 班別的格子。
+
+   ★ 資料只會從 GS v13 部署那一刻開始有。v13 之前的紀錄後端只存了
+     「完成幾項」，格子會顯示「無逐項資料」—— 這是事實，不是 bug，
+     不能拿完成項數去反推打勾，那樣印出來的表是假的。
+
+   ★ 上鎖品項（封籤還在的那一班）顯示 🔒「封籤代表」而不是未點 ——
+     那些品項本來就不進打勾清單，標成未點會變成天天都有 30 項漏點。 */
+function parseItemLog(s){
+  const t=String(s==null?'':s).trim();
+  if(!t) return null;                        // v13 之前的紀錄沒有這一欄
+  const out={ok:0,un:{},bad:{},cut:false,any:false};
+  t.split('｜').forEach(function(seg){
+    seg=String(seg||'').trim(); if(!seg) return;
+    let m=seg.match(/^OK\s*=\s*(\d+)/);
+    if(m){ out.ok=+m[1]; out.any=true; return; }
+    m=seg.match(/^(未點|異常)\s*[:：]\s*([\s\S]*)$/);
+    if(!m) return;
+    out.any=true;
+    const bag=(m[1]==='未點')?out.un:out.bad;
+    let body=m[2];
+    if(/…\(共\d+項\)\s*$/.test(body)){ out.cut=true; body=body.replace(/…\(共\d+項\)\s*$/,''); }
+    body.split(/[、,，]/).forEach(function(n){ n=String(n).trim(); if(n) bag[normItem(n)]=1; });
+  });
+  return out.any?out:null;
+}
+/* 一次掃完 SIGNLOG 建索引。
+   不這樣做的話 45 項 × 21 班 = 945 個格子每格都去 filter 一次整份紀錄，
+   手機上會卡好幾秒。 */
+function icIndex(sheetId,days){
+  const want={}; days.forEach(function(d){ want[fmtISO(d)]=1; });
+  const bag={};
+  (SIGNLOG||[]).forEach(function(r){
+    if(sheetIdOf(r)!==String(sheetId)) return;
+    const ymd=dateOfLog(r); if(!want[ymd]) return;
+    const k=ymd+'|'+String(logShiftOf(r)||'');
+    (bag[k]=bag[k]||[]).push(r);
+  });
+  const out={};
+  Object.keys(bag).forEach(function(k){
+    const hits=bag[k], fin=hits.filter(isDoneRec_);
+    const pool=fin.length?fin:hits, pick=pool[pool.length-1];
+    out[k]={ by:nameOf(pick), isDone:fin.length>0,
+             done:Number(fld(pick,['done','完成項數']))||0,
+             total:Number(fld(pick,['total','總項數']))||0,
+             assign:String(fld(pick,['assign','分工'])||''),
+             log:parseItemLog(fld(pick,['itemLog','逐項紀錄'])) };
+  });
+  return out;
+}
+// 某一格（某班、某項）的狀態
+function icCell(cell,item){
+  if(!cell) return 'na';                                  // 這一班沒點班
+  if(/封籤/.test(cell.assign||'') && isLockedItem(item)) return 'seal';
+  if(!cell.log) return 'nolog';                           // v13 之前的舊紀錄
+  const nk=normItem(item.name);
+  if(cell.log.bad[nk]) return 'bad';
+  if(cell.log.un[nk])  return 'un';
+  if(cell.log.cut)     return 'qm';                       // 名單被截斷，不敢說有點
+  return 'ok';
+}
+const IC_MARK={ ok:['✓','ic-ok','已點'], bad:['✗','ic-bad','異常'], un:['—','ic-un','未點'],
+  seal:['🔒','ic-seal','封籤代表'], na:['','ic-na','該班未點班'],
+  nolog:['·','ic-na','無逐項資料'], qm:['?','ic-qm','名單過長已截斷'] };
+// 急救車優先；找不到就給全部表，讓她自己選
+function icSheets(){
+  const c=SHEETS.filter(function(s){ return /急救車|急救推車/.test(s.name||'')||s.mode==='seal'; });
+  return c.length?c:SHEETS.slice();
+}
+function openItemCheck(sheetId){
+  if(!can('record.print')){ alert('逐項查看開放給主管與各班 Leader（小組長以上）。'); return; }
+  if(state.screen!=='itemCheck') state.icBack=state.screen||'home';
+  state.screen='itemCheck';
+  if(sheetId) state.icSheet=sheetId;
+  if(!state.icSheet||!SHEETS.some(function(s){return s.id===state.icSheet;}))
+    state.icSheet=(icSheets()[0]||{}).id||'';
+  if(!state.icDate) state.icDate=todayISO();
+  render();
+  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff']]).then(function(){
+    if(state.screen==='itemCheck')render(); });
+}
+function icMove(n){
+  const d=parseISO(state.icDate||todayISO());
+  d.setDate(d.getDate()+n); state.icDate=fmtISO(d); render();
+}
+function renderItemCheck(){
+  const sid=state.icSheet, s=sheetById(sid);
+  const ymd=state.icDate||todayISO(), day=parseISO(ymd);
+  const mon=weekMonday(day), days=weekDays(mon);
+  const wk=isoWeek(mon), so=pwSignoff(mon);      // 簽核與每週點班紀錄共用同一筆
+  const idx=icIndex(sid,days);
+  const items=itemsAllOf(sid,null);
+  const wkLabel=fmtISO(days[0]).replace(/-/g,'/')+' ～ '+fmtISO(days[6]).replace(/-/g,'/');
+
+  // 本週實際有點班的班數（分母只算真的有人點的班，不然天天都是 0/21）
+  const shiftKeys=[];
+  days.forEach(function(d){ PW_SHIFTS.forEach(function(p){
+    const k=fmtISO(d)+'|'+p[0]; if(idx[k]) shiftKeys.push(k); }); });
+
+  const dayCells=PW_SHIFTS.map(function(p){ return idx[ymd+'|'+p[0]]||null; });
+  const noItemLog=dayCells.filter(Boolean).length>0
+                && dayCells.filter(function(c){ return c&&c.log; }).length===0;
+
+  // 依類型分組（器械／耗材／藥品），組內維持 Sheet 的原始順序
+  const order=[], group={};
+  items.forEach(function(o){ const t=o.type||'其他';
+    if(!group[t]){ group[t]=[]; order.push(t); } group[t].push(o); });
+
+  let body='';
+  order.forEach(function(t){
+    body+='<tr><td class="ic-grp" colspan="5">'+esc(t)+'（'+group[t].length+' 項）</td></tr>';
+    body+=group[t].map(function(o){
+      const tds=dayCells.map(function(c){
+        const m=IC_MARK[icCell(c,o)];
+        return '<td class="'+m[1]+'" title="'+esc(m[2])+'">'+m[0]+'</td>';
+      }).join('');
+      let seen=0;
+      shiftKeys.forEach(function(k){ if(['ok','seal'].indexOf(icCell(idx[k],o))>=0) seen++; });
+      const n=shiftKeys.length;
+      const wk=n?('<span class="ic-wk '+(seen<n?'ic-wk-lo':'')+'">'+seen+'/'+n+'</span>'):'—';
+      return '<tr><th class="ic-it">'+esc(o.name)
+           + (o.qty?('<span class="ic-qty">×'+esc(o.qty)+'</span>'):'')
+           + (isLockedItem(o)?'<span class="ic-lk">🔒上鎖</span>':'')
+           + '</th>'+tds+'<td>'+wk+'</td></tr>';
+    }).join('');
+  });
+
+  const hdr=PW_SHIFTS.map(function(p){
+    const c=idx[ymd+'|'+p[0]];
+    return '<th>'+p[1]+' '+p[0]+'<br><span class="pw-h2">'
+         + (c?(esc(c.by||'')+' '+c.done+'/'+c.total):'未點班')+'</span></th>';
+  }).join('');
+
+  const page='<section class="pw-page">'
+    + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
+    + '<div class="pw-ttl">急救車逐項點班查核表</div>'
+    + '<div class="pw-unit">'+esc(s.name||'')+'</div>'
+    + '<div class="pw-meta">'+esc(ymd.replace(/-/g,'/'))+'（'
+    + '日一二三四五六'.charAt(day.getDay())+'）　本週 '+esc(wkLabel)+'</div></div>'
+    + (noItemLog?'<div class="ic-warn">這一天的紀錄是<b>舊版後端（v13 之前）</b>寫的，'
+        + '只存了「完成幾項」，沒有逐項資料 —— 所以格子是「·」。<br>'
+        + '不會用完成項數去反推打勾（那樣印出來的表是假的）。'
+        + 'v13 部署之後點的班才有逐項紀錄。</div>':'')
+    // 品項欄不要吃掉整張表的寬度，四個狀態欄各 14%（A4 與手機都塞得下）
+    + '<table class="ic-tbl"><colgroup><col style="width:44%"><col style="width:14%">'
+    + '<col style="width:14%"><col style="width:14%"><col style="width:14%"></colgroup>'
+    + '<thead><tr><th class="ic-it">品項</th>'+hdr+'<th>本週<br><span class="pw-h2">已點/班數</span></th></tr></thead>'
+    + '<tbody>'+(body||'<tr><td colspan="5" class="pw-empty" style="height:40px">這張表沒有品項資料</td></tr>')+'</tbody></table>'
+    /* ★ 簽核戳記跟每週點班紀錄共用同一筆（rollcall_signoff 的當週那一列）。
+       兩張表是同一週的同一次審閱，不可以各簽一次 —— 那會變成兩個不一樣的
+       簽核時間，稽核一比就對不起來。在「主管簽核 · 完成總表」按過就會自動印出來。 */
+    + '<div class="pw-sign">'
+    +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱／簽章（週次 '+esc(wk)+'）</div>'
+    +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已審閱</div>'
+            + '<div class="pw-stamp-d">'+esc(pwSignTime(so))+'</div></div>')
+            :'<div class="pw-nosign">本週尚未審閱（到「主管簽核 · 完成總表」按簽核後就會印出戳記）</div>')
+    +   '</div>'
+    + '</div>'
+    + '<div class="pw-foot">✓ 已點　✗ 異常　— 未點　🔒 封籤代表（上鎖品項該班不必逐項點）　'
+    + '· 無逐項資料（舊版後端）　? 名單過長已截斷<br>'
+    + '「本週」欄位＝這一項在本週<b>實際有人點班的 '+shiftKeys.length+' 個班</b>當中被點到幾次。<br>'
+    + '資料來源：rollcall_log「逐項紀錄」欄　／　列印 '
+    + esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
+    + '</section>';
+
+  const shOpts=icSheets().map(function(x){
+    return '<option value="'+x.id+'"'+(x.id===sid?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('');
+
+  $app.innerHTML=
+    '<div class="topbar noprint"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
+    + '<div><div class="title">🔍 急救車逐項查看</div><div class="sub">'+esc(s.name||'')+' · '+esc(ymd)+'</div></div>'
+    + '<button class="back" onclick="state.screen=\''+esc(state.icBack||'home')+'\';render()">返回</button></div></div>'
+    + '<div class="screen wide">'
+    + '<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +   '<select onchange="state.icSheet=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
+    +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+shOpts+'</select>'
+    +   '<button class="btn btn-ghost" onclick="icMove(-1)">← 前一天</button>'
+    +   '<button class="btn btn-ghost" onclick="state.icDate=todayISO();render()">今天</button>'
+    +   '<button class="btn btn-ghost" onclick="icMove(1)">後一天 →</button>'
+    +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
+    + '</div>'
+    + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
+    +   '一天一張（三個班並排）。要看整週哪一項最常被跳過，看最右邊的「本週」欄。<br>'
+    +   '空白斜線格＝那一班根本沒點班；🔒＝封籤還在，該班不必逐項點那些上鎖品項。'
+    + '</div>'
+    + page
     + '</div>';
 }
 
