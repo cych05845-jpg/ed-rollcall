@@ -833,34 +833,36 @@ async function applyBundle(map){
     return f(rows);
   }));
 }
-function BUNDLE_APPLY(){
+/* merge=true 時，天數較短的更新只覆蓋「同一格」，不會把手上的舊資料整包蓋掉。
+   紀錄類（點班、異常、冰箱、氧氣）才需要，其他表本來就是整份讀。 */
+function BUNDLE_APPLY(merge){
   return {
     items:       a=>loadItems(a),
     devices:     a=>loadLocator(a),
     owed:        a=>loadOwed(a),
-    rollcall_log:a=>loadSignLog(null,a),
+    rollcall_log:a=>loadSignLog(null,a,merge),
     item_report: a=>loadItemReports(a),
-    fridge_temp: a=>loadFridgeLog(null,a),
-    o2_check:    a=>loadO2Log(null,a),
+    fridge_temp: a=>loadFridgeLog(null,a,merge),
+    o2_check:    a=>loadO2Log(null,a,merge),
     staff_perm:  a=>loadPerms(a),
     rtls:        a=>loadRtls(a),
     rollcall_active:a=>loadActive(a),
-    rollcall_issue: a=>loadIssues(a),
+    rollcall_issue: a=>loadIssues(a,merge),
     rollcall_signoff:a=>loadSignoffs(a),
     cart_seal:   a=>loadCartSeal(a),
     cart_expiry: a=>loadCartExpiry(a),
     cart_audit:  a=>loadCartAudit(a)
   };
 }
-async function loadBundle(spec){
-  const apply=BUNDLE_APPLY();
+async function loadBundle(spec,opts){
+  const merge=!!(opts&&opts.merge);
+  const apply=BUNDLE_APPLY(merge);
+  // 退回模式（後端太舊不支援 ?tables=）：各自發請求，天數與合併規則都照舊
   const fallback=()=>Promise.all(spec.map(x=>{
     const f=apply[x[0]]; if(!f)return Promise.resolve();
-    // 退回模式：各自發請求（帶天數）
-    // 退回模式（後端太舊）沒有封存功能，照舊只抓 live
-    if(x[0]==='rollcall_log')return loadSignLog(x[1]);
-    if(x[0]==='fridge_temp') return loadFridgeLog(x[1]);
-    if(x[0]==='o2_check')    return loadO2Log(x[1]);
+    if(x[0]==='rollcall_log')return loadSignLog(x[1],null,merge);
+    if(x[0]==='fridge_temp') return loadFridgeLog(x[1],null,merge);
+    if(x[0]==='o2_check')    return loadO2Log(x[1],null,merge);
     return f(null);
   }));
   if(!BUNDLE_OK) return fallback();
@@ -888,8 +890,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-16-v15';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-16-b46';
+const EXPECT_API_VER='2026-09-16-v16';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-16-b48';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -2016,6 +2018,7 @@ function sheetStatus(sheetId){
 }
 
 // ---------- render ----------
+let LAST_SCREEN='';
 function render(){
   store.save();
   if(!state.user)state.screen='login';
@@ -2027,6 +2030,12 @@ function render(){
     seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
     itemCheck:renderItemCheck,netDiag:renderNetDiag,cartAudit:renderCartAudit,
     sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
+  /* ★ 畫面切換到「會顯示完成度」的頁面 → 立刻同步一次（見 syncNow 的說明）。
+     放在畫面畫完之後：先讓人看到東西，再去抓最新的，抓完會自己再 render 一次。 */
+  if(state.screen!==LAST_SCREEN){
+    LAST_SCREEN=state.screen;
+    if(state.user&&typeof needsLiveSync==='function'&&needsLiveSync()) syncNow();
+  }
 }
 
 function renderLogin(){
@@ -2797,10 +2806,11 @@ function exportOwedCSV(ym){
 /* ==================== 管理中心 ====================
    把主管用的查詢、統計、設定全部收在這裡，首頁只留「這一班要做的事」。 */
 let ISSUES=[];
-async function loadIssues(pre){
+async function loadIssues(pre,merge){
   if(!API_URL&&!pre)return;
   try{
-    const a=pre||await getJSON('table=rollcall_issue'); if(Array.isArray(a))ISSUES=a;
+    const a=pre||await getJSON('table=rollcall_issue');
+    if(Array.isArray(a))ISSUES=merge?mergeLog(ISSUES,a,K_ISS):a;
   }catch(e){}
 }
 function openAdminHub(){
@@ -3436,6 +3446,20 @@ async function runNetDiag(){
             : ''));
       }
     }catch(e){}
+    /* ⑤a2 每張表各花多久 —— 只看總時間永遠只能猜是哪張表拖的。
+       有了這一行，「要不要再縮短封存週期」就不用猜，看數字就知道。 */
+    if(j2&&j2._ms){
+      const rows=Object.keys(j2._ms).map(function(k){ return [k,j2._ms[k]]; })
+        .sort(function(x,y){ return y[1]-x[1]; });
+      const top=rows[0]||['',0];
+      add(ndRow('各表各花多久（由慢到快）', top[1]<8000,
+        rows.map(function(r){ return r[0]+'：'+(r[1]/1000).toFixed(1)+' 秒'; }).join('　')
+        +'\n後端自己算的總和：'+((j2._msTotal||0)/1000).toFixed(1)+' 秒'
+        +'（含網路來回是 '+(b.ms/1000).toFixed(1)+' 秒）',
+        top[1]>=8000 ? ('最慢的是「'+top[0]+'」'+(/rollcall_log|fridge_temp|o2_check|rollcall_issue/.test(top[0])
+            ? ' —— 這是紀錄類，跑 archiveOldRows 把舊列封存就會變快'
+            : ' —— 這不是紀錄類，封存幫不上忙；要看這張分頁是不是有很多空白列或多餘欄位')) : ''));
+    }
     /* ⑤b 初次同步耗時。她實測 39.9 秒，所以這一行要看得到數字，
        改版之後才知道到底有沒有變快。 */
     add(ndRow('這支批次讀取花了多久', b.ms<15000,
@@ -5256,7 +5280,8 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',7],['o2_check',7],['cart_seal']]);
+    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal']],
+                     {merge:true});     // ★ 合併：只更新這 3 天，手上的 30 天不會被縮掉
     SYNC_MS=Date.now()-t0;
   }catch(e){ SYNC_MS=-1; }
   SYNC_AT=Date.now();
@@ -5265,6 +5290,18 @@ async function syncAll(){
 }
 // 舊名稱保留：畫面上各處的 ↻ 按鈕都指向這裡
 async function refreshDoneStatus(){ return syncAll(); }
+/* ★★★ 一進畫面就立刻同步，不要等那 20 秒。
+   使用者的心態是「我一打開就想知道還剩什麼要做」——
+   先讓他看到一份可能是 20 秒前的完成度，是這個 App 最容易被誤解的地方
+   （「我明明點完了，怎麼還顯示未完成」）。
+   所以只要切換到會顯示完成度的畫面就強制抓一次，之後才交給 20 秒定時器。
+   ★ 3 秒地板：避免在分區／點班表之間來回按時連發一串請求。 */
+const SYNC_FLOOR=3000;
+function syncNow(){
+  if(SYNCING)return;
+  if(Date.now()-SYNC_AT<SYNC_FLOOR)return;
+  SYNC_AT=0; syncAll();
+}
 // 這幾個畫面會顯示「誰點完了／冰箱氧氣完成沒」，需要自動更新
 function needsLiveSync(){
   return ['home','areas','pick','rollcall','half','leader','todo'].indexOf(state.screen)>=0;
@@ -5360,12 +5397,12 @@ function doneDiag(){
 let SIGNLOG_MS=null, SIGNLOG_AT=0;   // 上次同步耗時(ms) 與 完成時間
 /* days 給值時只抓最近幾天（查「本班誰點過」用 3 天就夠，快很多）；
    主管簽核需要看整個月，就不帶 days。 */
-async function loadSignLog(days,pre){
+async function loadSignLog(days,pre,merge){
   if(!API_URL&&!pre)return;
   const t0=Date.now();
   try{
     const a=pre||await getJSON('table=rollcall_log'+(days?('&days='+days):''));
-    if(Array.isArray(a))SIGNLOG=a;
+    if(Array.isArray(a))SIGNLOG=merge?mergeLog(SIGNLOG,a,K_LOG):a;
     SIGNLOG_MS=Date.now()-t0; SIGNLOG_AT=Date.now();
   }catch(e){ SIGNLOG_MS=-1; console.error('讀完成紀錄失敗',e); }
 }
@@ -5475,12 +5512,41 @@ async function pushRemind(){
   // 後端接通後：改由 owedWrite('push_broadcast',{msg:body,by,at}) 觸發 FCM 推給所有已訂閱裝置
 }
 let FRIDGELOG=[], O2LOG=[];
-async function loadFridgeLog(days,pre){ if(!API_URL&&!pre)return;
+/* ★★★ 短天數的更新一定要「合併」，不能整包蓋掉。
+   踩到的坑：開 App 抓 30 天的冰箱紀錄，20 秒後的自動更新只抓 3 天，
+   而舊寫法是 FRIDGELOG = 回傳陣列 —— 等於 20 秒後手上只剩 3 天，
+   管理分析的「近 14 天登錄率」就會算錯，而且畫面上完全看不出來。
+   改成用「這一筆是哪一格」當鍵去覆蓋，沒被這次更新涵蓋到的舊資料原封不動留著。 */
+function mergeLog(oldArr, newArr, keyFn){
+  if(!Array.isArray(newArr)) return oldArr||[];
+  if(!Array.isArray(oldArr)||!oldArr.length) return newArr;
+  const idx={}; const out=oldArr.slice();
+  out.forEach(function(r,i){ const k=keyFn(r); if(k) idx[k]=i; });
+  newArr.forEach(function(r){
+    const k=keyFn(r);
+    if(k&&idx[k]!==undefined) out[idx[k]]=r;       // 同一格 → 用新的蓋掉
+    else { idx[k]=out.length; out.push(r); }        // 新的一筆 → 加進來
+  });
+  return out;
+}
+const K_FRIDGE=r=>[pick0(r,['單位','unit']),pick0(r,['年月','ym']),
+  pick0(r,['日','day']),pick0(r,['時段','shift'])].join('|');
+const K_O2=r=>[pick0(r,['科別','dept']),pick0(r,['年月','ym']),
+  pick0(r,['日','day']),pick0(r,['時段','shift']),pick0(r,['項目','crit'])].join('|');
+const K_LOG=r=>pick0(r,['紀錄ID','id'])
+  ||[dateOfLog(r),pick0(r,['班別','shift']),sheetIdOf(r),pick0(r,['分工','assign']),
+     pick0(r,['員編','empId'])].join('|');
+const K_ISS=r=>[pick0(r,['日期','date']),pick0(r,['班別','shift']),sheetIdOf(r),
+  pick0(r,['項目','item']),pick0(r,['寫入時間','at'])].join('|');
+
+async function loadFridgeLog(days,pre,merge){ if(!API_URL&&!pre)return;
   try{const a=pre||await getJSON('table=fridge_temp'+(days?('&days='+days):''));
-    if(Array.isArray(a))FRIDGELOG=a;}catch(e){console.error('讀冰箱紀錄失敗',e);} }
-async function loadO2Log(days,pre){ if(!API_URL&&!pre)return;
+    if(Array.isArray(a))FRIDGELOG=merge?mergeLog(FRIDGELOG,a,K_FRIDGE):a;
+  }catch(e){console.error('讀冰箱紀錄失敗',e);} }
+async function loadO2Log(days,pre,merge){ if(!API_URL&&!pre)return;
   try{const a=pre||await getJSON('table=o2_check'+(days?('&days='+days):''));
-    if(Array.isArray(a))O2LOG=a;}catch(e){console.error('讀氧氣紀錄失敗',e);} }
+    if(Array.isArray(a))O2LOG=merge?mergeLog(O2LOG,a,K_O2):a;
+  }catch(e){console.error('讀氧氣紀錄失敗',e);} }
 async function openLeader(){ state.screen='leader'; render();
   SYNC_AT=0; await syncAll();                       // 四張表一起抓，Leader 頁看到的就是最新
   if(state.screen==='leader')renderLeader(); }
@@ -6375,6 +6441,9 @@ if(state.user){ state.rcDate=rcDefaultDate(); rebindForDate(); }
    第一波只抓「首頁要判斷完成度」的五張，抓完立刻可用；
    其餘在背景補齊，抓好再 render 一次。這樣「可以開始點班」的等待時間大幅縮短。 */
 const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',7],['cart_seal']];
+/* 冰箱／氧氣開 App 就抓 30 天 —— 管理分析要看近 14 天登錄率，護理長也常直接翻整個月。
+   它在第二波（背景）抓，不擋著開始點班。
+   之後每 20 秒的自動更新只抓 3 天，但用「合併」寫回去，所以這 30 天不會被縮掉。 */
 const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry']];
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
