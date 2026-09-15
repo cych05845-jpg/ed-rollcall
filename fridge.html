@@ -88,7 +88,7 @@ const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-15-b32';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-09-16-b33';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-10-v11';
 
 const P=new URLSearchParams(location.search);
@@ -177,14 +177,51 @@ function rkey(day,si){ return day+'_'+SHIFTS[si]; }
 function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
 /* 從後端載入本單位本月已登錄的溫度，與本機資料合併 → 換手機/電腦看到的都一樣。
    後端有的以後端為準；本機獨有的（剛離線輸入還沒送出）保留。 */
+/* ★★★ 為什麼要自己做逾時：fetch 沒有預設逾時。
+   Apps Script 偶爾會「接了請求但不回應」，這時 await 會一直掛著，
+   badge 就永遠停在「⏳ 正在讀取後端…」，看起來跟「很慢」一模一樣，
+   實際上它永遠不會好 —— 這就是 2026-09-16 那張截圖的狀況。
+   加上 25 秒逾時之後，它會變成紅色的「讀不到後端」並寫出原因，還能按重試。 */
+// ★ 90 秒是「不要永遠掛著」的上限，不是預期等待時間（實測初次同步可能 40 秒）
+const FETCH_MS=90000;
+async function fetchT(url,ms){
+  const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const t=ctl?setTimeout(function(){ try{ctl.abort();}catch(e){} },ms||FETCH_MS):null;
+  try{
+    const r=await fetch(url,Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+    if(t)clearTimeout(t);
+    return r;
+  }catch(e){
+    if(t)clearTimeout(t);
+    throw new Error((e&&e.name==='AbortError')?('後端超過 '+Math.round((ms||FETCH_MS)/1000)+' 秒沒有回應'):String(e&&e.message||e));
+  }
+}
+let srvErr='';                 // 讀不到後端時的原因（顯示在徽章上）
+// 「0 也算有值」的取值函式（見下面 syncFromServer 裡的說明）
+function pick0(o,names){
+  if(!o)return '';
+  for(var i=0;i<names.length;i++){
+    var v=o[names[i]];
+    if(v!==undefined&&v!==null&&String(v)!=='') return String(v);
+  }
+  return '';
+}
 let syncing=false;
 async function syncFromServer(){
   if(!API_URL)return;
   syncing=true; srvBadge();          // ★ 先告訴使用者「正在讀取」，別讓那 1~3 秒看起來像壞掉
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp',{cache:'no-store'});
-    const a=await r.json();
-    if(!Array.isArray(a)){ serverCount=-1; syncing=false; srvBadge(); console.error('後端回傳不是陣列',a); return; }
+    srvErr='';
+    const r=await fetchT(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp&_='+Date.now());
+    const txt=await r.text();
+    let a=null; try{ a=JSON.parse(txt); }catch(e){}
+    if(!Array.isArray(a)){
+      /* ★ 最常見的兩種：部署時「誰可以存取」設成「只有我自己」→ 回的是 Google 登入網頁；
+         或 GS 沒重新部署成新版本 → 回的是舊版格式。兩種都要講出來，不能只說失敗。 */
+      srvErr = (r.status!==200) ? ('HTTP '+r.status)
+             : (/^\s*<(!doctype|html)/i.test(txt) ? '後端回的是網頁不是資料（部署時「誰可以存取」要選【任何人】）'
+             : '後端回傳格式不對');
+      serverCount=-1; syncing=false; srvBadge(); console.error('後端回傳不是陣列',txt.slice(0,200)); return; }
     let n=0;
     a.forEach(function(o){
       const unit=String(o['單位']||o.unit||'');
@@ -192,7 +229,12 @@ async function syncFromServer(){
       // 舊資料若「年月」是空的（先前的 bug 寫進去的），改用「寫入時間」推回月份，才不會變孤兒
       if(!ym){ const t=String(o['寫入時間']||o.at||''); const m=t.match(/^(\d{4})[-\/](\d{2})/); if(m)ym=m[1]+'-'+m[2]; }
       if(normU(unit)!==normU(data.unit)||ym!==ymOf(data.ym))return;
-      const day=+(o['日']||o.day||0), sh=String(o['時段']||o.shift||'');
+      /* ★★★ 不可以寫成 `o['時段'] || o.shift || ''`。
+         三個時段是 "0"（00-08 大夜）／"8"／"16"，Sheets 把 "0" 存成數字 0，
+         而 0 在 JavaScript 裡是 falsy —— `||` 會跳過它，大夜那一列就被丟掉，
+         結果「後台有資料、畫面上大夜永遠空白」，白班小夜卻正常。
+         （2026-09-16 找到）只有 undefined／null／空字串才算沒填。 */
+      const day=+(pick0(o,['日','day'])||0), sh=pick0(o,['時段','shift']);
       const si=SHIFTS.indexOf(sh); if(!day||si<0)return;
       const k=rkey(day,si);
       n++;
@@ -210,6 +252,7 @@ async function syncFromServer(){
     });
     serverCount=n; syncing=false; save(); render(); srvBadge();
   }catch(e){ console.error('同步後端冰箱紀錄失敗（先用本機資料）',e);
+    srvErr=String(e&&e.message||e);
     serverCount=-1; syncing=false; srvBadge(); }
 }
 // 後端筆數徽章：一眼看出「Sheet 裡到底有幾筆」，不用再猜
@@ -221,13 +264,20 @@ function srvBadge(){
     const w=document.querySelector('.wrap'), sh=document.getElementById('sheet');
     if(w&&sh)w.insertBefore(el,sh); }
   const local=Object.keys(data.readings||{}).length;
+  const retry=' <button onclick="syncFromServer()" style="margin-left:8px;padding:3px 9px;'
+    +'font-family:inherit;font-size:12px;border:1px solid currentColor;border-radius:7px;'
+    +'background:transparent;color:inherit;cursor:pointer">重新讀取</button>';
+  // ★ 版本號三種狀態都要寫出來 —— 之前只有成功與失敗才寫，卡在「讀取中」時
+  //   反而看不到版本，等於最需要確認版本的時候看不到。
   if(syncing){ el.style.cssText+=';background:#fff4e6;color:#b5680f;font-weight:700';
-    el.textContent='⏳ 正在讀取後端…（本機 '+local+' 筆）'; return; }
+    el.innerHTML='⏳ 正在讀取後端…（本機 '+local+' 筆）· 版本 '+esc(APP_VER)
+      +'　初次可能要 30~40 秒'; return; }
   if(serverCount===-1){ el.style.cssText+=';background:#fbe8e8;color:#c0392b;font-weight:700';
-    el.textContent='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）· 版本 '+APP_VER; return; }
+    el.innerHTML='⚠ 讀不到後端，畫面顯示的是本機資料（'+local+' 筆）· 版本 '+esc(APP_VER)
+      +(srvErr?('<br>原因：'+esc(srvErr)):'')+retry; return; }
   el.style.cssText+=';background:#e6f6ed;color:#1f7a43;font-weight:700';
-  el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 筆 · 本機 '+local+' 筆 · 本月 '
-    +(data.ym||'')+' · 版本 '+APP_VER;
+  el.innerHTML='☁ 後端 '+(serverCount==null?'—':serverCount)+' 筆 · 本機 '+local+' 筆 · 本月 '
+    +esc(data.ym||'')+' · 版本 '+esc(APP_VER)+retry;
 }
 function curName(){ return (document.getElementById('nameIn').value||'').trim(); }
 function clampPlot(t){ return Math.max(TMIN, Math.min(TMAX, t)); }

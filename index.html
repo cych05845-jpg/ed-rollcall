@@ -534,10 +534,42 @@ const ACCOUNTS=[
 /* ★ 前端版本印記：上傳後首頁最下方會顯示這串。
    看到的不是這串就代表瀏覽器還在用舊檔（需強制重新整理／清站台資料）。 */
 /* ★ 單張讀取的共用小工具 */
+/* ★★★ 一定要有逾時：fetch 沒有預設逾時，Apps Script 偶爾「接了請求但不回應」，
+   這時 await 會永遠掛著 —— 開啟畫面就一直停在讀取中，而且每個讀取函式都包了
+   try/catch，畫面只會安靜地顯示本機預設值，看起來像「後端沒資料」。
+   （2026-09-16 冰箱那張截圖就是卡在這裡。）
+   ★ 也要區分「回的不是 JSON」：部署時「誰可以存取」設成只有我自己的話，
+     /exec 回的是 Google 登入網頁，r.json() 會丟一個看不懂的錯。 */
+/* ★ 90 秒不是「正常會等這麼久」，而是「不要永遠掛著」的上限。
+   她的初次同步實測 39.9 秒（Apps Script 讀整份試算表就是這麼慢），
+   所以逾時一定要比那個數字寬很多，否則會把「其實會成功、只是慢」的請求砍掉。 */
+const GET_MS=90000;
 async function getJSON(q){
-  const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+q+'&_='+Date.now(),{cache:'no-store'});
-  return await r.json();
+  const url=API_URL+(API_URL.includes('?')?'&':'?')+q+'&_='+Date.now();
+  const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const t=ctl?setTimeout(function(){ try{ctl.abort();}catch(e){} },GET_MS):null;
+  let r,txt;
+  try{
+    r=await fetch(url,Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+    txt=await r.text();
+  }catch(e){
+    if(t)clearTimeout(t);
+    NET_ERR=(e&&e.name==='AbortError')
+      ? ('後端超過 '+Math.round(GET_MS/1000)+' 秒沒有回應')
+      : String(e&&e.message||e);
+    throw new Error(NET_ERR);
+  }
+  if(t)clearTimeout(t);
+  try{ const j=JSON.parse(txt); NET_ERR=''; return j; }
+  catch(e){
+    NET_ERR = (r.status!==200) ? ('HTTP '+r.status)
+      : (/^\s*<(!doctype|html)/i.test(txt)
+         ? '後端回的是網頁不是資料（部署時「誰可以存取」要選【任何人】）'
+         : '後端回傳格式不對');
+    throw new Error(NET_ERR);
+  }
 }
+let NET_ERR='';        // 最近一次讀取失敗的原因（首頁與診斷頁會顯示）
 
 /* ★★★ 批次讀取：一支請求把多張表一起帶回來。
    為什麼要做：Apps Script 一次來回大約 1~3 秒。
@@ -837,8 +869,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-15-v13';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-15-b41';
+const EXPECT_API_VER='2026-09-16-v14';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-16-b42';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -3362,9 +3394,50 @@ async function runNetDiag(){
 
     // ⑤ 這一支 /exec 綁到哪份試算表
     if(j2&&j2._ss) add(ndRow('後端綁定的試算表',true,String(j2._ss)));
+    /* ⑤b 初次同步耗時。她實測 39.9 秒，所以這一行要看得到數字，
+       改版之後才知道到底有沒有變快。 */
+    add(ndRow('這支批次讀取花了多久', b.ms<15000,
+      (b.ms/1000).toFixed(1)+' 秒　（同時抓 items、rollcall_active、rollcall_log:3、fridge_temp:3、o2_check:3）'
+      +(BOOT_MS1?('\n本次開啟：第一波 '+(BOOT_MS1/1000).toFixed(1)+' 秒'
+        +(BOOT_MS2?('，背景第二波 '+(BOOT_MS2/1000).toFixed(1)+' 秒'):'')):''),
+      b.ms>=15000?('超過 15 秒偏慢。'+EXPECT_API_VER+' 起後端有 20 秒讀取快取、而且只讀需要的列；'
+        +'若還是很慢，通常是 rollcall_log 太長 —— 可把一年前的舊列搬到備份分頁'):''));
   }
 
-  // ⑥ 排班（Firebase）—— 跟後端是兩條不同的線，一起壞＝共同原因
+  /* ⑥ 兩個實際踩過的坑，直接在診斷裡給答案：
+     ① 冰箱大夜（時段=0）讀不到 —— 後端有幾筆、前端認出幾筆
+     ② 急救車逐項表沒有打勾 —— rollcall_log 有幾筆、其中幾筆有「逐項紀錄」 */
+  try{
+    const FL=(typeof FRIDGELOG!=='undefined'&&Array.isArray(FRIDGELOG))?FRIDGELOG:[];
+    const cnt={'0':0,'8':0,'16':0,other:0};
+    FL.forEach(function(x){ const v=pick0(x,['時段','shift']);
+      if(cnt[v]===undefined) cnt.other++; else cnt[v]++; });
+    const zeroRaw=FL.filter(function(x){ return String(x['時段'])==='0'||x['時段']===0; }).length;
+    add(ndRow('冰箱三個時段各有幾筆',
+      !(FL.length>0&&cnt['0']===0&&(cnt['8']||cnt['16'])),
+      '大夜 00-08：'+cnt['0']+'　白班 08-16：'+cnt['8']+'　小夜 16-24：'+cnt['16']
+      +(cnt.other?('　時段看不懂：'+cnt.other):'')+'　（後端共 '+FL.length+' 筆）'
+      +'\n其中「時段」欄原始值是 0 的：'+zeroRaw+' 筆',
+      (FL.length>0&&cnt['0']===0&&(cnt['8']||cnt['16']))
+        ? '白班小夜有、大夜是 0 → 大夜那幾列的「時段」被讀掉了。'
+          +'本版（b42 起）已修正 0 被當成空值的問題；若仍是 0，請看 Sheet 的 fridge_temp 大夜列時段欄是否空白'
+        : ''));
+
+    const SL=(typeof SIGNLOG!=='undefined'&&Array.isArray(SIGNLOG))?SIGNLOG:[];
+    const withLog=SL.filter(function(r){ return !!parseItemLog(fld(r,['itemLog','逐項紀錄'])); }).length;
+    add(ndRow('點班紀錄有「逐項紀錄」的筆數',
+      !(SL.length>0&&withLog===0),
+      SL.length+' 筆當中有 '+withLog+' 筆存了逐項紀錄'
+      +(SL.length?('（'+Math.round(withLog*100/SL.length)+'%）'):''),
+      (SL.length>0&&withLog===0)
+        ? '一筆都沒有 → 急救車逐項表一定全是「·」。這一欄是 '+EXPECT_API_VER
+          +' 才開始寫的，GS 要「重新部署為新版本」，之後點的班才會有'
+        : (SL.length>0&&withLog<SL.length
+          ? '部署前點的班沒有逐項資料，那些格子會是「·」，這是正常的（不會用完成項數反推打勾）'
+          : '')));
+  }catch(e){ add(ndRow('冰箱／逐項紀錄檢查',true,'略過（'+String(e&&e.message||e)+'）')); }
+
+  // ⑦ 排班（Firebase）—— 跟後端是兩條不同的線，一起壞＝共同原因
   const mk=t.y+'-'+p2(t.m);
   const f=await ndFetchText(SCHED_DB+'/schedules/'+encodeURIComponent(mk)+'.json',12000);
   let has=false; try{ const o=JSON.parse(f.body); has=!!(o&&typeof o==='object'); }catch(e){}
@@ -3372,7 +3445,7 @@ async function runNetDiag(){
     'HTTP '+f.status+'　'+f.ms+'ms　'+(has?'有拿到班表':'沒有資料')+(f.err?('　錯誤：'+f.err):''),
     (!f.status)?'跟後端一起連不到 → 共同原因是 Service Worker 或網路，不是 GS 設定':''));
 
-  /* ⑦ 現在記憶體裡到底有多少資料（畫面顯示的就是這些）
+  /* ⑧ 現在記憶體裡到底有多少資料（畫面顯示的就是這些）
      ★ 這些全域變數宣告在本函式後面，用 typeof 包一層，
        萬一以後搬動順序也不會整頁掛掉（TDZ 踩過一次就夠了）。 */
   const n=function(v){ try{ return Array.isArray(v)?v.length:'?'; }catch(e){ return '?'; } };
@@ -3546,8 +3619,15 @@ function renderItemCheck(){
   days.forEach(function(d){ PW_SHIFTS.forEach(function(p){
     const k=fmtISO(d)+'|'+p[0]; if(idx[k]) keys.push(k); }); });
   const cells=keys.length;
-  // 有紀錄但完全沒有逐項資料 → 這些班是 v13 部署前點的
-  const oldOnly=cells>0 && keys.every(function(k){ return !idx[k].log; });
+  /* ★ 有紀錄但沒有逐項資料的班 → 那是 GS v13 部署前點的，格子只能是「·」。
+     原本只有「整段都是舊資料」才提示，但實務上一定是混的（部署那天之後才有），
+     她看到的就是「後台明明有資料，列印出來卻沒有打勾」而畫面什麼都沒說。
+     所以改成：只要有一個班缺逐項資料就講清楚缺幾個、是哪幾天。 */
+  const noLogKeys=keys.filter(function(k){ return !idx[k].log; });
+  const noLogDays=[];
+  noLogKeys.forEach(function(k){ const d=k.split('|')[0];
+    if(noLogDays.indexOf(d)<0) noLogDays.push(d); });
+  const oldOnly=cells>0 && noLogKeys.length===cells;
 
   // 依類型分組（器械／耗材／藥品），組內維持 Sheet 的原始順序
   const order=[], group={};
@@ -3614,10 +3694,17 @@ function renderItemCheck(){
     + '<div class="pw-meta">'+esc(label)+'（'+n+' 天 × 三班）　'
     + (seal?'本車<b>有上鎖</b>：封籤還在的班，上鎖品項由封籤代表'
            :'本車<b>無上鎖</b>：每班全品項逐項點')+'</div></div>'
-    + (oldOnly?'<div class="ic-warn">這個區間的紀錄都是<b>舊版後端（v13 之前）</b>寫的，'
-        + '只存了「完成幾項」，沒有逐項資料 —— 所以格子是「·」。<br>'
-        + '不會用完成項數去反推打勾（那樣印出來的表是假的）。'
-        + 'v13 部署之後點的班才有逐項紀錄。</div>':'')
+    + (noLogKeys.length?('<div class="ic-warn">'
+        + (oldOnly?'這個區間<b>全部 '+cells+' 個班</b>'
+                  :'這個區間有 <b>'+noLogKeys.length+' / '+cells+' 個班</b>')
+        + '的紀錄沒有逐項資料，格子顯示「·」。<br>'
+        + '原因：這些班是在後端更新到 '+EXPECT_API_VER+' <b>之前</b>點的，'
+        + '當時 <code>rollcall_log</code> 只存「完成幾項」，沒有存「哪一項被勾」。<br>'
+        + '程式<b>刻意不拿完成項數去反推打勾</b> —— 那樣印出來的表是假的。<br>'
+        + '缺的日期：'+esc(noLogDays.join('、'))+'<br>'
+        + '確認方式：打開 Sheet 的 <code>rollcall_log</code>，最右邊要有「逐項紀錄」欄且有值'
+        + '（例如 <code>OK=42</code>）。整欄空白就是 GS 還沒「重新部署為新版本」。'
+        + '</div>'):'')
     + '<table class="ic-tbl ic-dense"><thead>'+h1+h2+'</thead>'
     + '<tbody>'+(body||'<tr><td colspan="'+NCOL+'" class="pw-empty" style="height:36px">這張表沒有品項資料</td></tr>')
     + '</tbody></table>'
@@ -3788,7 +3875,8 @@ function analytics(){
 }
 function openAnalytics(){ state.screen='analytics'; state.aiText=''; render();
   // ★ 一定要把冰箱／氧氣也載進來，之前沒載，那個「冰箱超標」數字是開 App 時的舊值
-  loadBundle([['rollcall_log',30],['rollcall_issue',90],['owed'],['rtls'],
+  ensureLocator();
+  loadBundle([['rollcall_log',30],['rollcall_issue',90],['owed'],
     ['fridge_temp',30],['o2_check',30]])
     .then(function(){ if(state.screen==='analytics')render(); }); }
 function renderAnalytics(){
@@ -3977,14 +4065,28 @@ function shiftEnded(ymd,sh){
   return (t.h + t.mi/60) >= SHIFT_END_H[sh];
 }
 
+/* ★★★ 為什麼要有這個函式：`o['時段'] || o.shift || ''` 在「時段＝0」時是錯的。
+   冰箱的三個時段存成 "0"（00-08 大夜）／"8"／"16"，而 Sheets 會把 "0" 當數字存成 0。
+   0 在 JavaScript 裡是 falsy，所以 `||` 會跳過它，大夜那一列就被當成「沒有時段」丟掉 ——
+   後端明明有資料，畫面上大夜永遠是「未登錄」，白班與小夜卻正常。
+   （2026-09-16 找到，症狀：「大夜班冰箱溫度就是無法呈現，後台都是有資料的」）
+   規則：只有 undefined／null／空字串才算沒填，0 是有效值。 */
+function pick0(o,names){
+  if(!o)return '';
+  for(let i=0;i<names.length;i++){
+    const v=o[names[i]];
+    if(v!==undefined&&v!==null&&String(v)!=='') return String(v);
+  }
+  return '';
+}
 // 某冰箱單位在某日某時段的登錄者（空＝未登錄）
 function fridgeSlotBy(unit,ymd,slot){
   const ym=ymd.slice(0,7), day=String(+ymd.slice(8,10));
   const r=latestOf(FRIDGELOG,function(x){
     return normUnit(x['單位']||x.unit||'')===normUnit(unit)
         && ymOf(x['年月']||x.ym||'')===ym
-        && String(+(x['日']||x.day||0))===day
-        && String(x['時段']||x.shift||'')===String(slot);
+        && String(+(pick0(x,['日','day'])||0))===day
+        && pick0(x,['時段','shift'])===String(slot);
   });
   return r?String(r['簽名']||r.sign||'已登錄'):'';
 }
@@ -3994,8 +4096,8 @@ function o2ShiftBy(dept,ymd,sh){
   const r=latestOf(O2LOG,function(x){
     return normUnit(x['科別']||x.dept||'')===normUnit(dept)
         && ymOf(x['年月']||x.ym||'')===ym
-        && String(+(x['日']||x.day||0))===day
-        && String(x['時段']||x.shift||'')===String(sh);
+        && String(+(pick0(x,['日','day'])||0))===day
+        && pick0(x,['時段','shift'])===String(sh);
   });
   return r?String(r['簽名']||r.by||'已登錄'):'';
 }
@@ -4525,7 +4627,24 @@ function matchDevices(name){
   return r.length?r:[];
 }
 // 點 📍 → 跳浮動速查表(編號·狀態·區域),點「地圖」再開全螢幕定位
-function openMap(name){ showLocatePanel(name); }
+/* ★ 定位面板：devices／rtls 是延後載入的（見 ensureLocator），
+   所以第一次開啟要先把它們抓回來，抓好再重畫一次面板。
+   先畫再補，使用者才不會以為按了沒反應。 */
+function openMap(name){
+  showLocatePanel(name);
+  if(!LOCATOR_LOADED){
+    const el=document.querySelector('#locSheet .loc-sheet-body');
+    if(el) el.innerHTML='<div style="padding:18px;text-align:center;color:var(--ink-soft);font-size:13px">'
+      +'⏳ 正在讀取儀器清冊…（第一次開啟才需要等）</div>';
+    ensureLocator().then(function(){
+      if(document.getElementById('locSheet')) showLocatePanel(name);
+    }).catch(function(){
+      const e2=document.querySelector('#locSheet .loc-sheet-body');
+      if(e2) e2.innerHTML='<div style="padding:18px;text-align:center;color:var(--bad);font-size:13px">'
+        +'讀不到儀器清冊，請檢查後端連線。</div>';
+    });
+  }
+}
 function showLocatePanel(name){
   const list=matchDevices(name);
   closeLocatePanel();
@@ -4935,6 +5054,13 @@ function syncBar(){
       <button onclick="syncAll()" ${SYNCING?'disabled':''} style="border:1px solid var(--line);background:transparent;
         color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">↻ 立即更新</button>
     </div>
+    ${NET_ERR?`<div style="margin-top:5px;background:#fdf1f1;color:#7d1b22;border:1px solid #e0b4b4;
+        border-radius:7px;padding:7px 10px;line-height:1.7">
+      ⚠ <b>讀不到後端</b> —— 畫面上的完成度、冰箱、氧氣、點班紀錄都可能是本機舊資料。<br>
+      原因：${esc(NET_ERR)}<br>
+      <button onclick="openNetDiag()" style="margin-top:4px;border:1px solid currentColor;background:transparent;
+        color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">🩺 開啟連線診斷</button>
+    </div>`:''}
     ${slow?`<div style="margin-top:5px;background:#fff4e6;color:#b5680f;border-radius:7px;padding:6px 9px;line-height:1.7">
       🐢 目前用「逐張讀取」模式，同步比較慢（要發 11 個請求）。<br>
       後端需要 ${esc(EXPECT_API_VER)} 才能一次抓完 —— 請到 Apps Script
@@ -6002,7 +6128,16 @@ store.load();
 if(!state.user)state.screen='login';
 render();
 if(state.user){ state.rcDate=rcDefaultDate(); rebindForDate(); }
-/* ★ 啟動只發一支請求（原本 10 支）。大表都只要最近幾天，回傳量也小很多。 */
+/* ★★★ 啟動分兩波，不要一次抓 12 張表。
+   實測她的初次同步 39.9 秒 —— 慢的是 Apps Script 讀試算表，
+   而那 39.9 秒裡有一大半花在「首頁根本用不到」的表上：
+     devices（150 台儀器）、rtls（定位標籤）→ 只有定位畫面要，改成進那一頁才抓
+     owed／item_report／fridge_temp／o2_check／cart_expiry → 首頁只看完成度，可以晚一點到
+   第一波只抓「首頁要判斷完成度」的五張，抓完立刻可用；
+   其餘在背景補齊，抓好再 render 一次。這樣「可以開始點班」的等待時間大幅縮短。 */
+const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',7],['cart_seal']];
+const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry']];
+let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
   /* ★ 先用手機裡上次的資料畫畫面（幾乎瞬間），再去抓新的。
      沒有快取（第一次用、或換版本）就照舊等後端。 */
@@ -6011,12 +6146,27 @@ if(state.user){ state.rcDate=rcDefaultDate(); rebindForDate(); }
     try{ await applyBundle(c.d); CACHE_AT=c.at; SHOW_CACHE=true; render(); }
     catch(e){ console.warn('快取套用失敗，改為等後端',e); }
   }
-  await loadBundle([['items'],['devices'],['owed'],['item_report'],['staff_perm'],
-    ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30],
-    ['cart_seal'],['cart_expiry']]);
+  const t0=Date.now();
+  await loadBundle(BOOT_WAVE1);
+  BOOT_MS1=Date.now()-t0;
   SHOW_CACHE=false; SYNC_AT=Date.now();
-  render();
+  render();                                   // ★ 到這裡就可以開始點班了
+  const t1=Date.now();
+  loadBundle(BOOT_WAVE2).then(function(){
+    BOOT_MS2=Date.now()-t1; render();
+  }).catch(function(e){ console.warn('第二波讀取失敗',e); });
 })();
+/* devices／rtls 只有定位畫面要用，改成「進那一頁才抓，而且只抓一次」。
+   150 台儀器＋標籤是初次同步最大的一塊，首頁完全用不到。 */
+let LOCATOR_LOADED=false, LOCATOR_LOADING=null;
+function ensureLocator(){
+  if(LOCATOR_LOADED) return Promise.resolve();
+  if(LOCATOR_LOADING) return LOCATOR_LOADING;
+  LOCATOR_LOADING=loadBundle([['devices'],['rtls']]).then(function(){
+    LOCATOR_LOADED=true; LOCATOR_LOADING=null;
+  }).catch(function(e){ LOCATOR_LOADING=null; throw e; });
+  return LOCATOR_LOADING;
+}
 /* ★ 自動更新完成狀態（20 秒一次）。
    涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
    分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。 */
