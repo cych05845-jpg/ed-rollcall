@@ -336,15 +336,74 @@
 .ic-qm{color:#8a6d00;font-weight:700;font-size:13px;background:#fdfaf0}
 .ic-wk{font-variant-numeric:tabular-nums;font-size:11px;font-weight:700}
 .ic-wk-lo{color:#a0232b}
+/* ★ 密集版：5 天 = 15 個狀態欄，A4 直式要塞得下就得縮到這個尺寸。
+   品項欄用 table-layout:auto 讓它自己撐，狀態欄固定窄。 */
+.ic-dense{table-layout:auto}
+.ic-dense th,.ic-dense td{padding:1px 0;font-size:10px;height:17px;line-height:1.1}
+.ic-dense .ic-it{padding:1px 5px 1px 4px;font-size:10.5px;white-space:nowrap}
+.ic-dense .ic-grp{padding:2px 5px;font-size:10px}
+.ic-dense .ic-ok,.ic-dense .ic-bad,.ic-dense .ic-un,.ic-dense .ic-qm{font-size:11px}
+.ic-dense .ic-seal{font-size:9px}
+.ic-dh{background:#ececec;font-weight:700;font-size:10px;white-space:nowrap}
+.ic-dw{display:block;font-weight:400;font-size:8.5px;color:#666;line-height:1.1}
+.ic-sh{background:#f6f6f6;font-weight:600;font-size:9px;width:17px;min-width:17px}
+.ic-sh-off{color:#bbb}
+.ic-sum{width:38px;min-width:38px;background:#fafafa}
+.ic-dend{border-right:1.4px solid #6a6a6a!important}
+.ic-sec{font-size:11px;font-weight:700;margin:9px 0 3px;color:#111}
+.ic-who{border:1px solid #9a9a9a;padding:4px 7px}
+.ic-who-r{font-size:10px;line-height:1.75;color:#111;font-variant-numeric:tabular-nums}
+/* ===== 雙月效期盤點（附件一）=====
+   刻意照紙本：四個月份一欄一個月，反灰處＝異常時的後續處理方式。 */
+.ca-att{font-size:11px;font-weight:400;color:#555;margin-left:5px}
+.ca-tbl{border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #2b2b2b}
+.ca-tbl th,.ca-tbl td{border:.5px solid #9a9a9a;padding:6px 7px;font-size:11px;
+  vertical-align:top;color:#111;line-height:1.7}
+.ca-tbl thead th{background:#f1f1f1;font-weight:500;text-align:center}
+.ca-tbl tbody th{background:#f8f8f8;font-weight:700;text-align:center;font-size:11.5px;line-height:1.5}
+.ca-now{display:block;font-size:9px;font-weight:400;color:#0f7a86}
+.ca-it{margin-top:3px;font-size:10.5px;color:#333;word-break:break-all}
+.ca-gy{margin-top:4px;padding:3px 5px;background:#dcdcdc;font-size:10.5px;line-height:1.7}
+.ca-none{color:#999;font-size:10.5px}
+.ca-sign{font-weight:700;font-size:13px}
+.ca-at{font-size:9.5px;color:#555;font-variant-numeric:tabular-nums}
+.ca-un{font-size:9.5px;color:#a0232b;font-weight:700}
+.ca-stamp{display:inline-block;border:2px solid #a0232b;color:#a0232b;border-radius:6px;
+  padding:4px 9px;font-weight:700;font-size:12.5px;text-align:center;line-height:1.3}
+.ca-stamp-s{font-size:9px;font-weight:500}
+.ca-stamp-d{font-size:8.5px;font-weight:400;color:#8a3b41}
+.ca-h{font-weight:800;font-size:15px;margin-bottom:8px}
+.ca-tag{font-size:11.5px;font-weight:600;color:var(--warn);margin-left:7px}
+.ca-f{padding:9px 0;border-top:1px solid var(--line)}
+.ca-fl{font-size:13px;font-weight:700;margin-bottom:6px}
+.ca-fl2{font-size:12.5px;font-weight:600;margin:7px 0 4px;color:var(--ink-soft)}
+.ca-r{display:inline-block;margin:0 7px 6px 0;padding:7px 12px;border:1px solid var(--line);
+  border-radius:9px;font-size:13.5px;cursor:pointer;user-select:none}
+.ca-r.on{border-color:var(--brand);background:rgba(15,122,134,.12);font-weight:700}
+.ca-ta,.ca-in{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:8px 10px;
+  border:1px solid var(--line);border-radius:9px;font-family:inherit;font-size:13.5px;
+  background:transparent;color:inherit;line-height:1.6}
+.ca-soon{margin:0 0 9px;padding:8px 11px;border:1px solid var(--line);border-radius:9px;
+  background:rgba(15,122,134,.07);font-size:12.5px;line-height:1.8}
+.ca-soon-x{background:#fdf1f1;border-color:#e0b4b4;color:#7d1b22}
 .ic-warn{border:1px solid #a0232b;background:#fdf1f1;color:#7d1b22;padding:8px 11px;
   font-size:11.5px;line-height:1.7;margin:0 0 10px}
+/* ===== 後端連線診斷 ===== */
+.nd-row{display:flex;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.nd-row:last-child{border-bottom:0}
+.nd-ic{flex:0 0 22px;font-size:16px;line-height:1.3}
+.nd-b{flex:1;min-width:0}
+.nd-n{font-weight:700;font-size:13.5px;margin-bottom:3px}
+.nd-d{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-all;margin:0;color:var(--ink-soft)}
+.nd-h{margin-top:5px;font-size:12.5px;font-weight:600;color:var(--bad);line-height:1.6}
 @media print{
   .noprint,.topbar{display:none!important}
   body{background:#fff!important}
   .screen{padding:0!important;max-width:none!important}
   .pw-page{border:0;padding:0;margin:0;page-break-after:always}
   .pw-page:last-child{page-break-after:auto}
-  .pw-tbl tr,.pw-iss tr,.pw-sign,.ic-tbl tr{page-break-inside:avoid}
+  .pw-tbl tr,.pw-iss tr,.pw-sign,.ic-tbl tr,.ca-tbl tr{page-break-inside:avoid}
   @page{size:A4 portrait;margin:12mm 10mm}
 }
 </style>
@@ -744,7 +803,8 @@ function BUNDLE_APPLY(){
     rollcall_issue: a=>loadIssues(a),
     rollcall_signoff:a=>loadSignoffs(a),
     cart_seal:   a=>loadCartSeal(a),
-    cart_expiry: a=>loadCartExpiry(a)
+    cart_expiry: a=>loadCartExpiry(a),
+    cart_audit:  a=>loadCartAudit(a)
   };
 }
 async function loadBundle(spec){
@@ -777,8 +837,8 @@ async function loadBundle(spec){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-15-b39';
+const EXPECT_API_VER='2026-09-15-v13';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-15-b41';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1769,6 +1829,17 @@ function isLockedItem(o){
   if(String(o&&o.assign||'').trim()==='鎖') return true;
   return OBS_LOCKED_NAMES.has(normItem(o&&o.name));
 }
+/* ★★ 只有留觀急救車是上鎖的車。
+   急救室急救車與兒科急救車沒有鎖，每班就是全品項逐項點。
+   這件事一定要用「哪一張表」來判斷，不能只看品項名字 ——
+   三台車的品項名稱幾乎一模一樣（Bosmin、Atropine、喉頭鏡葉、手電筒…），
+   光比名字會讓沒有鎖的兩台車也長出一堆「🔒上鎖」，那是錯的。
+   判斷來源：SHEETS 的 mode==='seal'（目前只有 obs-cart）。 */
+function isSealSheet(sheetId){
+  const s=sheetById(sheetId);
+  return !!(s&&s.mode==='seal');
+}
+function lockedOn(sheetId,o){ return isSealSheet(sheetId)&&isLockedItem(o); }
 // 每班要逐項打勾的清單（封籤式會扣掉上鎖物品）
 /* ★★ 規則：封籤還在 → 那些品項由封籤代表，不用重複點；
           封籤解除（已開封／待清點）→ 全部跳出來，這一班要全點。
@@ -1776,7 +1847,7 @@ function isLockedItem(o){
 function itemsOf(sheetId,half){
   const all=itemsAllOf(sheetId,half);
   if(!sealSealed(sheetId)) return all;      // 沒封籤／封籤解除 → 全部逐項點
-  return all.filter(o=>!isLockedItem(o));
+  return all.filter(o=>!lockedOn(sheetId,o));
 }
 /* 提交時要算的清單。
    開封後全點、再封回去的那一班，畫面上的清單已經縮回 10 項，
@@ -1789,7 +1860,10 @@ function rcListOf(sheetId,half){
   return extra.length?base.concat(extra):base;
 }
 // 這台車被封籤代表的那些品項（唯讀顯示用）
-function lockedItemsOf(sheetId){ return itemsAllOf(sheetId,null).filter(isLockedItem); }
+function lockedItemsOf(sheetId){
+  if(!isSealSheet(sheetId)) return [];      // 沒有鎖的車不會有「被封籤代表」的品項
+  return itemsAllOf(sheetId,null).filter(isLockedItem);
+}
 function keyOf(o){return o.sheet+'|'+o.i}
 
 // ---------- state ----------
@@ -1802,7 +1876,9 @@ let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{}
      ・sw.js 每次啟動清空所有快取，所以 HTML 不會卡舊版 ✓
      ・這裡處理 state：換版時只留「不能掉的」，其餘全部重算
    ★ 一定要留下來的是 rcPending —— 那是還沒送出去的點班紀錄，清掉就真的不見了。 */
-const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs',
+/* ★ 'audits'＝雙月盤點還沒送到後端的那幾筆，跟 rcPending 同一個等級的東西，
+     換版絕對不能清掉（清掉就真的不見了）。 */
+const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs','audits',
                              'checks','reason','note','theme'];
 const store={
   save(){try{state._v=APP_VER;localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
@@ -1824,6 +1900,7 @@ const store={
     /* ★ 封籤號絕對不能沾黏。存在 localStorage 裡的話，下一班一開 App
        輸入框就已經填著上一班打的號碼，按下去就過了 —— 等於沒有核籤。 */
     delete state.sealInput; delete state.sealMismatch; delete state.sealPeek;
+    delete state.caForm;                 // 盤點表單是暫時的，不跨開啟保留
     if(state.shiftManualDate && state.shiftManualDate!==todayISO()){
       delete state.shiftManual; delete state.shiftManualDate;
     }
@@ -1891,7 +1968,7 @@ function render(){
     owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin,
     adminHub:renderAdminHub,analytics:renderAnalytics,
     seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
-    itemCheck:renderItemCheck,
+    itemCheck:renderItemCheck,netDiag:renderNetDiag,cartAudit:renderCartAudit,
     sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
 }
 
@@ -2038,6 +2115,8 @@ function renderHome(){
       onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px"
       onclick="openItemCheck()">🔍 急救車逐項查看（抽查用）</button>`:''}
+    ${(!hasAdmin&&auditCanEdit())?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
+      onclick="openCartAudit()">📅 急救車雙月效期盤點（2/5/8/11 月）</button>`:''}
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px;line-height:1.8">
       ＊冰箱、氧氣等附加查核也列在上方「輔助單張」，可展開看三個時段誰登錄了<br>
       <span style="opacity:.75">前端版本 ${APP_VER}</span></div>
@@ -2684,6 +2763,8 @@ function renderAdminHub(){
     b('簽核／點班紀錄','openRecords()'),
     b('🖨 每週點班紀錄（可列印·主管審閱）','openPrintWeek()'),
     b('🔍 急救車逐項查看（哪一項有沒有被點）','openItemCheck()'),
+    b('📅 急救車雙月效期盤點（附件一・2/5/8/11 月）','openCartAudit()'),
+    b('🩺 後端連線診斷（畫面顯示都沒點時用）','openNetDiag()'),
     b('🧹 清除本機暫存（畫面怪怪的時候用）','clearLocalCache()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
@@ -2731,6 +2812,11 @@ function pwShift(n){
    只清這支手機裡的暫存，後端 Sheet 完全不動。
    ★ 有還沒送出的點班紀錄時會先擋下來 —— 那一筆清掉就真的不見了。 */
 async function clearLocalCache(){
+  if((state.audits||[]).length){
+    alert('有 '+state.audits.length+' 筆雙月盤點還沒送到後端，先送出再清。\n\n'
+      +'請到「急救車雙月效期盤點」重新按儲存。');
+    return;
+  }
   if(state.rcPending){
     alert('有一筆點班紀錄還沒送到後端，先送出再清。\n\n'
       +'請到完成畫面按「重新上傳」，或確認網路後再回來。');
@@ -2900,6 +2986,450 @@ function renderPrintWeek(){
     + '</div>';
 }
 
+/* ===================== 雙月效期盤點（紙本附件一）=====================
+   紙本【附件一 急救用品數量、效期查核表】：每 2／5／8／11 月的第 3~4 週，
+   由單位（專人）稽核一次急救車的「數量」與「有效期限」，再由單位主管確認。
+
+   跟每班點班是兩件不同的事，所以獨立一頁：
+     每班點班  → 東西在不在、數量對不對（21 班／週）
+     雙月盤點  → 效期還能不能用、備品量夠不夠（4 次／年）
+   混在一起的話，稽核要翻 84 張紙才找得到那 4 次。
+
+   ★ 「期限3個月內」那一格不用人工翻 —— 直接從 cart_expiry（附件三登錄的期限）
+     算出 90 天內到期的品項帶進來。這是把附件三的資料真正用起來的地方。 */
+const AUDIT_MONTHS=[2,5,8,11];
+const AUDIT_EXP_DAYS=90;                 // 紙本寫「期限 3 個月內」
+let CART_AUDIT=[];
+async function loadCartAudit(pre){
+  if(!API_URL&&!pre)return;
+  try{
+    const a=pre||await getJSON('table=cart_audit');
+    if(Array.isArray(a)) CART_AUDIT=a.map(o=>({
+      cartId   :cellOfRow(o,['車號','cartId']),
+      cartName :cellOfRow(o,['車名']),
+      year     :cellOfRow(o,['年度','年']),
+      month    :cellOfRow(o,['月份','月']),
+      qtyOK    :cellOfRow(o,['數量查核']),
+      qtyItems :cellOfRow(o,['數量異常品項']),
+      adjusted :cellOfRow(o,['已調整']),
+      expOK    :cellOfRow(o,['有效期限']),
+      expItems :cellOfRow(o,['近效期品項']),
+      action   :cellOfRow(o,['處理方式']),
+      by       :cellOfRow(o,['稽核人員']),
+      empId    :cellOfRow(o,['稽核員編']),
+      at       :cellOfRow(o,['稽核時間']),
+      stock    :cellOfRow(o,['備品量']),
+      stockNote:cellOfRow(o,['備品量說明']),
+      boss     :cellOfRow(o,['主管確認']),
+      bossId   :cellOfRow(o,['主管員編']),
+      bossAt   :cellOfRow(o,['主管確認時間']),
+      note     :cellOfRow(o,['備註'])
+    })).filter(x=>x.cartId&&x.year&&x.month);
+  }catch(e){console.error('讀雙月盤點失敗',e);}
+}
+// 取某台車某年某月那一格（後端可能有多列，取最後寫入的）
+function auditOf(sheetId,year,month){
+  const k=cartIdOf(sheetId), y=String(year), m=String(+month);
+  for(let i=CART_AUDIT.length-1;i>=0;i--){
+    const x=CART_AUDIT[i];
+    if(String(x.cartId||'').toUpperCase()===k&&String(x.year)===y&&String(+x.month)===m) return x;
+  }
+  // 本機剛送出、後端還沒回來的那一筆
+  const loc=(state.audits||[]).filter(x=>String(x.cartId||'').toUpperCase()===k
+    &&String(x.year)===y&&String(+x.month)===m);
+  return loc.length?Object.assign({_unsync:true},loc[loc.length-1]):null;
+}
+// 這一季該稽核的月份（2/5/8/11 之中「當月或最近一個已到的」）
+function auditCurMonth(){
+  const m=tpeParts().m;
+  let pick=AUDIT_MONTHS[0];
+  AUDIT_MONTHS.forEach(function(x){ if(x<=m) pick=x; });
+  return pick;
+}
+function auditCanEdit(){ return isBoss()||isCaishiLead()||isCaishi()||isWitnessRank(state.user); }
+function auditCanConfirm(){ return isBoss(); }
+function openCartAudit(sheetId){
+  if(!auditCanEdit()){
+    alert('雙月效期盤點開放給護理長、財管組長／負責人與有見證資格者。'); return; }
+  if(state.screen!=='cartAudit') state.caBack=state.screen||'home';
+  state.screen='cartAudit';
+  if(sheetId) state.caSheet=sheetId;
+  if(!state.caSheet||!SHEETS.some(function(s){return s.id===state.caSheet;}))
+    state.caSheet=(icSheets()[0]||{}).id||'';
+  if(!state.caYear) state.caYear=String(tpeParts().y);
+  if(!state.caMonth) state.caMonth=auditCurMonth();
+  state.caForm=null;
+  render();
+  loadBundle([['cart_audit'],['cart_expiry']]).then(function(){
+    if(state.screen==='cartAudit')render(); });
+}
+// 表單起始值：有紀錄就帶出來改，沒有就用期限資料算出預設
+function auditFormInit(){
+  const sid=state.caSheet, y=state.caYear, m=state.caMonth;
+  const cur=auditOf(sid,y,m);
+  const soon=expSoonOf(sid,AUDIT_EXP_DAYS);
+  if(cur) return {qtyOK:cur.qtyOK||'正確',qtyItems:cur.qtyItems||'',adjusted:cur.adjusted||'',
+    expOK:cur.expOK||'期限內',expItems:cur.expItems||'',action:cur.action||'',
+    stock:cur.stock||'適當',stockNote:cur.stockNote||'',note:cur.note||''};
+  return { qtyOK:'正確', qtyItems:'', adjusted:'',
+    // 90 天內有東西要到期 → 預設就勾「期限3個月內」，並把品項帶進去
+    expOK:soon.length?'期限3個月內':'期限內',
+    expItems:soon.map(x=>x.item+'('+(x.exp||'?')+')').join('、'),
+    action:'', stock:'適當', stockNote:'', note:'' };
+}
+function caForm(){ if(!state.caForm) state.caForm=auditFormInit(); return state.caForm; }
+function caSet(k,v){ caForm()[k]=v; render(); }
+function caSetSheet(v){ state.caSheet=v; state.caForm=null; render(); }
+function caSetMonth(v){ state.caMonth=+v; state.caForm=null; render(); }
+function caSetYear(v){ state.caYear=String(v); state.caForm=null; render(); }
+function caToggleAction(v){
+  const f=caForm();
+  const a=String(f.action||'').split('、').filter(Boolean);
+  const i=a.indexOf(v);
+  if(i>=0)a.splice(i,1); else a.push(v);
+  f.action=a.join('、'); render();
+}
+function caHasAction(v){ return String(caForm().action||'').split('、').indexOf(v)>=0; }
+async function auditSave(){
+  if(!auditCanEdit()){ alert('沒有權限'); return; }
+  const f=caForm(), sid=state.caSheet, s=sheetById(sid);
+  /* ★ 勾了「不正確」或「期限3個月內」就一定要寫品項 ——
+     不寫的話這張表等於只留下一個勾，事後查不出是什麼東西出問題。 */
+  if(f.qtyOK==='不正確'&&!String(f.qtyItems||'').trim()){
+    alert('數量勾了「不正確」，請寫出是哪些品項。'); return; }
+  if(f.expOK==='期限3個月內'&&!String(f.expItems||'').trim()){
+    alert('有效期限勾了「期限3個月內」，請寫出是哪些品項。'); return; }
+  if(f.expOK==='期限3個月內'&&!String(f.action||'').trim()){
+    alert('有近效期品項，請至少勾一個處理方式（更換／盡早使用／重新送消）。'); return; }
+  if(/增加|減少/.test(f.stock||'')&&!String(f.stockNote||'').trim()){
+    alert('備品量勾了增加或減少，請填數量。'); return; }
+  const at=tpeDTLocal().replace('T',' ');
+  const rec={cartId:cartIdOf(sid),cartName:s.name||'',year:String(state.caYear),month:String(state.caMonth),
+    qtyOK:f.qtyOK||'',qtyItems:f.qtyItems||'',adjusted:f.adjusted||'',
+    expOK:f.expOK||'',expItems:f.expItems||'',action:f.action||'',
+    by:state.user?state.user.name:'',empId:state.user?state.user.id:'',at:at,
+    stock:f.stock||'',stockNote:f.stockNote||'',note:f.note||''};
+  state.audits=(state.audits||[]).filter(x=>!(String(x.cartId).toUpperCase()===rec.cartId.toUpperCase()
+    &&String(x.year)===rec.year&&String(+x.month)===String(+rec.month)));
+  state.audits.push(rec); store.save(); render();       // 先顯示（體感快），再送後端
+  if(!auditWriteOK()){
+    alert('已存在這支手機。\n\n後端要更新到 '+EXPECT_API_VER+' 並「重新部署為新版本」才會寫進 Sheet。');
+    return; }
+  const r=await owedWrite('cart_audit_set',rec);
+  if(r&&r.ok){ toast('已儲存'); await loadCartAudit();
+    state.audits=(state.audits||[]).filter(x=>!(String(x.cartId).toUpperCase()===rec.cartId.toUpperCase()
+      &&String(x.year)===rec.year&&String(+x.month)===String(+rec.month)));
+    store.save(); if(state.screen==='cartAudit')render(); }
+  else alert('寫入後端失敗，這筆先留在手機裡。\n'+((r&&r.error)||''));
+}
+/* v13 才有 cart_audit_set。舊版 doPost 遇到不認識的任務會掉進 AI 分支，
+   等於白打一次 Gemini 額度 —— 所以先確認後端版本夠新才送。 */
+function auditWriteOK(){ return apiVerNum()>=13; }
+async function auditConfirm(){
+  if(!auditCanConfirm()){ alert('僅限護理長／副護理長確認。'); return; }
+  const cur=auditOf(state.caSheet,state.caYear,state.caMonth);
+  if(!cur){ alert('這一格還沒有稽核紀錄，先請稽核人員填寫。'); return; }
+  if(!confirm('要以「'+(state.user.name)+'」確認 '+state.caYear+' 年 '+state.caMonth+' 月的盤點嗎？'))return;
+  if(!auditWriteOK()){ alert('後端要更新到 '+EXPECT_API_VER+' 才能寫確認。'); return; }
+  const r=await owedWrite('cart_audit_confirm',{cartId:cartIdOf(state.caSheet),
+    year:String(state.caYear),month:String(state.caMonth),
+    by:state.user.name,empId:state.user.id,at:tpeDTLocal().replace('T',' ')});
+  if(r&&r.ok){ toast('已確認'); await loadCartAudit(); if(state.screen==='cartAudit')render(); }
+  else alert('確認失敗：'+((r&&r.error)||''));
+}
+function caCell(v){ return v?esc(v):''; }
+function caChk(on,label){ return (on?'☑':'☐')+' '+label; }
+function renderCartAudit(){
+  const sid=state.caSheet, s=sheetById(sid), y=state.caYear, mSel=+state.caMonth;
+  const f=caForm();
+  const rows=AUDIT_MONTHS.map(function(m){ return {m:m,a:auditOf(sid,y,m)}; });
+  const soon=expSoonOf(sid,AUDIT_EXP_DAYS);
+  const expFb=expIsFallback(sid);
+  const noExp=expListOf(sid).length===0;
+
+  // ── 紙本版面（四個月份一欄一個月）
+  const th=rows.map(function(r){
+    return '<th>'+r.m+' 月'+(r.m===mSel?'<span class="ca-now">編輯中</span>':'')+'</th>'; }).join('');
+  const line=function(fn){ return rows.map(function(r){ return '<td>'+fn(r.a,r.m)+'</td>'; }).join(''); };
+  const page='<section class="pw-page">'
+    + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
+    + '<div class="pw-ttl">急救用品數量、效期查核表<span class="ca-att">（附件一）</span></div>'
+    + '<div class="pw-unit">'+esc(s.name||'')+'</div>'
+    + '<div class="pw-meta">年度 '+esc(y)+'　雙月查核（2／5／8／11 月的第 3~4 週）</div></div>'
+    + '<table class="ca-tbl"><colgroup><col style="width:112px"><col><col><col><col></colgroup>'
+    + '<thead><tr><th>月份<br><span class="pw-h2">雙月查核項目</span></th>'+th+'</tr></thead><tbody>'
+    + '<tr><th>急救用品<br>數量查核</th>'
+    +   line(function(a){ if(!a) return '<span class="ca-none">未稽核</span>';
+          return caChk(a.qtyOK==='正確','正確')+'<br>'+caChk(a.qtyOK==='不正確','不正確')
+            + (a.qtyItems?('<div class="ca-it">品項：'+esc(a.qtyItems)+'</div>'):'')
+            + '<div class="ca-gy">'+caChk(!!a.adjusted,'已調整為正確數量')+'</div>'; })+'</tr>'
+    + '<tr><th>急救用品<br>有效期限</th>'
+    +   line(function(a){ if(!a) return '<span class="ca-none">未稽核</span>';
+          return caChk(a.expOK==='期限內','期限內')+'<br>'+caChk(a.expOK==='期限3個月內','期限 3 個月內')
+            + (a.expItems?('<div class="ca-it">品項：'+esc(a.expItems)+'</div>'):'')
+            + '<div class="ca-gy">'
+            + ['更換效期較長久之用品','盡早使用','重新送消'].map(function(x){
+                return caChk(String(a.action||'').indexOf(x)>=0,x); }).join('<br>')
+            + '</div>'; })+'</tr>'
+    + '<tr><th>稽核人員<br>簽名</th>'
+    +   line(function(a){ if(!a||!a.by) return '';
+          return '<div class="ca-sign">'+esc(a.by)+'</div><div class="ca-at">'+esc(a.at||'')+'</div>'
+            + (a._unsync?'<div class="ca-un">⚠ 未上傳</div>':''); })+'</tr>'
+    + '<tr><th>備品量<br>適當性</th>'
+    +   line(function(a){ if(!a) return '<span class="ca-none">未稽核</span>';
+          const st=String(a.stock||'');
+          return caChk(st==='適當','適當')+'<br>'+caChk(/增加/.test(st),'增加數量：'+(/增加/.test(st)?esc(a.stockNote||''):''))
+            + '<br>'+caChk(/減少/.test(st),'減少數量：'+(/減少/.test(st)?esc(a.stockNote||''):'')); })+'</tr>'
+    + '<tr><th>單位主管<br>確認</th>'
+    +   line(function(a){ if(!a||!a.boss) return '';
+          return '<div class="ca-stamp">'+esc(a.boss)+'<div class="ca-stamp-s">已確認</div>'
+            + '<div class="ca-stamp-d">'+esc(pwSignTime({'簽核時間':a.bossAt}))+'</div></div>'; })+'</tr>'
+    + '</tbody></table>'
+    + '<div class="pw-foot">＊反灰處表示異常時，後續處理方式。<br>'
+    + '＊每 2、5、8、11 月的第 3~4 週，由單位進行急救車急救物品有效期限稽核，'
+    + '並記錄於「急救用品數量、效期查核表」。<br>'
+    + '資料來源：cart_audit（稽核紀錄）・cart_expiry（附件三效期登錄）　／　列印 '
+    + esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
+    + '</section>';
+
+  // ── 填寫表單
+  const radio=function(k,v,label){
+    return '<label class="ca-r'+(f[k]===v?' on':'')+'" onclick="caSet(\''+k+'\',\''+v+'\')">'
+      + (f[k]===v?'◉':'○')+' '+esc(label)+'</label>'; };
+  const cur=auditOf(sid,y,mSel);
+  const soonList=soon.length
+    ? '<div class="ca-soon">'+AUDIT_EXP_DAYS+' 天內到期（自動從附件三效期登錄算出，共 '+soon.length+' 項）：<br>'
+      + soon.map(x=>'・'+esc(x.item)+'　'+esc(expText(x))).join('<br>')+'</div>'
+    : (noExp?'<div class="ca-soon ca-soon-x">這台車還沒有效期資料 —— 「期限 3 個月內」要自己填。'
+        + '要自動算的話，先在點班表最上方「上鎖物品期限」把有效期限登錄一次。</div>'
+      :'<div class="ca-soon">'+AUDIT_EXP_DAYS+' 天內沒有品項到期（依附件三效期登錄）。</div>');
+
+  const form='<div class="card">'
+    + '<div class="ca-h">填寫 '+esc(y)+' 年 '+mSel+' 月盤點'
+    +   (cur?'<span class="ca-tag">已有紀錄，送出即覆蓋</span>':'')+'</div>'
+    + (expFb&&!noExp?'<div class="ca-soon ca-soon-x">效期資料目前用的是<b>紙本附件三的內建值</b>'
+        + '（後端 cart_expiry 還沒資料）。核對過實物後請在 App 裡登錄一次。</div>':'')
+    + soonList
+    + '<div class="ca-f"><div class="ca-fl">急救用品數量查核</div>'
+    +   radio('qtyOK','正確','正確')+radio('qtyOK','不正確','不正確')
+    +   (f.qtyOK==='不正確'
+        ?'<textarea class="ca-ta" rows="2" placeholder="哪些品項數量不對？（必填）"'
+          +' oninput="caForm().qtyItems=this.value">'+esc(f.qtyItems||'')+'</textarea>'
+          +'<label class="ca-r'+(f.adjusted?' on':'')+'" onclick="caSet(\'adjusted\',\''
+          +(f.adjusted?'':'是')+'\')">'+(f.adjusted?'☑':'☐')+' 已調整為正確數量</label>':'')
+    + '</div>'
+    + '<div class="ca-f"><div class="ca-fl">急救用品有效期限</div>'
+    +   radio('expOK','期限內','期限內')+radio('expOK','期限3個月內','期限 3 個月內')
+    +   (f.expOK==='期限3個月內'
+        ?'<textarea class="ca-ta" rows="3" placeholder="哪些品項快到期？（必填，上面清單可直接用）"'
+          +' oninput="caForm().expItems=this.value">'+esc(f.expItems||'')+'</textarea>'
+          +'<div class="ca-fl2">處理方式（可多選，必填）</div>'
+          +['更換效期較長久之用品','盡早使用','重新送消'].map(function(x){
+            return '<label class="ca-r'+(caHasAction(x)?' on':'')+'" onclick="caToggleAction(\''+x+'\')">'
+              +(caHasAction(x)?'☑':'☐')+' '+esc(x)+'</label>'; }).join('')
+        :'')
+    + '</div>'
+    + '<div class="ca-f"><div class="ca-fl">備品量適當性</div>'
+    +   radio('stock','適當','適當')+radio('stock','增加數量','增加數量')+radio('stock','減少數量','減少數量')
+    +   (/增加|減少/.test(f.stock||'')
+        ?'<input class="ca-in" placeholder="數量（必填）" value="'+esc(f.stockNote||'')+'"'
+          +' oninput="caForm().stockNote=this.value">':'')
+    + '</div>'
+    + '<div class="ca-f"><div class="ca-fl">備註（選填）</div>'
+    +   '<textarea class="ca-ta" rows="2" oninput="caForm().note=this.value">'+esc(f.note||'')+'</textarea>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'
+    +   '<button class="btn btn-primary" onclick="auditSave()">💾 儲存稽核（'
+    +     esc(state.user?state.user.name:'')+'）</button>'
+    +   (auditCanConfirm()
+        ?'<button class="btn btn-ghost" onclick="auditConfirm()">🖋 主管確認</button>':'')
+    +   '<button class="btn btn-ghost" onclick="state.caForm=null;render()">重設</button>'
+    + '</div>'
+    + (!auditWriteOK()
+      ?'<div class="ca-soon ca-soon-x">後端目前是 '+esc(API_VER_SEEN||'（讀不到）')+'，'
+        +'雙月盤點要 '+EXPECT_API_VER+' 才寫得進 Sheet。按儲存會先留在這支手機。</div>':'')
+    + '</div>';
+
+  const shOpts=icSheets().map(function(x){
+    return '<option value="'+x.id+'"'+(x.id===sid?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('');
+  const yNow=tpeParts().y;
+  const yOpts=[yNow-1,yNow,yNow+1].map(function(v){
+    return '<option value="'+v+'"'+(String(v)===String(y)?' selected':'')+'>'+v+' 年</option>'; }).join('');
+  const mOpts=AUDIT_MONTHS.map(function(v){
+    return '<option value="'+v+'"'+(v===mSel?' selected':'')+'>'+v+' 月</option>'; }).join('');
+  const sel='padding:9px 10px;border:1px solid var(--line);border-radius:9px;'
+    + 'font-family:inherit;font-size:14px;background:transparent;color:inherit';
+
+  $app.innerHTML=
+    '<div class="topbar noprint"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
+    + '<div><div class="title">📅 急救車雙月效期盤點</div><div class="sub">'
+    +   esc(s.name||'')+' · '+esc(y)+' 年 · 附件一</div></div>'
+    + '<button class="back" onclick="state.screen=\'' + esc(state.caBack||'home') + '\';render()">返回</button></div></div>'
+    + '<div class="screen wide">'
+    + '<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +   '<select onchange="caSetSheet(this.value)" style="'+sel+'">'+shOpts+'</select>'
+    +   '<select onchange="caSetYear(this.value)" style="'+sel+'">'+yOpts+'</select>'
+    +   '<select onchange="caSetMonth(this.value)" style="'+sel+'">'+mOpts+'</select>'
+    +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
+    + '</div>'
+    + form
+    + page
+    + '</div>';
+}
+
+/* ===================== 後端連線診斷 =====================
+   為什麼要有這一頁：2026-09-15 出現「Sheet 裡明明有資料，App 上全部顯示未點／未登錄」。
+   這種情況用眼睛看畫面永遠查不出來 —— 畫面只會安靜地顯示本機的預設值，不會報錯。
+   所以這一頁直接把每一條線路測一次，把 HTTP 狀態與回應開頭原樣印出來：
+   截一張圖就知道是「沒重新部署」、「誰可以存取設成只有我自己」、
+   「Service Worker 把請求吃掉」還是「網路被擋」。 */
+let ND=null;                        // 診斷結果
+function ndRow(name,ok,detail,hint){ return {name:name,ok:ok,detail:String(detail||''),hint:hint||''}; }
+async function ndFetchText(url,ms){
+  const t0=Date.now();
+  const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
+  const timer=ctl?setTimeout(function(){ try{ctl.abort();}catch(e){} },ms||15000):null;
+  try{
+    const r=await fetch(url,Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
+    const txt=await r.text();
+    if(timer)clearTimeout(timer);
+    return { ok:r.ok, status:r.status, type:r.headers.get('content-type')||'', body:txt, ms:Date.now()-t0 };
+  }catch(e){
+    if(timer)clearTimeout(timer);
+    return { ok:false, status:0, type:'', body:'', err:String(e&&e.message||e), ms:Date.now()-t0 };
+  }
+}
+function openNetDiag(){ state.screen='netDiag'; ND=null; render(); runNetDiag(); }
+async function runNetDiag(){
+  const rows=[]; const add=function(){ rows.push.apply(rows,arguments); ND={rows:rows,running:true};
+    if(state.screen==='netDiag')render(); };
+
+  // ① 裝置基本狀況
+  const t=tpeParts();
+  const devNow=new Date();
+  const tpeStr=t.y+'-'+p2(t.m)+'-'+p2(t.d)+' '+p2(t.h)+':'+p2(t.mi);
+  add(ndRow('前端版本',true,APP_VER));
+  add(ndRow('台北時間 / 裝置時間',true,tpeStr+' ／ '+fmtDTLocal(devNow).replace('T',' ')
+    +'（裝置時區 '+(Intl.DateTimeFormat().resolvedOptions().timeZone||'?')+'）'));
+  add(ndRow('瀏覽器認為有網路',navigator.onLine!==false,navigator.onLine===false?'離線':'連線中',
+    navigator.onLine===false?'手機沒網路，先連上 Wi-Fi 或行動網路':''));
+
+  // ② Service Worker（吃掉請求的頭號嫌犯）
+  try{
+    if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      const names=(window.caches&&caches.keys)?await caches.keys():[];
+      add(ndRow('Service Worker',true,
+        (regs.length?(regs.length+' 個已註冊'):'沒有註冊')+'　快取：'+(names.length?names.join('、'):'（空）'),
+        names.length?'快取不應該留著 index.html。若一直開到舊版，按下面「清除 SW 與快取」':''));
+    }else{ add(ndRow('Service Worker',true,'這個瀏覽器不支援（不影響）')); }
+  /* ★ 查不到 Service Worker 不是故障（file:// 或私密瀏覽會直接拒絕），
+       標成 ❌ 只會害她以為找到原因。只記事實，不判定失敗。 */
+  }catch(e){ add(ndRow('Service Worker',true,'這個環境查不到（'+String(e&&e.name||e)+'），不影響判讀')); }
+
+  // ③ 後端 ?diag=1
+  if(!API_URL){ add(ndRow('後端網址',false,'index.html 裡的 API_URL 是空的','把 /exec 網址填進 API_URL')); }
+  else{
+    add(ndRow('後端網址',true,API_URL.replace(/^https:\/\/script\.google\.com/,'…')));
+    const d=await ndFetchText(API_URL+'?diag=1&_='+Date.now());
+    let ver='', jsonOK=false;
+    try{ const j=JSON.parse(d.body); ver=String(j&&j.version||''); jsonOK=true; }catch(e){}
+    const isHtml=/^\s*<(!doctype|html)/i.test(d.body||'');
+    add(ndRow('後端 ?diag=1',
+      !!(d.ok&&jsonOK&&ver),
+      'HTTP '+d.status+'　'+d.ms+'ms　'+(ver?('版本 '+ver):(isHtml?'回傳的是網頁不是資料':'解析不出版本'))
+        +(d.err?('　錯誤：'+d.err):'')+'\n'+String(d.body||'').slice(0,160),
+      isHtml?'這是 Google 的登入／授權頁 —— 部署時「誰可以存取」要選【任何人】'
+        : (!d.status?'完全連不到：網路被擋，或 Service Worker 把請求吃掉了'
+        : (ver&&ver!==EXPECT_API_VER?('後端是 '+ver+'，程式預期 '+EXPECT_API_VER+' —— GS 要「重新部署為新版本」'):''))));
+
+    // ④ 後端批次讀取（App 開啟時真正用的那一支）
+    const q='tables='+encodeURIComponent('items,rollcall_active,rollcall_log:3,fridge_temp:3,o2_check:3');
+    const b=await ndFetchText(API_URL+'?'+q+'&_='+Date.now(),20000);
+    let j2=null; try{ j2=JSON.parse(b.body); }catch(e){}
+    const cnt=function(k){ return (j2&&Array.isArray(j2[k]))?j2[k].length:-1; };
+    const bundleOK=!!(j2&&!Array.isArray(j2)&&j2._version);
+    add(ndRow('後端批次讀取 ?tables=',
+      bundleOK,
+      'HTTP '+b.status+'　'+b.ms+'ms　'+(bundleOK?('_version '+j2._version):'沒有回傳 _version（會退回逐張抓）')
+        +'\nitems '+cnt('items')+'　rollcall_active '+cnt('rollcall_active')
+        +'　rollcall_log(3天) '+cnt('rollcall_log')
+        +'　fridge_temp(3天) '+cnt('fridge_temp')+'　o2_check(3天) '+cnt('o2_check')
+        +(b.err?('\n錯誤：'+b.err):''),
+      (bundleOK&&cnt('rollcall_active')===0&&cnt('rollcall_log')===0)
+        ? '連得到、但後端回 0 筆 —— 這支 /exec 綁到的是另一份試算表，或分頁名稱不對'
+        : (!bundleOK&&b.status?'後端版本太舊，沒有 ?tables=':'')));
+
+    // ⑤ 這一支 /exec 綁到哪份試算表
+    if(j2&&j2._ss) add(ndRow('後端綁定的試算表',true,String(j2._ss)));
+  }
+
+  // ⑥ 排班（Firebase）—— 跟後端是兩條不同的線，一起壞＝共同原因
+  const mk=t.y+'-'+p2(t.m);
+  const f=await ndFetchText(SCHED_DB+'/schedules/'+encodeURIComponent(mk)+'.json',12000);
+  let has=false; try{ const o=JSON.parse(f.body); has=!!(o&&typeof o==='object'); }catch(e){}
+  add(ndRow('排班系統（Firebase）'+mk,!!(f.ok&&has),
+    'HTTP '+f.status+'　'+f.ms+'ms　'+(has?'有拿到班表':'沒有資料')+(f.err?('　錯誤：'+f.err):''),
+    (!f.status)?'跟後端一起連不到 → 共同原因是 Service Worker 或網路，不是 GS 設定':''));
+
+  /* ⑦ 現在記憶體裡到底有多少資料（畫面顯示的就是這些）
+     ★ 這些全域變數宣告在本函式後面，用 typeof 包一層，
+       萬一以後搬動順序也不會整頁掛掉（TDZ 踩過一次就夠了）。 */
+  const n=function(v){ try{ return Array.isArray(v)?v.length:'?'; }catch(e){ return '?'; } };
+  add(ndRow('App 手上的資料',true,
+    'items '+n(typeof ITEMS!=='undefined'&&ITEMS)
+    +'　rollcall_log '+n(typeof SIGNLOG!=='undefined'&&SIGNLOG)
+    +'　進行中 '+n(typeof ACTIVE!=='undefined'&&ACTIVE)
+    +'　冰箱 '+n(typeof FRIDGELOG!=='undefined'&&FRIDGELOG)
+    +'　氧氣 '+n(typeof O2LOG!=='undefined'&&O2LOG)
+    +'　異常 '+n(typeof ISSUES!=='undefined'&&ISSUES)
+    +'\n批次讀取模式：'+(BUNDLE_OK?'正常':'已退回逐張抓')
+    +'　上次同步：'+((typeof SYNC_AT!=='undefined'&&SYNC_AT)
+        ?fmtLocalFromISO(new Date(SYNC_AT).toISOString()):'尚未')));
+
+  ND={rows:rows,running:false};
+  if(state.screen==='netDiag')render();
+}
+async function ndKillSW(){
+  if(!confirm('要移除 Service Worker 並清空所有快取嗎？\n\n'
+    +'這只動這支手機，後端 Sheet 完全不動。\n清完會自動重新載入。')) return;
+  try{ if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations){
+    const regs=await navigator.serviceWorker.getRegistrations();
+    for(const r of regs){ try{ await r.unregister(); }catch(e){} } } }catch(e){}
+  try{ if(window.caches&&caches.keys){ const ks=await caches.keys();
+    for(const k of ks){ try{ await caches.delete(k); }catch(e){} } } }catch(e){}
+  try{ localStorage.removeItem('ed_bundle1'); }catch(e){}
+  location.reload();
+}
+function renderNetDiag(){
+  const rows=(ND&&ND.rows)||[];
+  const bad=rows.filter(function(r){ return !r.ok; });
+  const html=rows.map(function(r){
+    return '<div class="nd-row"><div class="nd-ic">'+(r.ok?'✅':'❌')+'</div>'
+      + '<div class="nd-b"><div class="nd-n">'+esc(r.name)+'</div>'
+      + '<pre class="nd-d">'+esc(r.detail)+'</pre>'
+      + (r.hint?('<div class="nd-h">→ '+esc(r.hint)+'</div>'):'')+'</div></div>';
+  }).join('');
+  $app.innerHTML=
+    '<div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
+    + '<div><div class="title">🩺 後端連線診斷</div><div class="sub">'
+    +   (ND?(ND.running?'檢查中…':(bad.length?('發現 '+bad.length+' 個問題'):'全部正常')):'準備中…')+'</div></div>'
+    + '<button class="back" onclick="state.screen=\'adminHub\';render()">返回</button></div></div>'
+    + '<div class="screen">'
+    + '<div class="card" style="display:flex;gap:8px;flex-wrap:wrap">'
+    +   '<button class="btn btn-primary" onclick="runNetDiag()">🔄 重新檢查</button>'
+    +   '<button class="btn btn-ghost" onclick="ndKillSW()">🧹 清除 SW 與快取</button>'
+    +   '<button class="btn btn-ghost" onclick="clearLocalCache()">清除本機暫存</button>'
+    + '</div>'
+    + '<div class="card" style="padding:4px 0">'+(html||'<div style="padding:14px">檢查中…</div>')+'</div>'
+    + '<div class="card" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
+    +   '有 ❌ 的那一行下面會寫「→ 該怎麼辦」。把整頁截圖給我最快。<br>'
+    +   '最常見的三個原因：①GS 只按了儲存沒有<b>重新部署為新版本</b>　'
+    +   '②部署時「誰可以存取」不是<b>任何人</b>　③Service Worker 把請求吃掉（按上面清除）。'
+    + '</div>'
+    + '</div>';
+}
+
 /* ===================== 逐項查看（急救車）=====================
    為什麼急救車要逐項、別的表不用：
    急救車是「用到的時候沒有就會死人」的那一台，稽核問的不是「點了幾項」
@@ -2955,9 +3485,9 @@ function icIndex(sheetId,days){
   return out;
 }
 // 某一格（某班、某項）的狀態
-function icCell(cell,item){
+function icCell(sheetId,cell,item){
   if(!cell) return 'na';                                  // 這一班沒點班
-  if(/封籤/.test(cell.assign||'') && isLockedItem(item)) return 'seal';
+  if(/封籤/.test(cell.assign||'') && lockedOn(sheetId,item)) return 'seal';
   if(!cell.log) return 'nolog';                           // v13 之前的舊紀錄
   const nk=normItem(item.name);
   if(cell.log.bad[nk]) return 'bad';
@@ -2973,6 +3503,9 @@ function icSheets(){
   const c=SHEETS.filter(function(s){ return /急救車|急救推車/.test(s.name||'')||s.mode==='seal'; });
   return c.length?c:SHEETS.slice();
 }
+const IC_SPANS=[3,5,7];                  // 可選的天數（紙本附件二是 7 天 × N/D/E）
+function icSpan(){ const n=+state.icSpan; return IC_SPANS.indexOf(n)>=0?n:5; }
+function icSetSpan(n){ state.icSpan=n; render(); }
 function openItemCheck(sheetId){
   if(!can('record.print')){ alert('逐項查看開放給主管與各班 Leader（小組長以上）。'); return; }
   if(state.screen!=='itemCheck') state.icBack=state.screen||'home';
@@ -2980,81 +3513,115 @@ function openItemCheck(sheetId){
   if(sheetId) state.icSheet=sheetId;
   if(!state.icSheet||!SHEETS.some(function(s){return s.id===state.icSheet;}))
     state.icSheet=(icSheets()[0]||{}).id||'';
-  if(!state.icDate) state.icDate=todayISO();
+  if(!state.icDate) state.icDate=todayISO();       // ★ icDate＝區間的「最後一天」
   render();
   loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff']]).then(function(){
     if(state.screen==='itemCheck')render(); });
 }
-function icMove(n){
+// 翻頁一次移動一整段（3／5／7 天），不會有重疊看不完的問題
+function icMove(dir){
   const d=parseISO(state.icDate||todayISO());
-  d.setDate(d.getDate()+n); state.icDate=fmtISO(d); render();
+  d.setDate(d.getDate()+dir*icSpan()); state.icDate=fmtISO(d); render();
+}
+// 區間＝以 icDate 為最後一天，往前算 N 天
+function icDays(){
+  const end=parseISO(state.icDate||todayISO()), n=icSpan(), a=[];
+  for(let i=n-1;i>=0;i--){ const d=new Date(end.getFullYear(),end.getMonth(),end.getDate()-i); a.push(d); }
+  return a;
 }
 function renderItemCheck(){
   const sid=state.icSheet, s=sheetById(sid);
-  const ymd=state.icDate||todayISO(), day=parseISO(ymd);
-  const mon=weekMonday(day), days=weekDays(mon);
-  const wk=isoWeek(mon), so=pwSignoff(mon);      // 簽核與每週點班紀錄共用同一筆
+  const days=icDays(), n=days.length;
+  const first=days[0], last=days[n-1];
+  /* 簽核戳記依「區間最後一天所在的那一週」取，跟每週點班紀錄共用同一筆 ——
+     兩張表是同一次審閱，不可以各簽一次。 */
+  const mon=weekMonday(last), wk=isoWeek(mon), so=pwSignoff(mon);
   const idx=icIndex(sid,days);
   const items=itemsAllOf(sid,null);
-  const wkLabel=fmtISO(days[0]).replace(/-/g,'/')+' ～ '+fmtISO(days[6]).replace(/-/g,'/');
+  const seal=isSealSheet(sid);
+  const label=fmtISO(first).replace(/-/g,'/')+' ～ '+fmtISO(last).replace(/-/g,'/');
 
-  // 本週實際有點班的班數（分母只算真的有人點的班，不然天天都是 0/21）
-  const shiftKeys=[];
+  // 區間內實際有人點班的班（統計欄的分母；不然沒排班的班會讓每一項都變 0）
+  const keys=[];
   days.forEach(function(d){ PW_SHIFTS.forEach(function(p){
-    const k=fmtISO(d)+'|'+p[0]; if(idx[k]) shiftKeys.push(k); }); });
-
-  const dayCells=PW_SHIFTS.map(function(p){ return idx[ymd+'|'+p[0]]||null; });
-  const noItemLog=dayCells.filter(Boolean).length>0
-                && dayCells.filter(function(c){ return c&&c.log; }).length===0;
+    const k=fmtISO(d)+'|'+p[0]; if(idx[k]) keys.push(k); }); });
+  const cells=keys.length;
+  // 有紀錄但完全沒有逐項資料 → 這些班是 v13 部署前點的
+  const oldOnly=cells>0 && keys.every(function(k){ return !idx[k].log; });
 
   // 依類型分組（器械／耗材／藥品），組內維持 Sheet 的原始順序
   const order=[], group={};
   items.forEach(function(o){ const t=o.type||'其他';
     if(!group[t]){ group[t]=[]; order.push(t); } group[t].push(o); });
 
+  const NCOL=1+n*3+1;
   let body='';
   order.forEach(function(t){
-    body+='<tr><td class="ic-grp" colspan="5">'+esc(t)+'（'+group[t].length+' 項）</td></tr>';
+    body+='<tr><td class="ic-grp" colspan="'+NCOL+'">'+esc(t)+'（'+group[t].length+' 項）</td></tr>';
     body+=group[t].map(function(o){
-      const tds=dayCells.map(function(c){
-        const m=IC_MARK[icCell(c,o)];
-        return '<td class="'+m[1]+'" title="'+esc(m[2])+'">'+m[0]+'</td>';
-      }).join('');
-      let seen=0;
-      shiftKeys.forEach(function(k){ if(['ok','seal'].indexOf(icCell(idx[k],o))>=0) seen++; });
-      const n=shiftKeys.length;
-      const wk=n?('<span class="ic-wk '+(seen<n?'ic-wk-lo':'')+'">'+seen+'/'+n+'</span>'):'—';
+      let seen=0, tds='';
+      days.forEach(function(d){
+        const ymd=fmtISO(d);
+        PW_SHIFTS.forEach(function(p,pi){
+          const st=icCell(sid,idx[ymd+'|'+p[0]]||null,o);
+          const m=IC_MARK[st];
+          if(st==='ok'||st==='seal') seen++;
+          tds+='<td class="'+m[1]+(pi===2?' ic-dend':'')+'" title="'
+             + esc(ymd+' '+p[1]+'：'+m[2])+'">'+m[0]+'</td>';
+        });
+      });
+      const stat=cells?('<span class="ic-wk '+(seen<cells?'ic-wk-lo':'')+'">'+seen+'/'+cells+'</span>'):'—';
       return '<tr><th class="ic-it">'+esc(o.name)
            + (o.qty?('<span class="ic-qty">×'+esc(o.qty)+'</span>'):'')
-           + (isLockedItem(o)?'<span class="ic-lk">🔒上鎖</span>':'')
-           + '</th>'+tds+'<td>'+wk+'</td></tr>';
+           + (lockedOn(sid,o)?'<span class="ic-lk">🔒</span>':'')
+           + '</th>'+tds+'<td class="ic-sum">'+stat+'</td></tr>';
     }).join('');
   });
 
-  const hdr=PW_SHIFTS.map(function(p){
-    const c=idx[ymd+'|'+p[0]];
-    return '<th>'+p[1]+' '+p[0]+'<br><span class="pw-h2">'
-         + (c?(esc(c.by||'')+' '+c.done+'/'+c.total):'未點班')+'</span></th>';
+  /* 兩層表頭：上排日期（跨 3 欄）、下排 N/D/E。
+     紙本附件二就是這個排法，人員與稽核都認得。 */
+  let h1='<tr><th class="ic-it" rowspan="2">品項</th>';
+  days.forEach(function(d){
+    h1+='<th class="ic-dh ic-dend" colspan="3">'+(d.getMonth()+1)+'/'+d.getDate()
+      + '<span class="ic-dw">'+'日一二三四五六'.charAt(d.getDay())+'</span></th>';
+  });
+  h1+='<th class="ic-sum" rowspan="2">合計<span class="ic-dw">已點/班</span></th></tr>';
+  let h2='<tr>';
+  days.forEach(function(d){
+    const ymd=fmtISO(d);
+    PW_SHIFTS.forEach(function(p,pi){
+      const c=idx[ymd+'|'+p[0]];
+      h2+='<th class="ic-sh'+(pi===2?' ic-dend':'')+(c?'':' ic-sh-off')+'" title="'
+        + esc(c?(String(c.by||'')+' '+c.done+'/'+c.total):'未點班')+'">'+p[0]+'</th>';
+    });
+  });
+  h2+='</tr>';
+
+  // 誰點的：格子裡塞不下，改成一列「日期：N 誰／D 誰／E 誰」
+  const whoRows=days.map(function(d){
+    const ymd=fmtISO(d);
+    const who=PW_SHIFTS.map(function(p){
+      const c=idx[ymd+'|'+p[0]];
+      return p[0]+' '+(c?(String(c.by||'(未署名)')+' '+c.done+'/'+c.total):'—');
+    }).join('　');
+    return '<div class="ic-who-r"><b>'+(d.getMonth()+1)+'/'+d.getDate()+'</b>　'+esc(who)+'</div>';
   }).join('');
 
   const page='<section class="pw-page">'
     + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
     + '<div class="pw-ttl">急救車逐項點班查核表</div>'
     + '<div class="pw-unit">'+esc(s.name||'')+'</div>'
-    + '<div class="pw-meta">'+esc(ymd.replace(/-/g,'/'))+'（'
-    + '日一二三四五六'.charAt(day.getDay())+'）　本週 '+esc(wkLabel)+'</div></div>'
-    + (noItemLog?'<div class="ic-warn">這一天的紀錄是<b>舊版後端（v13 之前）</b>寫的，'
+    + '<div class="pw-meta">'+esc(label)+'（'+n+' 天 × 三班）　'
+    + (seal?'本車<b>有上鎖</b>：封籤還在的班，上鎖品項由封籤代表'
+           :'本車<b>無上鎖</b>：每班全品項逐項點')+'</div></div>'
+    + (oldOnly?'<div class="ic-warn">這個區間的紀錄都是<b>舊版後端（v13 之前）</b>寫的，'
         + '只存了「完成幾項」，沒有逐項資料 —— 所以格子是「·」。<br>'
         + '不會用完成項數去反推打勾（那樣印出來的表是假的）。'
         + 'v13 部署之後點的班才有逐項紀錄。</div>':'')
-    // 品項欄不要吃掉整張表的寬度，四個狀態欄各 14%（A4 與手機都塞得下）
-    + '<table class="ic-tbl"><colgroup><col style="width:44%"><col style="width:14%">'
-    + '<col style="width:14%"><col style="width:14%"><col style="width:14%"></colgroup>'
-    + '<thead><tr><th class="ic-it">品項</th>'+hdr+'<th>本週<br><span class="pw-h2">已點/班數</span></th></tr></thead>'
-    + '<tbody>'+(body||'<tr><td colspan="5" class="pw-empty" style="height:40px">這張表沒有品項資料</td></tr>')+'</tbody></table>'
-    /* ★ 簽核戳記跟每週點班紀錄共用同一筆（rollcall_signoff 的當週那一列）。
-       兩張表是同一週的同一次審閱，不可以各簽一次 —— 那會變成兩個不一樣的
-       簽核時間，稽核一比就對不起來。在「主管簽核 · 完成總表」按過就會自動印出來。 */
+    + '<table class="ic-tbl ic-dense"><thead>'+h1+h2+'</thead>'
+    + '<tbody>'+(body||'<tr><td colspan="'+NCOL+'" class="pw-empty" style="height:36px">這張表沒有品項資料</td></tr>')
+    + '</tbody></table>'
+    + '<div class="ic-sec">各班點班人員</div><div class="ic-who">'+whoRows+'</div>'
     + '<div class="pw-sign">'
     +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱／簽章（週次 '+esc(wk)+'）</div>'
     +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已審閱</div>'
@@ -3062,9 +3629,10 @@ function renderItemCheck(){
             :'<div class="pw-nosign">本週尚未審閱（到「主管簽核 · 完成總表」按簽核後就會印出戳記）</div>')
     +   '</div>'
     + '</div>'
-    + '<div class="pw-foot">✓ 已點　✗ 異常　— 未點　🔒 封籤代表（上鎖品項該班不必逐項點）　'
-    + '· 無逐項資料（舊版後端）　? 名單過長已截斷<br>'
-    + '「本週」欄位＝這一項在本週<b>實際有人點班的 '+shiftKeys.length+' 個班</b>當中被點到幾次。<br>'
+    + '<div class="pw-foot">✓ 已點　✗ 異常　— 未點　'
+    + (seal?'🔒 封籤代表（上鎖品項該班不必逐項點）　':'')
+    + '· 無逐項資料（舊版後端）　? 名單過長已截斷　斜線格 該班未點班<br>'
+    + '「合計」欄＝這一項在這 '+n+' 天<b>實際有人點班的 '+cells+' 個班</b>當中被點到幾次。<br>'
     + '資料來源：rollcall_log「逐項紀錄」欄　／　列印 '
     + esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
     + '</section>';
@@ -3072,22 +3640,28 @@ function renderItemCheck(){
   const shOpts=icSheets().map(function(x){
     return '<option value="'+x.id+'"'+(x.id===sid?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('');
 
+  const spanBtns=IC_SPANS.map(function(x){
+    return '<button class="btn '+(x===icSpan()?'btn-primary':'btn-ghost')+'" style="padding:8px 12px"'
+      + ' onclick="icSetSpan('+x+')">'+x+' 天</button>'; }).join('');
+
   $app.innerHTML=
     '<div class="topbar noprint"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
-    + '<div><div class="title">🔍 急救車逐項查看</div><div class="sub">'+esc(s.name||'')+' · '+esc(ymd)+'</div></div>'
-    + '<button class="back" onclick="state.screen=\''+esc(state.icBack||'home')+'\';render()">返回</button></div></div>'
+    + '<div><div class="title">🔍 急救車逐項查看</div><div class="sub">'+esc(s.name||'')+' · '+esc(label)+'</div></div>'
+    + '<button class="back" onclick="state.screen=\'' + esc(state.icBack||'home') + '\';render()">返回</button></div></div>'
     + '<div class="screen wide">'
     + '<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +   '<select onchange="state.icSheet=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
     +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+shOpts+'</select>'
-    +   '<button class="btn btn-ghost" onclick="icMove(-1)">← 前一天</button>'
-    +   '<button class="btn btn-ghost" onclick="state.icDate=todayISO();render()">今天</button>'
-    +   '<button class="btn btn-ghost" onclick="icMove(1)">後一天 →</button>'
+    +   spanBtns
+    +   '<button class="btn btn-ghost" onclick="icMove(-1)">← 前 '+n+' 天</button>'
+    +   '<button class="btn btn-ghost" onclick="state.icDate=todayISO();render()">到今天</button>'
+    +   '<button class="btn btn-ghost" onclick="icMove(1)">後 '+n+' 天 →</button>'
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
-    +   '一天一張（三個班並排）。要看整週哪一項最常被跳過，看最右邊的「本週」欄。<br>'
-    +   '空白斜線格＝那一班根本沒點班；🔒＝封籤還在，該班不必逐項點那些上鎖品項。'
+    +   '排法跟紙本附件二一樣：上排日期、下排 N／D／E。最右邊「合計」看這 '+n+' 天哪一項最常被跳過。<br>'
+    +   '斜線格＝那一班沒點班；點格子會顯示日期、班別與狀態。'
+    +   (seal?'<br>🔒＝封籤還在，該班不必逐項點那些上鎖品項。':'')
     + '</div>'
     + page
     + '</div>';
