@@ -88,7 +88,7 @@ const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-10-b9';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-09-15-b32';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-10-v11';
 
 const P=new URLSearchParams(location.search);
@@ -517,11 +517,49 @@ function render(){
   save();
 }
 
-function openEntry(day,si){
+/* ★ 班別可以在視窗裡改（跟氧氣表一樣）。
+   原本班別是「你點到哪一格就是哪一班」，點錯就得關掉重點一次；
+   而且交班前後最容易點錯隔壁那一格。 */
+const SHIFT_NAME_F=['大夜 N（0–8）','白班 D（8–16）','小夜 E（16–24）'];
+let _ENTRY={day:0,si:0};
+function entryVals(){
+  const g=id=>{const e=document.getElementById(id);return e?e.value:'';};
+  return {cur:g('e_cur'),hi:g('e_hi'),lo:g('e_lo'),sign:g('e_sign'),emp:g('e_emp')};
+}
+function entrySetShift(si){
+  const v=entryVals();                 // 先把打好的值收起來，換班別不要害人重打
+  _ENTRY.si=si;
+  openEntry(_ENTRY.day,si,v);
+}
+function entrySetDay(v){
+  const d=Math.max(1,Math.min(31,parseInt(v,10)||_ENTRY.day));
+  const vv=entryVals(); _ENTRY.day=d; openEntry(d,_ENTRY.si,vv);
+}
+function openEntry(day,si,keep){
   if(!data.ym){alert('請先選擇年月');return;}
-  const r=data.readings[rkey(day,si)]||{};
+  _ENTRY={day:day,si:si};
+  const r0=data.readings[rkey(day,si)]||{};
+  const r=keep?{cur:keep.cur,hi:keep.hi,lo:keep.lo,sign:keep.sign}:r0;
+  const chips=SHIFT_NAME_F.map(function(nm,i){
+    const on=(i===si);
+    return '<button type="button" onclick="entrySetShift('+i+')" style="flex:1;min-width:0;padding:10px 6px;'
+      +'font-size:13px;font-family:inherit;border-radius:9px;cursor:pointer;'
+      +(on?'border:2px solid #0f7a86;background:#e3f0f1;color:#0b5a63;font-weight:700'
+          :'border:1px solid #d7e2e1;background:transparent;color:inherit')+'">'+nm+'</button>';
+  }).join('');
   document.getElementById('modalHost').innerHTML=`<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modal-card">
-    <h3>${day} 日 · ${SHIFTS[si]} 時　溫度登錄</h3>
+    <h3>溫度登錄　<span style="font-weight:400;font-size:14px;color:var(--soft)">${esc(data.unit)}</span></h3>
+    <div class="fld">
+      <label>日期與班別（點錯格子可以在這裡改）</label>
+      <div class="row2" style="align-items:center;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <input id="e_day" type="number" min="1" max="31" value="${day}" onchange="entrySetDay(this.value)"
+            style="width:70px;text-align:center"><span style="font-size:14px">日</span>
+        </div>
+        <div style="font-size:12px;color:var(--soft)">${esc(String(data.ym||''))}</div>
+      </div>
+      <div style="display:flex;gap:6px">${chips}</div>
+    </div>
     <div class="fld">
       <div class="row2">
         <button class="btn btn-g" style="flex:1;padding:12px" onclick="document.getElementById('photoCam').click()">📷 拍照判讀</button>
@@ -543,13 +581,50 @@ function openEntry(day,si){
       <div class="fld"><label>刷/輸入員編</label><input id="e_emp" inputmode="numeric" placeholder="例：05845" oninput="document.getElementById('e_sign').value=empName(this.value)||document.getElementById('e_sign').value"></div>
       <div class="fld"><label>簽名（自動帶入）</label><input id="e_sign" value="${esc(r.sign||curName())}"></div>
     </div>
-    <div class="foot">
+    <div id="e_confirm"></div>
+    <div class="foot" id="e_foot">
       <button class="btn btn-g" style="flex:1" onclick="closeModal()">取消</button>
-      <button class="btn btn-p" style="flex:1" onclick="saveEntry(${day},${si})">儲存</button>
+      <button class="btn btn-p" style="flex:1" onclick="askSave()">儲存</button>
     </div>
   </div></div>`;
 }
-function saveEntry(day,si){
+/* ★ 存檔前先確認。
+   會把「單位／哪一天／哪一班／溫度／簽名」整段唸給你看再存 ——
+   因為點錯格子、存到別人那一班，事後從圖上很難發現。 */
+function askSave(){
+  const cur=(document.getElementById('e_cur').value||'').trim();
+  if(cur===''){alert('請輸入現在溫度');return;}
+  let hi=(document.getElementById('e_hi').value||'').trim();
+  let lo=(document.getElementById('e_lo').value||'').trim();
+  if(hi!==''&&lo!==''&&(+lo)>(+hi)){ const t=hi; hi=lo; lo=t; }
+  const sign=(document.getElementById('e_sign').value||'').trim();
+  const day=_ENTRY.day, si=_ENTRY.si;
+  const old=data.readings[rkey(day,si)];
+  const bad=(+cur<LOW||+cur>HIGH);
+  const ex=document.getElementById('e_confirm');
+  document.getElementById('e_foot').style.display='none';
+  ex.innerHTML='<div style="border:2px solid #0f7a86;border-radius:10px;padding:12px;margin-top:10px;'
+    +'background:#f2f8f8;line-height:1.8">'
+    +'<div style="font-weight:700;font-size:14px;margin-bottom:6px">確認要存這一筆嗎？</div>'
+    +'<div style="font-size:14px">'+esc(data.unit)+'　<b>'+esc(String(data.ym||''))+' / '+day+' 日</b>　'
+    +'<b style="color:#0b5a63">'+esc(SHIFT_NAME_F[si])+'</b></div>'
+    +'<div style="font-size:14px;margin-top:2px">現在 <b>'+esc(cur)+'℃</b>'
+    +(hi!==''?('　高 '+esc(hi)+'℃'):'')+(lo!==''?('　低 '+esc(lo)+'℃'):'')
+    +'　簽名 <b>'+esc(sign||'（未填）')+'</b></div>'
+    +(old?'<div style="font-size:13px;color:#b5680f;margin-top:6px">⚠ 這一格原本已經有紀錄（'
+        +esc(String(old.cur))+'℃・'+esc(old.sign||'')+'），存下去會覆蓋掉。</div>':'')
+    +(bad?'<div style="font-size:13px;color:#c0392b;margin-top:6px">⚠ 溫度不在 '+LOW+'–'+HIGH
+        +'℃，存完會接著要你填異常處理。</div>':'')
+    +'<div class="foot" style="margin-top:10px">'
+    +'<button class="btn btn-g" style="flex:1" onclick="cancelSave()">再修改</button>'
+    +'<button class="btn btn-p" style="flex:1" onclick="doSave('+day+','+si+')">確認存檔</button>'
+    +'</div></div>';
+}
+function cancelSave(){
+  const ex=document.getElementById('e_confirm'); if(ex)ex.innerHTML='';
+  const ft=document.getElementById('e_foot'); if(ft)ft.style.display='';
+}
+function doSave(day,si){
   const cur=document.getElementById('e_cur').value.trim();
   if(cur===''){alert('請輸入現在溫度');return;}
   const sign=document.getElementById('e_sign').value.trim();

@@ -277,6 +277,53 @@
 
   .owe-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;background:#fff3e0;color:#b5680f;border:1px solid #f0d2a8;margin-left:6px;cursor:pointer;vertical-align:middle}
   .owe-tag:active{opacity:.7}
+
+/* ===== 每週點班紀錄（列印用）=====
+   刻意做成「紙」：白底黑字、細線、無圓角。螢幕上也照這樣顯示，
+   免得印出來跟畫面上看到的不一樣。 */
+.pw-page{background:#fff;color:#111;border:1px solid #2b2b2b;padding:14px 16px;margin:0 0 18px;
+  font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',system-ui,sans-serif}
+.pw-head{border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:10px}
+.pw-org{font-size:11px;color:#555;letter-spacing:.04em}
+.pw-ttl{font-size:19px;font-weight:700;letter-spacing:.08em;margin:2px 0 3px}
+.pw-meta{font-size:12px;color:#333}
+.pw-tbl{border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #2b2b2b}
+.pw-tbl th,.pw-tbl td{border:.5px solid #9a9a9a;padding:4px 5px;font-size:11.5px;
+  text-align:center;vertical-align:middle;color:#111}
+.pw-tbl thead th{background:#f1f1f1;font-weight:500;font-size:11px;line-height:1.3}
+.pw-h2{font-weight:400;font-size:9.5px;color:#555}
+.pw-tbl td{height:34px}
+.pw-d{background:#f8f8f8;font-weight:700;font-size:12px;text-align:left!important;padding-left:7px!important}
+.pw-w{font-weight:400;color:#666;margin-left:4px;font-size:10.5px}
+.pw-done{font-weight:700;font-size:12px;font-variant-numeric:tabular-nums}
+.pw-bad{color:#a0232b;font-weight:700}
+.pw-by{font-size:10.5px;color:#444;margin-top:1px}
+.pw-seal{font-size:9.5px;color:#0f5f68;margin-top:1px}
+.pw-empty{background:repeating-linear-gradient(135deg,#fff,#fff 5px,#f4f4f4 5px,#f4f4f4 10px)}
+.pw-sec{font-size:12px;font-weight:700;margin:12px 0 4px;color:#111}
+.pw-iss{border-collapse:collapse;width:100%;border:1px solid #2b2b2b}
+.pw-iss th,.pw-iss td{border:.5px solid #9a9a9a;padding:3px 6px;font-size:10.5px;color:#111;text-align:left}
+.pw-iss thead th{background:#f1f1f1;font-weight:500}
+.pw-none{font-size:11px;color:#555;border:1px dashed #bbb;padding:7px 9px}
+.pw-sign{display:flex;gap:10px;margin-top:14px}
+.pw-sign-a,.pw-sign-b{flex:1;border:1px solid #2b2b2b;padding:8px 10px;min-height:76px}
+.pw-sign-t{font-size:10.5px;color:#555;margin-bottom:6px}
+.pw-stamp{display:inline-block;border:2px solid #a0232b;color:#a0232b;border-radius:6px;
+  padding:5px 12px;font-weight:700;font-size:14px;text-align:center;line-height:1.35}
+.pw-stamp-s{font-size:10px;font-weight:500}
+.pw-stamp-d{font-size:9.5px;font-weight:400;color:#8a3b41}
+.pw-nosign{font-size:11.5px;color:#a0232b}
+.pw-box{height:46px;border:1px dashed #999}
+.pw-foot{font-size:9.5px;color:#555;margin-top:8px;line-height:1.6}
+@media print{
+  .noprint,.topbar{display:none!important}
+  body{background:#fff!important}
+  .screen{padding:0!important;max-width:none!important}
+  .pw-page{border:0;padding:0;margin:0;page-break-after:always}
+  .pw-page:last-child{page-break-after:auto}
+  .pw-tbl tr,.pw-iss tr,.pw-sign{page-break-inside:avoid}
+  @page{size:A4 portrait;margin:12mm 10mm}
+}
 </style>
 <!-- ===== PWA（加到主畫面用）=====
      需要同一層資料夾裡有這些檔：manifest.json、sw.js、
@@ -616,8 +663,51 @@ function expText(x){
 }
 // 「待確認」的項目數（紙本手寫看不準，需要核對實物）
 function expUnsureOf(sheetId){ return expListOf(sheetId).filter(x=>x.status==='待確認'); }
-async function loadBundle(spec){
-  const apply={
+/* ===================== 開 App 不要等後端 =====================
+   原本每次開啟都要等那一支批次請求回來才畫得出畫面（Apps Script 來回 2~5 秒，
+   資料表越大越久），所以每個人每一班都要先盯著空白畫面。
+
+   改成：先把上次抓到的資料存在手機裡，開啟時**立刻用它畫出畫面**，
+   同一時間在背景抓新的，回來了再換掉。畫面上會標「顯示上次資料・更新中」，
+   所以不會有人把舊資料當成新的。
+
+   ・換版本就不吃舊快取（格式可能不一樣）
+   ・超過 7 天的快取不用（寧可等，也不要給明顯過期的東西）
+   ・存不下就放棄，不影響任何功能 */
+const CACHE_KEY='ed_bundle1';
+let CACHE_AT=0, SHOW_CACHE=false;
+function cacheMerge(map){
+  try{
+    let o=null;
+    try{ o=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); }catch(e){}
+    if(!o||o.v!==APP_VER) o={v:APP_VER,at:0,d:{}};
+    Object.keys(map||{}).forEach(k=>{ if(Array.isArray(map[k])) o.d[k]=map[k]; });
+    o.at=Date.now();
+    let str=JSON.stringify(o);
+    if(str.length>1800000){ delete o.d['rollcall_log']; delete o.d['devices']; str=JSON.stringify(o); }
+    if(str.length>1800000){ delete o.d['items']; str=JSON.stringify(o); }
+    if(str.length>1800000) return;
+    localStorage.setItem(CACHE_KEY,str);
+  }catch(e){}   // 私密瀏覽、空間滿了都會丟例外，忽略即可
+}
+function cacheRead(){
+  try{
+    const o=JSON.parse(localStorage.getItem(CACHE_KEY)||'null');
+    if(!o||o.v!==APP_VER||!o.d) return null;
+    if(Date.now()-(o.at||0)>7*86400000) return null;
+    return o;
+  }catch(e){ return null; }
+}
+async function applyBundle(map){
+  const apply=BUNDLE_APPLY();
+  await Promise.all(Object.keys(map||{}).map(k=>{
+    const f=apply[k], rows=map[k];
+    if(!f||!Array.isArray(rows))return Promise.resolve();
+    return f(rows);
+  }));
+}
+function BUNDLE_APPLY(){
+  return {
     items:       a=>loadItems(a),
     devices:     a=>loadLocator(a),
     owed:        a=>loadOwed(a),
@@ -633,6 +723,9 @@ async function loadBundle(spec){
     cart_seal:   a=>loadCartSeal(a),
     cart_expiry: a=>loadCartExpiry(a)
   };
+}
+async function loadBundle(spec){
+  const apply=BUNDLE_APPLY();
   const fallback=()=>Promise.all(spec.map(x=>{
     const f=apply[x[0]]; if(!f)return Promise.resolve();
     // 退回模式：各自發請求（帶天數）
@@ -656,11 +749,13 @@ async function loadBundle(spec){
       if(!f||!Array.isArray(rows))return Promise.resolve();
       return f(rows);
     }));
+    cacheMerge(j);                 // ★ 抓到的直接留一份在手機裡，下次開啟先用它
+    SHOW_CACHE=false;
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
 const EXPECT_API_VER='2026-09-11-v12';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-14-b29';
+const APP_VER='2026-09-15-b33';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -813,6 +908,15 @@ async function submitRollcall(){
   // ★ 封籤式急救車：沒登錄封籤號就不算點完（上鎖物品是靠封籤保證的）
   if(sealSealed(s.id)&&!String(state.sealInput||'').trim()){
     alert('這台車是上鎖的。\n\n請先回點班表最上方，登錄你在車上看到的封籤號。');
+    state.screen='rollcall'; render(); return;
+  }
+  /* ★ 選了「其他」就一定要寫備註，否則異常紀錄等於空的，事後查不出是什麼事 */
+  const noNote=list.filter(o=>{const k=keyOf(o);
+    return state.checks[k]==='bad'&&reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim();});
+  if(noNote.length){
+    alert('有 '+noNote.length+' 項的原因選了「其他」但沒寫備註：\n\n'
+      +noNote.slice(0,6).map(o=>'・'+o.name).join('\n')
+      +(noNote.length>6?'\n…':'')+'\n\n請回去補上說明再提交。');
     state.screen='rollcall'; render(); return;
   }
   let done=0,bad=0; list.forEach(o=>{const v=state.checks[keyOf(o)]; if(v==='ok'||v==='bad')done++; if(v==='bad')bad++;});
@@ -1068,6 +1172,16 @@ function maxRcDate(){
   const t=tpeParts(), d=tpeDate();      // ★ 台北時間為準（別再用裝置時區）
   if(t.h*60+t.mi>=NIGHT_OPEN_MIN)d.setDate(d.getDate()+1);
   return d;}
+/* ★ 大夜跨日：紙本的一天是「N → D → E」，所以 23:00 上班的大夜算「隔天」的大夜。
+   原本 23:30 只是「可以選」隔天，預設還是今天 —— 同一個班在 23:40 點會記成 9/14、
+   在 00:10 點會記成 9/15，同一班變成兩個日期，統計就亂了。
+   改成 23:30 後預設就是隔天，跟半夜點的人一致。想改還是可以用日期選擇器。 */
+function rcDefaultDate(){
+  const t=tpeParts();
+  if(t.h*60+t.mi>=NIGHT_OPEN_MIN){ const d=tpeDate(); d.setDate(d.getDate()+1); return fmtISO(d); }
+  return todayISO();
+}
+function rcIsNightAhead(){ return rcDefaultDate()!==todayISO(); }
 function minRcDate(){const n=tpeDate();
   if(isLeaderUser())return new Date(n.getFullYear(),n.getMonth()-1,1);  // 護理長/副護理長:上月1號起(更寬,可跨月)
   const b=new Date(n.getFullYear(),n.getMonth(),n.getDate());b.setDate(b.getDate()-14);
@@ -1092,8 +1206,11 @@ function fmtClock(ms){const d=new Date(ms);return String(d.getHours()).padStart(
 function fmtDur(sec){sec=Math.max(0,sec|0);if(sec<60)return sec+' 秒';const m=Math.floor(sec/60),s=sec%60;return s?`${m} 分 ${s} 秒`:`${m} 分`;}
 function rcDatePicker(){
   const cur=curRcDate(), mn=fmtISO(minRcDate()), mx=fmtISO(maxRcDate()), today=todayISO();
-  const tag=cur===today?'今天':(cur>today?'明日 · 大夜補點':'補點');
-  const hint=isLeaderUser()?'護理長可補上月 1 號起任一天':'可補今天與往回 14 天（可跨月）；更早需護理長/副護理長開啟';
+  const tag=cur===today?'今天':(cur>today?'明日 · 大夜':'補點');
+  const auto=(cur>today&&rcIsNightAhead());
+  const hint=auto
+    ? ('現在 '+tpeHM()+'，大夜班算 '+cur.slice(5).replace('-','/')+' 這一天（跟半夜點班的人一致）')
+    : (isLeaderUser()?'護理長可補上月 1 號起任一天':'可補今天與往回 14 天（可跨月）；更早需護理長/副護理長開啟');
   return `<div class="card" style="padding:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
       <div style="font-weight:800;font-size:15px">📆 ${esc(tag)}</div>
@@ -1553,7 +1670,10 @@ function tzWarnCard(){
 const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
 function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
 const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
-const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失'];
+/* ★「其他」是護理長指定要加的 —— 現場一定有不在這六種裡面的狀況。
+   但「其他」不寫清楚等於沒登記，所以選它的時候備註改成必填。 */
+const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失','其他'];
+function reasonNeedsNote(r){ return String(r||'')==='其他'; }
 
 // item key & filtering
 // 原始清單（含上鎖物品）。只有「上鎖物品名冊」與後台管理會用到。
@@ -1708,7 +1828,7 @@ function render(){
     history:renderHistory,leader:renderLeader,ai:renderAI,owed:renderOwed,records:renderRecords,embed:renderEmbed,
     owedMonthly:renderOwedMonthly,itemsAdmin:renderItemsAdmin,permAdmin:renderPermAdmin,
     adminHub:renderAdminHub,analytics:renderAnalytics,
-    seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,
+    seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
     sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
 }
 
@@ -1775,7 +1895,7 @@ async function doLogin_(){
   if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
   if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
   state.user={id:a.id,name:a.name,title:a.title,role:a.role};
-  state.rcDate=todayISO();
+  state.rcDate=rcDefaultDate();
   state.todayBind={status:'loading'};
   state.screen='home';render();
   try{ state.todayBind=await bindSchedule(curRcDateObj()); }
@@ -2099,7 +2219,11 @@ function renderItem(o,s){
         const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':'');
         return `<button class="chip ${on?'on':''} ${cls}" onclick="setReason('${k}','${r}')">${r}</button>`}).join('')}</div>
      ${repairNote}
-     <input class="note-in" placeholder="備註（選填）" value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)">
+     ${reasonNeedsNote(state.reason[k])?`<div style="font-size:12px;color:var(--bad,#E03131);font-weight:700;margin:2px 0 4px">
+       選「其他」請在備註寫清楚是什麼狀況（必填）</div>`:''}
+     <input class="note-in" placeholder="${reasonNeedsNote(state.reason[k])?'請說明狀況（必填）':'備註（選填）'}"
+       value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"
+       ${reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim()?'style="border-color:var(--bad,#E03131)"':''}>
      ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}')">＋記欠物</button>`:''}</div>`:'';
   return `<div class="li ${st==='bad'?'is-bad':''}">
     <div class="li-tap" onclick="setCheck('${k}','ok')">
@@ -2491,6 +2615,7 @@ function renderAdminHub(){
   if(isBoss()||isWitnessRank(state.user)) secs.push(g('📋 簽核與紀錄',[
     b('主管簽核 · 完成總表','openLeader()'),
     b('簽核／點班紀錄','openRecords()'),
+    b('🖨 每週點班紀錄（可列印·主管審閱）','openPrintWeek()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
   const mg=[];
@@ -2504,6 +2629,157 @@ function renderAdminHub(){
     <div><div class="title">⚙ 管理中心</div><div class="sub">${esc(state.user.name)} · ${esc(roleLabel())}</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen narrow">${secs.join('')}</div>`;
+}
+
+/* ===================== 每週點班紀錄（可列印、可歸檔） =====================
+   對應現行紙本：一張涵蓋一週，下方有「主管審閱」。
+   ★ 為什麼列的是日期而不是品項：後端存的是「這一班完成幾項／異常幾項」，
+     沒有存「哪一項被勾了」。硬畫成逐項打勾格會是假的 ——
+     所以格子裡寫的是「✓ 10/10 姓名」，下面再列本週所有異常明細。
+     真的要逐項打勾格，得從現在開始多存每一項的狀態（舊資料補不回來）。 */
+function weekMonday(d){
+  const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const w=(x.getDay()+6)%7;            // 週一=0
+  x.setDate(x.getDate()-w);
+  return x;
+}
+function weekDays(mon){
+  const a=[];
+  for(let i=0;i<7;i++){ const d=new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()+i); a.push(d); }
+  return a;
+}
+const PW_SHIFTS=[['N','大夜'],['D','白班'],['E','小夜']];
+function pwMonday(){
+  const v=state.pwWeek?parseISO(state.pwWeek):weekMonday(tpeDate());
+  return weekMonday(v);
+}
+function pwShift(n){
+  const m=pwMonday(); m.setDate(m.getDate()+n*7);
+  state.pwWeek=fmtISO(m); render();
+}
+function openPrintWeek(){
+  state.screen='printWeek';
+  if(!state.pwWeek) state.pwWeek=fmtISO(weekMonday(tpeDate()));
+  if(!state.pwArea) state.pwArea='all';
+  render();
+  // 一週的紀錄可能超出啟動時抓的 14 天，補抓 60 天＋異常明細＋週簽核
+  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff']]).then(function(){
+    if(state.screen==='printWeek')render();
+  });
+}
+// 這一格（某表、某天、某班）誰點的、完成度多少
+function pwCell(sheetId,ymd,sh){
+  const hits=(SIGNLOG||[]).filter(function(r){
+    return sheetIdOf(r)===String(sheetId) && dateOfLog(r)===ymd
+        && String(logShiftOf(r)||'')===sh;
+  });
+  if(!hits.length) return null;
+  const fin=hits.filter(isDoneRec_);
+  const pick=(fin.length?fin:hits)[(fin.length?fin:hits).length-1];
+  const num=function(a,b){ const v=Number(fld(pick,[a,b])); return isNaN(v)?0:v; };
+  return { by:nameOf(pick), done:num('done','完成項數'), total:num('total','總項數'),
+           bad:num('bad','異常數'), isDone:fin.length>0,
+           assign:String(fld(pick,['assign','分工'])||'') };
+}
+function pwIssues(sheetId,days){
+  const set={}; days.forEach(function(d){ set[fmtISO(d)]=1; });
+  return (ISSUES||[]).filter(function(r){
+    return String(fld(r,['sheetId','sheetId'])||'')===String(sheetId) && set[String(fld(r,['date','日期'])||'')];
+  });
+}
+function pwSignoff(mon){
+  const wk=isoWeek(mon);
+  const all=(SIGNOFFLOG||[]).concat(state.signoffs||[]);
+  return all.filter(function(r){ return String(r.week||r['週次']||'')===wk; })
+            .sort(function(a,b){ return String(b.at||b['簽核時間']||'').localeCompare(String(a.at||a['簽核時間']||'')); })[0]||null;
+}
+function renderPrintWeek(){
+  const mon=pwMonday(), days=weekDays(mon);
+  const wk=isoWeek(mon);
+  const label=fmtISO(days[0]).replace(/-/g,'/')+' ～ '+fmtISO(days[6]).replace(/-/g,'/');
+  const so=pwSignoff(mon);
+  const areaSel=state.pwArea||'all';
+  const sheets=SHEETS.filter(function(x){ return areaSel==='all'||x.area===areaSel; })
+                     .sort(function(a,b){ return (a.area+a.sort).localeCompare(b.area+b.sort); });
+  // 這一週完全沒有紀錄的表就不印（省紙），但至少印一張讓人知道是空的
+  const used=sheets.filter(function(sh){
+    return days.some(function(d){ return PW_SHIFTS.some(function(p){ return pwCell(sh.id,fmtISO(d),p[0]); }); });
+  });
+  const list=used.length?used:sheets.slice(0,1);
+
+  const pages=list.map(function(sh){
+    const rows=days.map(function(d){
+      const ymd=fmtISO(d);
+      const tds=PW_SHIFTS.map(function(p){
+        const c=pwCell(sh.id,ymd,p[0]);
+        if(!c) return '<td class="pw-empty"></td>';
+        const tag=c.isDone?'✓':'◍';
+        const seal=/封籤/.test(c.assign)?('<div class="pw-seal">'+esc(c.assign)+'</div>'):'';
+        return '<td><div class="pw-done">'+tag+' '+c.done+'/'+c.total
+             + (c.bad?('<span class="pw-bad"> 異常'+c.bad+'</span>'):'')+'</div>'
+             + '<div class="pw-by">'+esc(c.by||'')+'</div>'+seal+'</td>';
+      }).join('');
+      return '<tr><th class="pw-d">'+(d.getMonth()+1)+'/'+d.getDate()
+           + '<span class="pw-w">'+'日一二三四五六'.charAt(d.getDay())+'</span></th>'+tds+'</tr>';
+    }).join('');
+    const iss=pwIssues(sh.id,days);
+    const issHtml=iss.length
+      ? '<table class="pw-iss"><thead><tr><th>日期</th><th>班</th><th>品項</th><th>原因</th><th>備註</th></tr></thead><tbody>'
+        + iss.map(function(r){
+            return '<tr><td>'+esc(String(fld(r,['date','日期'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['shift','班別'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['item','項目'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['reason','原因'])||''))+'</td>'
+                 + '<td>'+esc(String(fld(r,['note','備註'])||''))+'</td></tr>';
+          }).join('')+'</tbody></table>'
+      : '<div class="pw-none">本週無異常紀錄</div>';
+    return '<section class="pw-page">'
+      + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
+      + '<div class="pw-ttl">每週點班紀錄</div>'
+      + '<div class="pw-meta">單位：<b>'+esc(sh.name)+'</b>　週次：'+esc(wk)+'　'+esc(label)+'</div></div>'
+      + '<table class="pw-tbl"><colgroup><col style="width:88px"><col><col><col></colgroup>'
+      + '<thead><tr><th>日期</th><th>大夜 N<br><span class="pw-h2">23–07</span></th>'
+      + '<th>白班 D<br><span class="pw-h2">07–15</span></th>'
+      + '<th>小夜 E<br><span class="pw-h2">15–23</span></th></tr></thead>'
+      + '<tbody>'+rows+'</tbody></table>'
+      + '<div class="pw-sec">本週異常摘要</div>'+issHtml
+      + '<div class="pw-sign">'
+      +   '<div class="pw-sign-a"><div class="pw-sign-t">主管審閱（系統簽核）</div>'
+      +     (so?('<div class="pw-stamp">'+esc(String(so.by||so['簽核人']||''))+'<div class="pw-stamp-s">已簽核</div>'
+              + '<div class="pw-stamp-d">'+esc(String(so.atText||so['簽核時間']||fmtLocalFromISO(so.at)||''))+'</div></div>')
+              :'<div class="pw-nosign">本週尚未簽核</div>')
+      +   '</div>'
+      +   '<div class="pw-sign-b"><div class="pw-sign-t">主管簽章</div><div class="pw-box"></div></div>'
+      + '</div>'
+      + '<div class="pw-foot">✓ 完成　◍ 部分完成　空白 未點班　／　格子內第二行為點班人員'
+      + '　／　資料來源：rollcall_log・rollcall_issue　／　列印 '+esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
+      + '</section>';
+  }).join('');
+
+  const areaOpts=['<option value="all"'+(areaSel==='all'?' selected':'')+'>全部分區</option>']
+    .concat(AREAS.map(function(a){
+      return '<option value="'+a.id+'"'+(areaSel===a.id?' selected':'')+'>'+esc(a.name)+'</option>'; })).join('');
+
+  $app.innerHTML=
+    '<div class="topbar noprint"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
+    + '<div><div class="title">🖨 每週點班紀錄</div><div class="sub">'+esc(label)+' · '+esc(wk)+' · 共 '+list.length+' 張</div></div>'
+    + '<button class="back" onclick="state.screen=\'adminHub\';render()">返回</button></div></div>'
+    + '<div class="screen wide">'
+    + '<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +   '<button class="btn btn-ghost" onclick="pwShift(-1)">← 上一週</button>'
+    +   '<button class="btn btn-ghost" onclick="state.pwWeek=\'\';render()">本週</button>'
+    +   '<button class="btn btn-ghost" onclick="pwShift(1)">下一週 →</button>'
+    +   '<select onchange="state.pwArea=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
+    +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+areaOpts+'</select>'
+    +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
+    + '</div>'
+    + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
+    +   '這一週有紀錄的點班表各印一張（A4 直式），沒紀錄的不印以免浪費紙。<br>'
+    +   '主管審閱有兩格：左邊是<b>系統的週簽核</b>（在「主管簽核 · 完成總表」按過就會自動印出來），'
+    +   '右邊留空白給<b>實體簽章</b>。'
+    + '</div>'
+    + pages
+    + '</div>';
 }
 
 /* ===== 營運分析：統計用程式算（快又準），AI 只負責解讀與建議 ===== */
@@ -3768,8 +4044,9 @@ function syncBar(){
   return `<div style="font-size:11.5px;margin:-2px 2px 8px">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
         color:${bad?'var(--bad,#E03131)':'var(--ink-soft)'}">
-      <span>${SYNCING?'⏳ 正在向後端同步…':(bad?'⚠ 上次同步失敗，資料可能不是最新':
-        (SYNC_AT?('☁ 已同步・'+syncAgo()+ms+'　自動每 20 秒更新'):'☁ 尚未同步'))}</span>
+      <span>${SHOW_CACHE?'📦 顯示上次資料・更新中…':
+        (SYNCING?'⏳ 正在向後端同步…':(bad?'⚠ 上次同步失敗，資料可能不是最新':
+        (SYNC_AT?('☁ 已同步・'+syncAgo()+ms+'　自動每 20 秒更新'):'☁ 尚未同步')))}</span>
       <button onclick="syncAll()" ${SYNCING?'disabled':''} style="border:1px solid var(--line);background:transparent;
         color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">↻ 立即更新</button>
     </div>
@@ -4177,7 +4454,7 @@ function sealBar(s){
         color:var(--ink-soft)">${v?(sealNorm(v)===sealNorm(c.seal)?'✓ 相符':'✗ 不相符'):'待輸入'}</span>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 封籤不符／要開封</span>
+      <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 封籤不符／要開封${sealWriteOK()?'':'（需後端 v12）'}</span>
       <span class="tool-pill ${soon.length||expUnsureOf(s.id).length?'':'done'}" onclick="state.screen='seal';render()">
         📅 上鎖物品期限${soon.length?('・'+soon.length+' 項快到期'):''}${expUnsureOf(s.id).length?('・'+expUnsureOf(s.id).length+' 項待確認'):''}${(!soon.length&&!expUnsureOf(s.id).length)?'・正常':''}</span>
     </div>
@@ -4427,6 +4704,12 @@ function renderSealOpen(){
       <div class="sub">開封會留下紀錄，之後要上新封籤</div></div>
     <button class="back" onclick="state.screen='rollcall';render()">返回</button></div></div>
   <div class="screen narrow">
+    ${sealWriteOK()?'':`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+      font-size:13px;line-height:1.8">
+      <b>⚠ 後端目前是 ${esc(API_VER_SEEN||'未知')}，還不能在 App 裡換封籤號。</b><br>
+      你還是可以往下送 —— 系統會把開封事件記到「項目回報」，
+      但<b>新封籤號要請護理長在 Sheet 的 cart_seal 改</b>。<br>
+      護理長：把 <b>dianban_api.gs</b> 重新部署為新版本（需 v12）就能在 App 裡完成。</div>`}
     ${pre?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;font-size:13px;line-height:1.8">
       你輸入的封籤號是 <b>${esc(v)}</b>，與系統紀錄不一致。<br>
       這一筆會寫進紀錄，之後可以追查這台車被誰開過。</div>`:''}
@@ -4449,10 +4732,30 @@ async function startSealOpen(){
   const n=document.getElementById('so_note'), note=((n&&n.value)||'').trim();
   if(r.value==='其他'&&!note){ alert('選「其他」請在補充說明寫一下原因'); return; }
   const v=String(state.sealInput||'').trim();
+  /* ★ 後端還沒到 v12 時的做法。
+     原本只是擋下來 —— 但開封是安全事件，擋掉等於什麼紀錄都沒有，比較糟。
+     改成走 v11 也認得的「項目回報」把事件記下來（會進 item_report，
+     財管組長與管理中心看得到），並告訴人員接下來怎麼做。
+     為什麼不假裝成功：封籤號要寫回 cart_seal 才能讓下一班比對，
+     v11 寫不進去；假裝成功會讓大家以為系統在管，其實沒有。 */
   if(!sealWriteOK()){
-    alert('後端還沒更新到 v12（目前 '+(API_VER_SEEN||'未知')+'），開封紀錄存不下來。\n\n'
-      +'請先把 dianban_api.gs 貼上並「重新部署為新版本」。\n'
-      +'在那之前封籤請先沿用紙本登記。');
+    const memo='【封籤開封】'+r.value+(v?('（車上為 '+v+'）'):'')+(note?('・'+note):'');
+    let logged=false;
+    try{
+      const rr=await owedWrite('item_report',{ id:'SL'+Date.now(), sheet:cartIdOf(s.id),
+        item:'上鎖物品封籤', issue:memo, by:state.user.name, byId:state.user.id,
+        at:tpeDTLocal().replace('T',' '), status:'待處理' });
+      logged=!!(rr&&rr.ok);
+    }catch(e){ console.error('開封事件回報失敗',e); }
+    if(logged) await loadItemReports();
+    alert((logged?'已把開封事件記到「項目回報」（財管組長與管理中心看得到）。\n\n'
+                 :'⚠ 連線失敗，這次開封沒有留下電子紀錄。\n\n')
+      +'但封籤號還不能在 App 裡換 —— 後端目前是 '+(API_VER_SEEN||'未知')+'，需要 v12。\n\n'
+      +'現在請這樣做：\n'
+      +'① 照紙本流程補齊車內物品、上新封籤（兩人）\n'
+      +'② 把新封籤號告知護理長或小組長\n'
+      +'③ 由他在 Sheet 的 cart_seal 分頁把 C5 改成新號碼\n\n'
+      +'（護理長：把 dianban_api.gs 貼上並「重新部署為新版本」後，這一段就能在 App 裡完成。）');
     return;
   }
   toast('記錄開封中…');
@@ -4797,12 +5100,22 @@ applyTheme();
 store.load();
 if(!state.user)state.screen='login';
 render();
-if(state.user){ state.rcDate=todayISO(); rebindForDate(); }
+if(state.user){ state.rcDate=rcDefaultDate(); rebindForDate(); }
 /* ★ 啟動只發一支請求（原本 10 支）。大表都只要最近幾天，回傳量也小很多。 */
-(async()=>{ await loadBundle([['items'],['devices'],['owed'],['item_report'],['staff_perm'],
-  ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30],
-  ['cart_seal'],['cart_expiry']]);
-  render(); })();
+(async()=>{
+  /* ★ 先用手機裡上次的資料畫畫面（幾乎瞬間），再去抓新的。
+     沒有快取（第一次用、或換版本）就照舊等後端。 */
+  const c=cacheRead();
+  if(c){
+    try{ await applyBundle(c.d); CACHE_AT=c.at; SHOW_CACHE=true; render(); }
+    catch(e){ console.warn('快取套用失敗，改為等後端',e); }
+  }
+  await loadBundle([['items'],['devices'],['owed'],['item_report'],['staff_perm'],
+    ['rtls'],['rollcall_active'],['rollcall_log',14],['fridge_temp',30],['o2_check',30],
+    ['cart_seal'],['cart_expiry']]);
+  SHOW_CACHE=false; SYNC_AT=Date.now();
+  render();
+})();
 /* ★ 自動更新完成狀態（20 秒一次）。
    涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
    分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。 */
