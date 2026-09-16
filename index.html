@@ -194,6 +194,14 @@
   .rt-on{background:#2f9e44}.rt-off{background:#adb5bd}
   .rt-legend{display:flex;gap:14px;justify-content:center;font-size:12px;color:var(--ink-soft);padding:8px 0}
   .li-abn{flex-basis:100%;padding:10px 12px;border-top:1px dashed var(--line);background:var(--bad-soft)}
+  /* 保養卡跟點班合一：正常只多一行字，異常才展開問三件事 */
+  .li-maint-ok{flex-basis:100%;padding:7px 12px;border-top:1px dashed var(--line);
+    font-size:12px;line-height:1.7;color:#1f7a43;background:#f2faf4}
+  .li-maint{margin-top:10px;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:#fff}
+  .lm-h{font-weight:800;font-size:13px;margin-bottom:7px}
+  .lm-l{font-size:12.5px;color:var(--ink-soft);margin:7px 0 5px}
+  .lm-miss{font-size:12.5px;color:var(--bad,#E03131);font-weight:700;margin-top:8px}
+  .lm-ok{font-size:12.5px;color:var(--ok,#2f9e44);font-weight:700;margin-top:8px}
   .abn-h{font-size:11.5px;font-weight:700;color:var(--bad);margin-bottom:7px}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
   .chip{padding:5px 10px;border-radius:999px;border:1.5px solid var(--line);background:var(--card);font-size:12px;
@@ -600,6 +608,90 @@ let BUNDLE_OK=true;
 let API_VER_SEEN='';
 function apiVerNum(){ const m=String(API_VER_SEEN||'').match(/v(\d+)\s*$/); return m?+m[1]:0; }
 function sealWriteOK(){ return apiVerNum()>=12; }
+function maintWriteOK(){ return apiVerNum()>=18; }
+function sealUndoOK(){ return apiVerNum()>=19; }
+
+/* ===================== 儀器保養卡（電擊器）=====================
+   為什麼不另外做一個「院內轉寫網頁」：
+     院內保養程式在院內網段，我們連不到，它也不會來抓我們的資料。
+     不管怎麼設計，最後一定要有人進院內網路點一次 ——
+     所以我們能幫的不是「代替他點」，而是「讓他點的時候完全不用想」。
+
+   院內那張卡 7 個項目預設全是「正常」，所以：
+     ① 我們這邊也預設全正常，護理師只改有問題的那一格（多花 5 秒，不是多開一個系統）
+     ② 產生「院內要打什麼」——全正常就一句話，有異常才列細節
+     ③ 打完在這裡勾一下「已轉入院內」，才知道哪一班還沒轉、哪一班被打了兩次
+
+   ★ 六台電擊器來自儀器清冊（財產碼 8002287~8002292，PHILIPS，編碼 ER-1~ER-6），
+     對照表是「定位儀器_點班表對照_建議」那份，信心全部是「高」。
+     萬一之後機器換位置，只要改這一張表就好。 */
+/* ★ 儀器保養卡：整包先關起來（2026-09-17 護理長決定）。
+   理由很實在 —— 我們沒辦法把資料直接寫進院內保養程式，
+   在那之前做這個等於叫人做兩次，功能再完整也沒有意義。
+   ★ 程式沒有刪掉，只是關著：等院內開了匯入介面（或書籤代填談成），
+     把這一行改成 true 就整包回來，後端 device_maint 也還在。 */
+let MAINT_ON=false;
+const DEFIB=[
+  {id:'ER-1',asset:'8002291',name:'飛利浦 DC Shock 1 號',sheetId:'resus-2',zone:'急救室',note:'全配'},
+  {id:'ER-2',asset:'8002292',name:'飛利浦 DC Shock 2 號',sheetId:'resus-2',zone:'急救室',note:'全配'},
+  {id:'ER-3',asset:'8002288',name:'飛利浦 DC Shock 3 號',sheetId:'resus-2',zone:'急救室',note:'簡配'},
+  {id:'ER-4',asset:'8002287',name:'飛利浦 DC Shock 4 號',sheetId:'resus-2',zone:'急救室',note:'簡配'},
+  {id:'ER-5',asset:'8002290',name:'飛利浦 DC Shock 5 號',sheetId:'peds-area',zone:'兒童區',note:''},
+  {id:'ER-6',asset:'8002289',name:'飛利浦 DC Shock 6 號',sheetId:'obs-2',zone:'留觀區',note:''}
+];
+/* 欄位名跟院內那張卡一字不差。不一樣的話，轉寫的人要自己翻譯，翻譯就會出錯。 */
+const MAINT_FIELDS=[
+  {k:'外觀版面',label:'外觀版面無破損'},
+  {k:'外觀清潔',label:'外觀清潔'},
+  {k:'導線整齊',label:'導線纏繞整齊'},
+  {k:'功能檢測',label:'功能檢測'},
+  {k:'蓄電功能',label:'蓄電功能'},
+  {k:'列印記錄',label:'列印記錄功能'},
+  {k:'儀器時間',label:'儀器時間'}
+];
+const MAINT_VALS=['正常','異常','不適用'];
+let MAINTLOG=[];
+function defibById(id){ for(let i=0;i<DEFIB.length;i++) if(DEFIB[i].id===id) return DEFIB[i]; return null; }
+function defibOfSheet(sheetId){ return DEFIB.filter(d=>d.sheetId===sheetId); }
+function hasDefib(sheetId){ return MAINT_ON && defibOfSheet(sheetId).length>0; }
+async function loadMaint(days,pre,merge){
+  if(!API_URL&&!pre)return;
+  try{
+    const a=pre||await getJSON('table=device_maint'+(days?('&days='+days):''));
+    if(!Array.isArray(a))return;
+    const mapped=a.map(o=>{
+      const r={ date:pick0(o,['日期','date']), shift:pick0(o,['班別','shift']),
+        devId:pick0(o,['儀器ID','devId']), devName:pick0(o,['儀器名稱','devName']),
+        zone:pick0(o,['區域','zone']), sheetId:pick0(o,['sheetId']),
+        verdict:pick0(o,['判定','verdict']), note:pick0(o,['備註','note']),
+        by:pick0(o,['姓名','by']), empId:pick0(o,['員編','empId']),
+        at:pick0(o,['寫入時間','at']),
+        moved:pick0(o,['已轉入院內','moved']), movedBy:pick0(o,['轉入人','movedBy']),
+        movedAt:pick0(o,['轉入時間','movedAt']), f:{} };
+      MAINT_FIELDS.forEach(f=>{ r.f[f.k]=pick0(o,[f.k])||'正常'; });
+      return r;
+    }).filter(x=>x.devId&&x.date);
+    MAINTLOG=merge?mergeLog(MAINTLOG,mapped,K_MAINT):mapped;
+  }catch(e){ console.error('讀保養卡失敗',e); }
+}
+/* 找某一台機器、某一天某一班的那張卡。由後往前 —— 取最後寫入的那筆。 */
+function maintOf(date,shift,devId){
+  for(let i=MAINTLOG.length-1;i>=0;i--){
+    const r=MAINTLOG[i];
+    if(r.date===date&&String(r.shift)===String(shift)&&r.devId===devId) return r;
+  }
+  return null;
+}
+/* 本班還有幾台沒填。點班表上那顆按鈕就是靠這個顯示數字的。 */
+function maintPending(sheetId){
+  const d=curRcDate(), sh=effShift();
+  return defibOfSheet(sheetId).filter(x=>!maintOf(d,sh,x.id));
+}
+/* 本班已填、但還沒有人上院內打的。 */
+function maintToMove(sheetId){
+  const d=curRcDate(), sh=effShift();
+  return defibOfSheet(sheetId).map(x=>maintOf(d,sh,x.id)).filter(r=>r&&r.moved!=='是');
+}
 /* ===================== 封籤式急救車（留觀急救車） =====================
    留觀的急救車可以上鎖，用的是「一次性數字封籤」——封籤沒斷就代表車內沒被動過。
    所以每班點的是封籤號，不是 45 個品項；只有開封過才做全品項清點與期限重登。
@@ -851,7 +943,8 @@ function BUNDLE_APPLY(merge){
     rollcall_signoff:a=>loadSignoffs(a),
     cart_seal:   a=>loadCartSeal(a),
     cart_expiry: a=>loadCartExpiry(a),
-    cart_audit:  a=>loadCartAudit(a)
+    cart_audit:  a=>loadCartAudit(a),
+    device_maint:a=>loadMaint(null,a,merge)
   };
 }
 async function loadBundle(spec,opts){
@@ -863,6 +956,7 @@ async function loadBundle(spec,opts){
     if(x[0]==='rollcall_log')return loadSignLog(x[1],null,merge);
     if(x[0]==='fridge_temp') return loadFridgeLog(x[1],null,merge);
     if(x[0]==='o2_check')    return loadO2Log(x[1],null,merge);
+    if(x[0]==='device_maint')return loadMaint(x[1],null,merge);
     return f(null);
   }));
   if(!BUNDLE_OK) return fallback();
@@ -890,8 +984,8 @@ async function loadBundle(spec,opts){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-16-v16';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-16-b48';
+const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-17-b58';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1065,6 +1159,11 @@ async function submitRollcall(){
     alert('這台車是上鎖的。\n\n請先回點班表最上方，登錄你在車上看到的封籤號。');
     state.screen='rollcall'; render(); return;
   }
+  /* 只打一兩碼就送出等於沒核 —— 隨便兩碼很容易剛好對上。至少要末 4 碼。 */
+  if(sealSealed(s.id)&&sealNeedMore(state.sealInput)){
+    alert('封籤號還沒打完。\n\n看著車上的封籤，至少打最後 '+SEAL_TAIL+' 碼（或用 🤖 拍照辨識帶入完整號碼）。');
+    state.screen='rollcall'; render(); return;
+  }
   /* ★ 選了「其他」就一定要寫備註，否則異常紀錄等於空的，事後查不出是什麼事 */
   const noNote=list.filter(o=>{const k=keyOf(o);
     return state.checks[k]==='bad'&&reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim();});
@@ -1073,6 +1172,18 @@ async function submitRollcall(){
       +noNote.slice(0,6).map(o=>'・'+o.name).join('\n')
       +(noNote.length>6?'\n…':'')+'\n\n請回去補上說明再提交。');
     state.screen='rollcall'; render(); return;
+  }
+  /* ★ 電擊器標了異常，就一定要講清楚是哪台、哪一項、為什麼 ——
+     不然那一班的保養卡等於一筆查不出原因的異常，
+     而且等一下上院內的人不知道該打什麼。 */
+  const _dfItem=list.filter(o=>isDefibItem(s.id,o.name))[0];
+  if(_dfItem&&state.checks[keyOf(_dfItem)]==='bad'){
+    const miss=maintQuickMissing(s.id);
+    if(miss){
+      alert('電擊器標了異常，保養卡還差一項：\n\n'+miss
+        +'\n\n請回點班表，在「'+_dfItem.name+'」下面補齊再提交。');
+      state.screen='rollcall'; render(); return;
+    }
   }
   let done=0,bad=0; list.forEach(o=>{const v=state.checks[keyOf(o)]; if(v==='ok'||v==='bad')done++; if(v==='bad')bad++;});
   /* ★ 封籤結果一併寫進這一班的點班紀錄（rollcall_log 的「分工」欄）。
@@ -1084,7 +1195,7 @@ async function submitRollcall(){
   if(sealSealed(s.id)){
     const _c=sealOf(s.id)||{};
     sealSeen=String(state.sealInput||'').trim();
-    sealBad=(sealNorm(sealSeen)!==sealNorm(_c.seal));
+    sealBad=!sealMatch(sealSeen,_c.seal);
     sealTag='封籤'+(sealBad?'✗ 不符':'✓ 相符');
     if(sealBad) bad++;
   }
@@ -1111,6 +1222,45 @@ async function submitRollcall(){
   postProgress({clear:true,force:true});          // 清掉「進行中」標記
   await pushRollcall(payload);
   if(sealSealed(s.id)) await sealAfterSubmit(s); // ★ 另外寫一筆封籤核對紀錄
+  await autoMaintFromRollcall(s,list);           // ★ 保養卡跟著點班一起記
+}
+
+/* 點班提交時順手把這一班的電擊器保養卡記起來。
+   ★ 已經有卡就跳過，絕不覆蓋 —— 有人可能已經進保養卡頁仔細填過（含「不適用」），
+     被這裡一句「全正常」蓋掉會把真實狀況抹掉。 */
+async function autoMaintFromRollcall(s,list){
+  if(!MAINT_ON) return;
+  const devs=defibOfSheet(s.id); if(!devs.length) return;
+  const item=list.filter(o=>isDefibItem(s.id,o.name))[0]; if(!item) return;
+  const st=state.checks[keyOf(item)];
+  if(st!=='ok'&&st!=='bad') return;
+  if(!maintWriteOK()){
+    console.warn('後端 '+(API_VER_SEEN||'未知')+'（需 v18），保養卡沒有自動記錄');
+    toast('保養卡需要後端 v18 才會自動記錄');
+    return;
+  }
+  const q=maintQuickOf(s.id), d=curRcDate(), sh=effShift();
+  let n=0, failN=0;
+  for(let i=0;i<devs.length;i++){
+    const dev=devs[i];
+    if(maintOf(d,sh,dev.id)) continue;                 // 已有卡 → 不動
+    const isBad=(st==='bad')&&q.devs.indexOf(dev.id)>=0&&q.bad.length>0;
+    const fields={};
+    MAINT_FIELDS.forEach(function(f){ fields[f.k]=(isBad&&q.bad.indexOf(f.k)>=0)?'異常':'正常'; });
+    const note=isBad?String(q.note||''):'';
+    try{
+      const r=await owedWrite('maint_set',{ date:d, shift:sh, devId:dev.id, asset:dev.asset,
+        devName:dev.name, zone:dev.zone, sheetId:dev.sheetId, fields:fields, note:note,
+        empId:state.user?state.user.id:'', by:state.user?state.user.name:'',
+        at:tpeDTLocal().replace('T',' ') });
+      if(r&&r.ok) n++; else failN++;
+    }catch(e){ failN++; console.error('保養卡自動記錄失敗',dev.id,e); }
+  }
+  if(n) await loadMaint(7,null,true);
+  // 提交後清掉暫存，下一班不會沿用上一班的異常選項
+  state.maintQuick&&delete state.maintQuick[s.id];
+  if(failN) toast('有 '+failN+' 台的保養卡沒存進後端，請到保養卡頁重填');
+  if(state.screen==='done') render();
 }
 /* ★ 確認後端真的寫進去了。失敗時在完成畫面顯示紅色警示＋重試，
    避免「畫面說完成、Sheet 裡沒有」——這是最危險的情況。 */
@@ -1833,6 +1983,14 @@ const SHIFT_NAME={D:'白班',E:'小夜',N:'大夜'};
 const SHIFT_SEQ=['N','D','E'];
 function prevShiftName(cur){return SHIFT_NAME[{D:'N',E:'D',N:'E'}[cur]||'D']}
 const ROLE_BADGE={'護理長':['可管理主檔・審核・點班'],'副護理長':['可審核・點班'],'點班人員':['可點班']};
+/* ★ 職稱是從 staff_perm 讀進來的人工欄位，只要有人在 Sheet 上打了
+   「護理師」「代理護理長」這種不在表裡的字，ROLE_BADGE[role][0] 就會炸，
+   而且炸的是 renderHome —— 整個首頁白畫面，看起來像「讀不到後端」。
+   查不到就不顯示徽章，不要拖垮整頁。 */
+function roleBadgeOf(role){
+  const a=ROLE_BADGE[String(role||'')];
+  return (a&&a[0])?a[0]:'';
+}
 /* ★「其他」是護理長指定要加的 —— 現場一定有不在這六種裡面的狀況。
    但「其他」不寫清楚等於沒登記，所以選它的時候備註改成必填。 */
 const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失','其他'];
@@ -2029,12 +2187,19 @@ function render(){
     adminHub:renderAdminHub,analytics:renderAnalytics,
     seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
     itemCheck:renderItemCheck,netDiag:renderNetDiag,cartAudit:renderCartAudit,
-    sealExpiry:renderSealExpiry}[state.screen]||renderLogin)();
+    sealExpiry:renderSealExpiry,maint:renderMaint,maintHub:renderMaintHub}[state.screen]||renderLogin)();
   /* ★ 畫面切換到「會顯示完成度」的頁面 → 立刻同步一次（見 syncNow 的說明）。
      放在畫面畫完之後：先讓人看到東西，再去抓最新的，抓完會自己再 render 一次。 */
+  /* ★ 包 try/catch：這個掛勾在 render() 裡，而 render() 是全站每一個動作都會呼叫的。
+     萬一它丟錯（例如以後有人把某個變數宣告搬到後面造成 TDZ），
+     整個畫面就會白掉、而且看起來像「讀不到後端」—— 那種錯最難查。
+     同步失敗不該讓畫面壞掉，所以這裡吞掉錯誤只記 log。 */
   if(state.screen!==LAST_SCREEN){
     LAST_SCREEN=state.screen;
-    if(state.user&&typeof needsLiveSync==='function'&&needsLiveSync()) syncNow();
+    try{
+      if(state.user&&typeof needsLiveSync==='function'&&needsLiveSync()
+         &&typeof syncNow==='function') syncNow();
+    }catch(e){ console.warn('進畫面自動同步失敗（不影響畫面）',e); }
   }
 }
 
@@ -2153,7 +2318,7 @@ function renderHome(){
       <div style="display:flex;gap:8px">
         <button class="back" onclick="toggleTheme()" title="日/夜模式">${document.documentElement.dataset.theme==='dark'?'☀':'🌙'}</button>
         <button class="back" onclick="logout()">登出</button></div></div>
-    <div><span class="role-tag">${u.role}・${ROLE_BADGE[u.role][0]}</span></div>
+    <div><span class="role-tag">${esc(u.role||'')}${roleBadgeOf(u.role)?('・'+roleBadgeOf(u.role)):''}</span></div>
   </div></div>
   <div class="screen narrow">
     <div class="card"><div class="date-block">
@@ -2176,6 +2341,9 @@ function renderHome(){
     <div class="section-h">作業</div>
     <button class="btn btn-primary btn-block" style="margin-bottom:10px" onclick="state.screen='areas';render()">開始點班（手動選分區）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
+    ${maintIsLeader()?(function(){ const b=maintBadToday();
+      return `<button class="btn btn-ghost btn-block ${b?'':'done'}" style="margin-bottom:10px"
+        onclick="openMaintHub()">🛠 今天的電擊器保養${b?('（'+b+' 台異常）'):'（全部正常）'}</button>`;})():''}
     ${reviewBtn}
     ${(!hasAdmin&&can('record.print'))?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
       onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>
@@ -2329,7 +2497,11 @@ function renderRollcall(){
         const lv=zl.filter(d=>{const t=rtlsOf(d);return t&&t.live;}).length;
         return zl.length?`（${lv}/${zl.length} 回報中）`:'';})()}</span>
       <span class="tool-pill" onclick="openMap('全部儀器')">🗺 全部儀器</span>
-      <span class="tool-pill" onclick="alert('保養卡：每班/每週/每月項目（正式版依到期顯示）。')">🛠 保養卡</span></div>
+      ${hasDefib(s.id)?(function(){
+        const pend=maintPending(s.id), mv=maintToMove(s.id), tot=defibOfSheet(s.id).length;
+        return `<span class="tool-pill ${pend.length?'':'done'}" onclick="openMaint('${s.id}')">🛠 電擊器保養卡（${tot-pend.length}/${tot}）${
+          (!pend.length&&mv.length)?(' · '+mv.length+' 台待轉入院內'):''}</span>`;})()
+      :'<span class="tool-pill" style="opacity:.55" onclick="alert(\'這張點班表沒有電擊器。\\n\\n目前保養卡只做電擊器（6 台，在急救室-2、兒童區、留觀區-2）。\')">🛠 保養卡</span>'}</div>
       <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊只有 devices 表「是否定位」勾選的儀器才會出現 📍；綠點＝標籤主動回報中</div>`;
     const rows=its.map(o=>renderItem(o,s)).join('');
     blocks+=`<div class="cat">
@@ -2425,6 +2597,11 @@ function renderItem(o,s){
   const _liveDev=_canLoc&&matchDevices(o.name).some(d=>{const s=rtlsOf(d);return s&&s.live;});
   const dev=_canLoc?`<button class="locate-mini${_liveDev?' live':''}" onclick="openMap('${esc(o.name).replace(/'/g,"")}')" title="${_liveDev?'定位（回報中）':'定位'}">📍${_liveDev?'<span class="dot-live"></span>':''}</button>`:'';
   const repairNote=isDev&&state.reason[k]==='送修'?`<div class="repair-note">🔧 將於 Leader 系統開立請修單（示意）</div>`:'';
+  /* 保養卡合一：正常只多一行字，不多一個動作 */
+  const _defibs=defibForItem(s.id,o.name);
+  const maintOK=(_defibs.length&&st==='ok')
+    ? `<div class="li-maint-ok">🛠 含保養卡：${_defibs.length} 台（${esc(_defibs.map(d=>d.id).join('、'))}），
+        7 項全正常　<span style="opacity:.8">提交後自動記錄，不用另外填</span></div>` : '';
   const abn=st==='bad'?`<div class="li-abn">
      <div class="abn-h">⚠ 異常／沒有 — 請註記</div>
      <div class="chips">${REASONS.map(r=>{const on=state.reason[k]===r;
@@ -2436,7 +2613,8 @@ function renderItem(o,s){
      <input class="note-in" placeholder="${reasonNeedsNote(state.reason[k])?'請說明狀況（必填）':'備註（選填）'}"
        value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"
        ${reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim()?'style="border-color:var(--bad,#E03131)"':''}>
-     ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}')">＋記欠物</button>`:''}</div>`:'';
+     ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}')">＋記欠物</button>`:''}
+     ${_defibs.length?maintQuickBlock(s.id,_defibs):''}</div>`:'';
   return `<div class="li ${st==='bad'?'is-bad':''}">
     <div class="li-tap" onclick="setCheck('${k}','ok')">
       ${dot}
@@ -2444,7 +2622,35 @@ function renderItem(o,s){
         <div class="li-qty">標準 ${esc(o.qty)} <span class="tb t-${o.type}">${o.type}</span></div></div>
     </div>
     <div class="li-ctrl">${dev}<button class="flagbtn ${st==='bad'?'on':''}" onclick="setCheck('${k}','bad')">異常</button></div>
-    ${abn}</div>`;
+    ${maintOK}${abn}</div>`;
+}
+/* 異常時才問的三件事：哪一台、哪幾項、為什麼。
+   全部都是點選，只有備註要打字 —— 因為那一段要原封不動打進院內。 */
+function maintQuickBlock(sheetId,devs){
+  const q=maintQuickOf(sheetId);
+  const devChips=devs.map(function(d){
+    const on=q.devs.indexOf(d.id)>=0;
+    return `<button class="chip ${on?'on':''}" onclick="toggleQuickDev('${sheetId}','${d.id}')"
+      >${esc(d.id)}${d.note?('・'+esc(d.note)):''}</button>`;
+  }).join('');
+  const itemChips=MAINT_FIELDS.map(function(f){
+    const on=q.bad.indexOf(f.k)>=0;
+    return `<button class="chip ${on?'on':''}" onclick="toggleQuickBad('${sheetId}','${f.k}')"
+      >${esc(f.label)}</button>`;
+  }).join('');
+  const miss=maintQuickMissing(sheetId);
+  return `<div class="li-maint">
+    <div class="lm-h">🛠 保養卡（會一起寫進院內要打的清單）</div>
+    <div class="lm-l">是哪一台？${devs.length>1?'<span style="opacity:.75">（可複選；沒選到的那幾台記為正常）</span>':''}</div>
+    <div class="chips">${devChips}</div>
+    <div class="lm-l">哪幾項不正常？</div>
+    <div class="chips">${itemChips}</div>
+    <input class="note-in" placeholder="狀況說明（必填，會原封不動打進院內）"
+      value="${esc(q.note||'')}" onchange="setQuickNote('${sheetId}',this.value)">
+    ${miss?`<div class="lm-miss">⚠ ${esc(miss)}</div>`
+      :`<div class="lm-ok">✓ 已齊全：${esc(q.devs.join('、'))} 的
+        ${esc(MAINT_FIELDS.filter(f=>q.bad.indexOf(f.k)>=0).map(f=>f.label).join('、'))} 記為異常</div>`}
+  </div>`;
 }
 function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k]}render();postProgress();}
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
@@ -3626,7 +3832,12 @@ function icIndex(sheetId,days){
 // 某一格（某班、某項）的狀態
 function icCell(sheetId,cell,item){
   if(!cell) return 'na';                                  // 這一班沒點班
-  if(/封籤/.test(cell.assign||'') && lockedOn(sheetId,item)) return 'seal';
+  /* ★★ 封籤相符與不符，在這張表上一定要長得不一樣。
+     原本兩種都回 'seal' → 印出來全是 🔒，看不出哪一班的封籤其實對不起來。
+     那正是最糟的一種錯：表面上「每班都有核」，實際上有一班已經出事。
+     分工欄記的是「封籤✓ 相符」或「封籤✗ 不符」，據此分開。 */
+  if(/封籤/.test(cell.assign||'') && lockedOn(sheetId,item))
+    return /✗|不符/.test(String(cell.assign)) ? 'sealbad' : 'seal';
   if(!cell.log) return 'nolog';                           // v13 之前的舊紀錄
   const nk=normItem(item.name);
   if(cell.log.bad[nk]) return 'bad';
@@ -3635,7 +3846,9 @@ function icCell(sheetId,cell,item){
   return 'ok';
 }
 const IC_MARK={ ok:['✓','ic-ok','已點'], bad:['✗','ic-bad','異常'], un:['—','ic-un','未點'],
-  seal:['🔒','ic-seal','封籤代表'], na:['','ic-na','該班未點班'],
+  seal:['🔒','ic-seal','封籤代表（相符）'],
+  sealbad:['🔓','ic-bad','封籤不符 —— 該班未逐項清點，這些品項無人確認'],
+  na:['','ic-na','該班未點班'],
   nolog:['·','ic-na','無逐項資料'], qm:['?','ic-qm','名單過長已截斷'] };
 // 急救車優先；找不到就給全部表，讓她自己選
 function icSheets(){
@@ -3750,7 +3963,7 @@ function renderItemCheck(){
         PW_SHIFTS.forEach(function(p,pi){
           const st=icCell(sid,idx[ymd+'|'+p[0]]||null,o);
           const m=IC_MARK[st];
-          if(st==='ok'||st==='seal') seen++;
+          if(st==='ok'||st==='seal') seen++;   // ★ sealbad 不算：封籤不符代表那一班沒有人確認過這些品項
           let mark=m[0], tip=ymd+' '+p[1]+'：'+m[2];
           if(st==='bad'){
             const no=issNo[ymd+'|'+p[0]+'|'+normItem(o.name)];
@@ -3867,7 +4080,7 @@ function renderItemCheck(){
     +   '</div>'
     + '</div>'
     + '<div class="pw-foot">✓ 已點　✗ 異常　— 未點　'
-    + (seal?'🔒 封籤代表（上鎖品項該班不必逐項點）　':'')
+    + (seal?'🔒 封籤相符（上鎖品項該班不必逐項點）　🔓 封籤不符（該班這些品項無人確認）　':'')
     + '· 無逐項資料（舊版後端）　? 名單過長已截斷　斜線格 該班未點班<br>'
     + '「合計」欄＝這一項在這 '+n+' 天<b>實際有人點班的 '+cells+' 個班</b>當中被點到幾次；'
     + '班別代號下方的數字＝那一班點到幾項（未點完顯示紅色）。<br>'
@@ -5280,7 +5493,8 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal']],
+    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal']]
+                      .concat(MAINT_ON?[['device_maint',3]]:[]),
                      {merge:true});     // ★ 合併：只更新這 3 天，手上的 30 天不會被縮掉
     SYNC_MS=Date.now()-t0;
   }catch(e){ SYNC_MS=-1; }
@@ -5296,8 +5510,12 @@ async function refreshDoneStatus(){ return syncAll(); }
    （「我明明點完了，怎麼還顯示未完成」）。
    所以只要切換到會顯示完成度的畫面就強制抓一次，之後才交給 20 秒定時器。
    ★ 3 秒地板：避免在分區／點班表之間來回按時連發一串請求。 */
-const SYNC_FLOOR=3000;
+/* ★ 用 var 不用 const：這個值會被 render() 裡的掛勾讀到，
+   而 render() 可能在這一行還沒執行到之前就被呼叫（函式宣告會提升，const 不會）。
+   之前就是這種 TDZ 造成整頁掛掉，症狀看起來像「讀不到後端」。 */
+var SYNC_FLOOR=3000;
 function syncNow(){
+  if(typeof SYNCING==='undefined'||typeof SYNC_AT==='undefined')return;
   if(SYNCING)return;
   if(Date.now()-SYNC_AT<SYNC_FLOOR)return;
   SYNC_AT=0; syncAll();
@@ -5536,6 +5754,7 @@ const K_O2=r=>[pick0(r,['科別','dept']),pick0(r,['年月','ym']),
 const K_LOG=r=>pick0(r,['紀錄ID','id'])
   ||[dateOfLog(r),pick0(r,['班別','shift']),sheetIdOf(r),pick0(r,['分工','assign']),
      pick0(r,['員編','empId'])].join('|');
+const K_MAINT=r=>[r.date,r.shift,r.devId].join('|');
 const K_ISS=r=>[pick0(r,['日期','date']),pick0(r,['班別','shift']),sheetIdOf(r),
   pick0(r,['項目','item']),pick0(r,['寫入時間','at'])].join('|');
 
@@ -5694,6 +5913,29 @@ function renderAI(){
      seal        封籤與期限總覽（唯讀入口）
      sealExpiry  全部有效期限（唯讀）                                      */
 function sealNorm(v){ return String(v==null?'':v).replace(/[\s\-_]/g,'').toUpperCase(); }
+/* ★★ 只打末 4 碼。
+   為什麼不是「顯示號碼問你是不是這個」：
+     封籤機制的全部價值就是「有人真的走到車旁邊看了那條封籤」。
+     一旦把號碼印在畫面上問 Yes/No，那顆按鈕就變成一個 YES 鍵 ——
+     車真的被動過的那一次，他也會按 YES，因為他沒去看。
+     而且紀錄上會留下「每班都有核、都相符」，出事時那是一筆假的保證，比沒有紀錄更糟。
+
+   ★ 只打末 4 碼就沒有這個問題：畫面完全不顯示任何一碼，
+     他還是得看著實物才打得出來，但打字量從 12 碼降到 4 碼。
+   ★ 掃條碼／拍照辨識帶進來的是完整號碼 —— 長度夠就整串比對，不受影響。 */
+const SEAL_TAIL=4;
+function sealMatch(typed,full){
+  const a=sealNorm(typed), b=sealNorm(full);
+  if(!a||!b) return false;
+  if(a.length>=b.length) return a===b;          // 掃條碼／拍照：整串比
+  if(a.length<SEAL_TAIL) return false;          // 太短不算，避免隨便兩碼就過
+  return b.slice(-a.length)===a;                // 手打：比末幾碼
+}
+/* 還差幾碼才夠判斷（畫面即時提示用）。0 代表可以判定了。 */
+function sealNeedMore(typed){
+  const n=sealNorm(typed).length;
+  return n>=SEAL_TAIL?0:(SEAL_TAIL-n);
+}
 function sealAgeDays(at){
   const m=String(at||'').match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m)return null;
   const t=todayISO();
@@ -5742,7 +5984,7 @@ function sealBar(s){
         onclick="state.screen='sealClose';render()">登錄期限並上新封籤 →</button>
     </div>`;
   }
-  return `<div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${v&&sealNorm(v)===sealNorm(c.seal)?'var(--ok)':'var(--brand)'}">
+  return `<div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${v&&sealMatch(v,c.seal)?'var(--ok)':'var(--brand)'}">
     <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
       <div style="font-weight:800;font-size:13px;color:var(--ink-soft)">🔒 上鎖物品 · 封籤號核對</div>
       <span style="font-size:11.5px;color:var(--ink-soft)">系統紀錄 ${peek}
@@ -5751,7 +5993,8 @@ function sealBar(s){
           border-radius:6px;cursor:pointer;margin-left:4px">${state.sealPeek?'隱藏':'查看'}</button></span>
     </div>
     <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;margin:6px 0 8px">
-      請輸入你<b>在車上看到</b>的封籤號，系統會比對。
+      看著車上那條封籤，<b>打最後 ${SEAL_TAIL} 碼就好</b>（或用下面的拍照辨識）。
+      系統不會把號碼顯示出來 —— 打得出來就代表你人在車旁邊、封籤是完整的。
       這一格就代表下面 <b>${lockedItemsOf(s.id).length}</b> 項上鎖物品
       （＝紙本那一段一格一個字寫封籤號的列），不必逐項打勾。
       <span style="color:var(--brand);cursor:pointer;font-weight:700"
@@ -5765,18 +6008,26 @@ function sealBar(s){
         background:#fff4e6;border:1px solid #ffd8a8;border-radius:8px;padding:8px 10px;margin-bottom:8px">
       ⚠ 沒有比對到任何上鎖物品，所以下面還是全部品項都要打勾。<br>
       請在後端跑一次 <b>markObsCartLocked</b>，或在 items 分頁把上鎖那些列的「分工」填 <b>鎖</b>。</div>`:''}
+    <button type="button" onclick="document.getElementById('sealPhoto').click()"
+      style="width:100%;padding:12px;font-size:15px;font-weight:700;border:1px solid var(--brand);
+        border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:var(--brand);
+        font-family:inherit;cursor:pointer;margin-bottom:9px">🤖 拍照辨識封籤號</button>
     <div style="display:flex;gap:8px;align-items:center">
-      <button type="button" onclick="scanSeal('sealIn')" title="掃描封籤條碼"
+      <button type="button" onclick="scanSeal('sealIn')" title="掃描封籤條碼（有條碼時最準）"
         style="flex:0 0 auto;padding:10px 12px;font-size:19px;line-height:1;border:1px solid var(--line);
-          border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:inherit;
+          border-radius:10px;background:transparent;color:inherit;
           font-family:inherit;cursor:pointer">📷</button>
-      <input id="sealIn" autocomplete="off" placeholder="掃描或輸入封籤號" value="${esc(v)}"
+      <input id="sealPhoto" type="file" accept="image/*" capture="environment"
+        style="display:none" onchange="sealPhotoRead(this)">
+      <input id="sealIn" autocomplete="off" inputmode="latin" placeholder="末 ${SEAL_TAIL} 碼" value="${esc(v)}"
         oninput="sealLive()" style="flex:1;min-width:0;padding:11px;font-size:18px;text-align:center;
           letter-spacing:2px;border:1px solid var(--line);border-radius:10px;background:transparent;
           color:inherit;font-family:inherit">
       <span id="sealMsg" style="font-size:12.5px;font-weight:700;white-space:nowrap;min-width:64px;
-        color:var(--ink-soft)">${v?(sealNorm(v)===sealNorm(c.seal)?'✓ 相符':'✗ 不相符'):'待輸入'}</span>
+        color:var(--ink-soft)">${v?(sealNeedMore(v)?('還要 '+sealNeedMore(v)+' 碼'):(sealMatch(v,c.seal)?'✓ 相符':'✗ 不相符')):'待輸入'}</span>
     </div>
+    <div id="sealAi" style="display:none;margin-top:8px;padding:8px 11px;border-radius:9px;
+      font-size:12.5px;line-height:1.75"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
       <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 封籤不符／要開封${sealWriteOK()?'':'（需後端 v12）'}</span>
       <span class="tool-pill ${soon.length||expUnsureOf(s.id).length?'':'done'}" onclick="state.screen='seal';render()">
@@ -5787,6 +6038,72 @@ function sealBar(s){
   </div>`;
 }
 // 邊打邊比對（不重繪整頁，避免輸入框失焦）
+/* ★★★ 拍照辨識封籤號。
+   為什麼要有這個：METRO 封籤上不一定有條碼，條碼也常常被壓皺、反光刷不到，
+   而號碼很長（METRO0031795），手打很容易打錯或漏掉前導零。
+
+   ★ 三條安全線，缺一不可 —— 封籤核對是安全機制，不是方便功能：
+     ① AI 只「填進輸入格」，絕對不自動送出、不自動判定相符。
+     ② 信心低於 0.8、或號碼看起來不完整，一律要人工確認，畫面明講「請對著實物再看一次」。
+     ③ 辨識出來的號碼一定原樣顯示，讓人可以逐字跟實物對 —— 不做任何「自動補零／自動修正」。
+   ★ 沒有後端 AI 金鑰或額度用完時要講清楚，不要靜靜失敗。 */
+async function sealShrink(file){
+  return new Promise(function(res,rej){
+    const fr=new FileReader();
+    fr.onerror=function(){ rej(new Error('讀不到這張照片')); };
+    fr.onload=function(){
+      const img=new Image();
+      img.onerror=function(){ rej(new Error('這個檔案不是照片')); };
+      img.onload=function(){
+        const c=document.createElement('canvas');
+        const sc=Math.min(1,1400/Math.max(img.width,img.height));   // 封籤字小，比冰箱那支放寬一點
+        c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+        c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        res(c.toDataURL('image/jpeg',0.85));
+      };
+      img.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function sealAiMsg(html,bad){
+  const el=document.getElementById('sealAi'); if(!el)return;
+  el.style.display=html?'':'none';
+  el.style.background=bad?'#fdf1f1':'rgba(15,122,134,.08)';
+  el.style.color=bad?'#7d1b22':'inherit';
+  el.innerHTML=html||'';
+}
+async function sealPhotoRead(input){
+  const f=input&&input.files&&input.files[0]; if(!f)return;
+  input.value='';                                   // 讓同一張可以重拍重試
+  if(!API_URL){ alert('尚未設定後端 API_URL'); return; }
+  sealAiMsg('🤖 辨識中…（第一次可能要幾秒）');
+  try{
+    const b64=await sealShrink(f);
+    const r=await fetch(API_URL,{method:'POST',
+      body:JSON.stringify({task:'vision',payload:{image:b64,mode:'seal'}})});
+    const d=await r.json();
+    if(d.error){ sealAiMsg('辨識失敗：'+esc(String(d.error))
+      +'<br>請改用 📷 掃條碼，或直接手打。',true); return; }
+    if(d.seal===undefined){ sealAiMsg('後端還不支援拍照辨識封籤（需要 '
+      +esc(EXPECT_API_VER)+'）。請改用 📷 掃條碼或手打。',true); return; }
+    const seal=String(d.seal||'').trim();
+    const conf=Number(d.confidence||0);
+    if(!seal){ sealAiMsg('看不出封籤號'+(d.note?('（'+esc(String(d.note))+'）'):'')
+      +'<br>把封籤拍正、拍近一點再試一次，或直接手打。',true); return; }
+    const el=document.getElementById('sealIn');
+    if(el){ el.value=seal; state.sealInput=seal; sealLive(); }
+    const low=conf<0.8;
+    sealAiMsg('辨識結果：<b style="font-size:17px;letter-spacing:2px">'+esc(seal)+'</b>'
+      +'　信心 '+Math.round(conf*100)+'%'
+      +(d.note?('<br>'+esc(String(d.note))):'')
+      +'<br><b>請對著實物逐字確認一次再送出</b>'
+      +(low?'　⚠ 信心偏低，很可能看錯（0/O、1/I、5/S 最常錯）':''), low);
+  }catch(e){
+    sealAiMsg('辨識失敗：'+esc(String(e&&e.message||e))
+      +'<br>請改用 📷 掃條碼，或直接手打。',true);
+  }
+}
 function sealLive(){
   const el=document.getElementById('sealIn'), msg=document.getElementById('sealMsg');
   if(!el)return;
@@ -5795,9 +6112,81 @@ function sealLive(){
   const c=sealOf(state.sheetId)||{};
   const v=String(el.value||'').trim();
   if(!v){ msg.textContent='待輸入'; msg.style.color='var(--ink-soft)'; return; }
-  const same=sealNorm(v)===sealNorm(c.seal);
+  const need=sealNeedMore(v);
+  if(need){ msg.textContent='還要 '+need+' 碼'; msg.style.color='var(--ink-soft)'; return; }
+  const same=sealMatch(v,c.seal);
   msg.textContent=same?'✓ 相符':'✗ 不相符';
   msg.style.color=same?'var(--ok,#0f7a86)':'var(--bad,#E03131)';
+}
+/* ===================== 誤報復原 =====================
+   2026-09-17 早上真的發生過：人員按錯，車其實沒開過，封籤好好的。
+   當時唯一能回到「封存中」的路是封新籤 —— 要剪掉一條完好的封籤、換新的、兩人簽。
+   為了一次按錯就毀掉一條好封籤，還留下一筆「今天封過車」的假紀錄，是不對的。
+
+   ★ 怎麼確定真的是按錯、而不是有人想把開過的車蓋回去？
+     要他看著車上的封籤，把號碼打進來，跟系統原本那串對得起來才准。
+     這個證明是成立的 —— App 從來不把封籤號顯示出來（平常是 ••••），
+     打得出正確號碼就代表他人在車旁邊、封籤是完整的。
+     真的被開過的話封籤已經剪斷，號碼對不起來，後端就會擋。
+
+   ★ 不是偷偷抹掉：紀錄裡會多一筆「誤報復原」，寫明誰、什麼時候、原狀態是什麼。
+     安全紀錄可以更正，但不可以消失。 */
+function openSealUndo(){
+  state.sealUndoIn=''; state.sealUndoMsg=''; state.sealUndoOpen=true; render();
+}
+function closeSealUndo(){ state.sealUndoOpen=false; state.sealUndoMsg=''; render(); }
+function setSealUndoIn(v){ state.sealUndoIn=v; }
+async function doSealUndo(){
+  const s=sheetById(state.sheetId), c=sealOf(s.id)||{};
+  const v=String(state.sealUndoIn||'').trim();
+  const box=document.getElementById('sealUndoMsg');
+  const say=(html,bad)=>{ if(!box)return;
+    box.style.display='block'; box.innerHTML=html;
+    box.style.background=bad?'#fdf1f1':'#eef4fb';
+    box.style.color=bad?'#b02a2a':'#1c5fb0'; };
+  if(!v){ say('請先輸入你<b>現在在車上看到</b>的<b>完整</b>封籤號（這裡不收末 4 碼）。',true); return; }
+  if(!sealUndoOK()){
+    say('後端目前是 '+esc(API_VER_SEEN||'未知')+'，誤報復原需要 v19。<br>'
+      +'請先更新 dianban_api.gs 並重新部署成「新版本」。',true); return; }
+  say('確認中…');
+  const r=await owedWrite('cart_seal_undo',{ cartId:cartIdOf(s.id), cartName:s.name,
+    date:curRcDate(), shift:effShift(), seal:v,
+    empId:state.user?state.user.id:'', name:state.user?state.user.name:'',
+    note:'誤報，實際未開封' });
+  if(!(r&&r.ok)){
+    say('<b>沒有復原</b><br>'+esc((r&&r.error)||'連線失敗')
+      +'<br><br>如果封籤真的斷了／號碼真的不一樣，請照開封流程清點並上新封籤。',true);
+    return; }
+  await loadCartSeal();
+  state.sealUndoOpen=false; state.sealMismatch=false; state.sealUndoIn='';
+  render();
+  alert('已復原成「封存中」。\n\n紀錄裡留了一筆「誤報復原」，寫明是你在 '
+    +tpeHM()+' 確認封籤完好、號碼相符。\n\n這不是把紀錄抹掉，是把事實寫清楚。');
+}
+function sealUndoCard(s){
+  const c=sealOf(s.id)||{};
+  if(!state.sealUndoOpen) return `<div class="card" style="font-size:13px;line-height:1.8">
+    <div style="font-weight:800;margin-bottom:4px">按錯了？封籤其實沒斷</div>
+    <div style="color:var(--ink-soft)">如果剛剛是不小心按到、車根本沒開過，
+      不需要剪掉一條好封籤來換新的。點下面確認一次就可以復原。</div>
+    <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openSealUndo()">
+      這是誤按，我要復原 →</button></div>`;
+  return `<div class="card" style="font-size:13px;line-height:1.8;border:1px solid var(--line)">
+    <div style="font-weight:800;margin-bottom:6px">誤報復原</div>
+    <div style="color:var(--ink-soft);margin-bottom:9px">
+      請<b>走到車旁邊</b>，看著封籤把<b>完整號碼</b>打進來（這裡不收末 4 碼）。
+      號碼跟系統原本那串完全對得起來，才代表封籤確實沒被動過。</div>
+    <input class="note-in" style="width:100%;font-size:16px;letter-spacing:1px"
+      id="sealUndoIn" placeholder="完整封籤號（例：METRO0031795）" value="${esc(state.sealUndoIn||'')}"
+      oninput="setSealUndoIn(this.value)">
+    <div id="sealUndoMsg" style="display:none;padding:9px 11px;border-radius:8px;
+      font-size:12.5px;line-height:1.75;margin-top:9px"></div>
+    <div style="font-size:12px;color:var(--ink-soft);margin-top:9px">
+      ＊會在紀錄裡留一筆「誤報復原」，寫明是你確認的 —— 不是把紀錄刪掉。<br>
+      ＊如果封籤真的斷了，號碼會對不起來，系統不會讓你復原。</div>
+    <div style="display:flex;gap:9px;margin-top:11px">
+      <button class="btn btn-primary" style="flex:1" onclick="doSealUndo()">確認復原</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeSealUndo()">取消</button></div></div>`;
 }
 // 摘要頁再提醒一次封籤結果（提交前最後一道）
 function sealSummaryBlock(s){
@@ -5806,7 +6195,10 @@ function sealSummaryBlock(s){
   if(!v) return `<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
       font-size:13px;line-height:1.8;margin-bottom:10px">
     <b>還沒登錄封籤號</b><br>這台車是上鎖的，請回點班表最上方輸入車上的封籤號再提交。</div>`;
-  const same=sealNorm(v)===sealNorm(c.seal);
+  if(sealNeedMore(v)) return `<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
+      font-size:13px;line-height:1.8;margin-bottom:10px">
+    <b>封籤號還沒打完</b><br>至少要 ${SEAL_TAIL} 碼（末 ${SEAL_TAIL} 碼就可以），請回點班表最上方補齊。</div>`;
+  const same=sealMatch(v,c.seal);
   return same
     ? `<div class="card" style="background:var(--ok-soft,#e6f4f1);border:1px solid var(--ok,#0f7a86);
         color:var(--ok,#0f7a86);font-size:13px;font-weight:600;margin-bottom:10px">
@@ -5821,7 +6213,7 @@ function sealSummaryBlock(s){
 async function sealAfterSubmit(s){
   const c=sealOf(s.id)||{};
   const v=String(state.sealInput||'').trim();
-  const same=sealNorm(v)===sealNorm(c.seal);
+  const same=sealMatch(v,c.seal);
   state.sealMismatch=!same;
   /* ★ 後端還沒到 v12 就「不要送」。
      v11 的 doPost 不認識 cart_seal_check，會掉進 AI 分支，
@@ -6263,6 +6655,7 @@ function renderSeal(){
       ${sealed?'':`<button class="btn btn-primary btn-block" style="margin-top:10px"
         onclick="state.screen='sealClose';render()">登錄期限並上新封籤 →</button>`}
     </div>
+    ${sealed?'':sealUndoCard(s)}
     ${expUnsureOf(s.id).length?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
         cursor:pointer" onclick="state.screen='sealExpiry';render()" role="button" tabindex="0">
       <div style="font-weight:700">⚠ ${expUnsureOf(s.id).length} 項期限待確認</div>
@@ -6422,9 +6815,469 @@ function renderDone(){
     <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
       ${esc(state.user.name)}（${esc(state.user.title)}）· ${tpeHM()} 簽核</p>
     ${timingHtml}
+    ${hasDefib(s.id)?`<div style="max-width:360px;margin:0 auto 16px;text-align:left">${maintBadHtml(s.id)}</div>`:''}
     <button class="btn btn-primary btn-block" onclick="state.screen='pick';render();refreshDoneStatus()">回點班表清單</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
   </div></div>`;
+}
+
+/* ===================== 保養卡：畫面 =====================
+   兩層：① 這張點班表有哪幾台、本班填了沒 ② 單台的 7 項卡
+   第三塊是「院內要打什麼」——那才是這整個功能存在的理由。 */
+function openMaint(sheetId){
+  state.sheetId=sheetId; state.maintDev=null; state.screen='maint'; render();
+}
+function maintBack(){
+  if(state.maintDev){ state.maintDev=null; state.screen='maint'; render(); return; }
+  state.screen='rollcall'; render();
+}
+function maintVerdictOf(draft){
+  let bad=0; MAINT_FIELDS.forEach(f=>{ if((draft[f.k]||'正常')==='異常') bad++; });
+  return {bad:bad, verdict:bad?'異常':'正常'};
+}
+function openMaintCard(devId){
+  const d=curRcDate(), sh=effShift(), cur=maintOf(d,sh,devId);
+  state.maintDev=devId;
+  state.maintDraft={};
+  MAINT_FIELDS.forEach(f=>{ state.maintDraft[f.k]=(cur&&cur.f&&cur.f[f.k])||'正常'; });
+  state.maintNote=(cur&&cur.note)||'';
+  state.screen='maint'; render();
+}
+function setMaintVal(k,v){ state.maintDraft=state.maintDraft||{}; state.maintDraft[k]=v; render(); }
+function setMaintNote(v){ state.maintNote=v; }
+
+async function saveMaintCard(){
+  const dev=defibById(state.maintDev); if(!dev)return;
+  const draft=state.maintDraft||{}, vd=maintVerdictOf(draft);
+  if(vd.bad&&!String(state.maintNote||'').trim()){
+    alert('有 '+vd.bad+' 項填「異常」，備註必填。\n\n'
+      +'這段備註是要打進院內保養程式的 —— 沒寫的話，'
+      +'等一下上院內的人不知道該打什麼，三個月後也查不出是什麼事。');
+    return;
+  }
+  if(!maintWriteOK()){
+    alert('後端目前是 '+(API_VER_SEEN||'未知')+'，保養卡需要 v18。\n\n'
+      +'請先把 dianban_api.gs 更新並重新部署成「新版本」，再回來填。');
+    return;
+  }
+  const fields={}; MAINT_FIELDS.forEach(f=>{ fields[f.k]=draft[f.k]||'正常'; });
+  const payload={ date:curRcDate(), shift:effShift(), devId:dev.id, asset:dev.asset,
+    devName:dev.name, zone:dev.zone, sheetId:dev.sheetId, fields:fields,
+    note:String(state.maintNote||''), empId:state.user?state.user.id:'',
+    by:state.user?state.user.name:'', at:tpeDTLocal().replace('T',' ') };
+  toast('儲存中…');
+  const r=await owedWrite('maint_set',payload);
+  if(!(r&&r.ok)){ alert('沒有存進後端：'+((r&&r.error)||'連線失敗')+'\n\n請再試一次。'); return; }
+  await loadMaint(7,null,true);
+  state.maintDev=null;
+  render();
+  toast(vd.bad?('已存（判定異常，記得到院內打備註）'):'已存（全部正常）');
+}
+
+/* 「已經在院內保養程式打過了」。可以取消 —— 手滑點到的話，
+   那一班就會永遠沒人去補打，比多點一次危險得多。 */
+async function markMaintMoved(devId,undo,shift){
+  if(!maintWriteOK()){ alert('後端需要 v18 才能記錄「已轉入院內」。'); return; }
+  const r=await owedWrite('maint_mark',{ date:curRcDate(), shift:shift||effShift(), devId:devId,
+    empId:state.user?state.user.id:'', by:state.user?state.user.name:'',
+    at:tpeDTLocal().replace('T',' '), undo:!!undo });
+  if(!(r&&r.ok)){ alert('沒有存進後端：'+((r&&r.error)||'連線失敗')); return; }
+  await loadMaint(7,null,true); render();
+  toast(undo?'已取消標記':'已標記轉入院內');
+}
+
+/* 保養填「異常」→ 一鍵開請修。
+   不做這個的話，異常就只會躺在紀錄裡，機器還是沒人修。 */
+async function maintToRepair(devId){
+  const d=curRcDate(), sh=effShift(), rec=maintOf(d,sh,devId), dev=defibById(devId);
+  if(!rec||!dev)return;
+  const badList=MAINT_FIELDS.filter(f=>rec.f[f.k]==='異常').map(f=>f.label);
+  if(!badList.length){ alert('這張卡沒有異常項目，不需要請修。'); return; }
+  if(!confirm('要為「'+dev.name+'」開一張請修單嗎？\n\n異常項目：'+badList.join('、')
+    +'\n備註：'+(rec.note||'（無）'))) return;
+  const r=await owedWrite('item_report',{ id:'MT'+Date.now(), sheet:dev.zone,
+    item:dev.name+'（'+dev.id+'／財產碼 '+dev.asset+'）',
+    issue:'保養卡異常：'+badList.join('、')+(rec.note?('｜'+rec.note):''),
+    by:state.user?state.user.name:'', byId:state.user?state.user.id:'',
+    at:tpeDTLocal().replace('T',' '), status:'待處理' });
+  if(!(r&&r.ok)){ alert('請修單沒有開成功：'+((r&&r.error)||'連線失敗')); return; }
+  await loadItemReports(); render();
+  alert('已開立請修單，財管組長與管理中心看得到。');
+}
+
+/* ★★ 這一塊才是重點：「等一下上院內網路要打什麼」。
+   全部正常 → 只有一句話（因為院內 7 項預設就是正常，他真的只要按完成）。
+   有異常／不適用 → 才列出是哪一項、要打什麼備註。 */
+/* 點班完成後只在「真的有異常」時出現。
+   全正常的時候什麼都不顯示 —— 他已經打過勾了，再跳一塊「都正常喔」只是雜訊。 */
+function maintBadHtml(sheetId){
+  const d=curRcDate(), sh=effShift();
+  const bad=defibOfSheet(sheetId).map(function(dev){
+    const r=maintOf(d,sh,dev.id); return (r&&r.verdict==='異常')?{dev:dev,rec:r}:null;
+  }).filter(Boolean);
+  if(!bad.length) return '';
+  const rows=bad.map(function(x){
+    const odd=MAINT_FIELDS.filter(f=>x.rec.f[f.k]==='異常').map(f=>f.label);
+    const bid='dn_'+x.dev.id;
+    return `<div style="padding:9px 0;border-top:1px dashed var(--line)">
+      <b style="font-size:13.5px">${esc(x.dev.name)}</b>
+      <div style="font-size:13px;color:var(--bad,#E03131);margin-top:3px">${esc(odd.join('、'))} → 異常</div>
+      <div style="font-size:13px;margin-top:3px">備註要打：<b>${esc(x.rec.note||'（未填）')}</b>
+        ${x.rec.note?`<button class="mh-copy" id="${bid}"
+          onclick="copyText(${JSON.stringify(x.rec.note).replace(/"/g,'&quot;')},'${bid}')">📋 複製</button>`:''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card" style="border-left:4px solid var(--bad,#E03131)">
+    <div style="font-weight:800;font-size:13.5px;color:#b02a2a">🛠 等一下在院內保養程式要改這幾格</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-top:3px">
+      其他機器、其他項目都維持「正常」，直接按【保養完成】就好。</div>
+    ${rows}</div>`;
+}
+function maintTodoHtml(sheetId,compact){
+  const list=defibOfSheet(sheetId);
+  if(!list.length) return '';
+  const d=curRcDate(), sh=effShift();
+  const recs=list.map(x=>({dev:x,rec:maintOf(d,sh,x.id)}));
+  const filled=recs.filter(x=>x.rec);
+  if(!filled.length) return '';
+  const rows=filled.map(function(x){
+    const moved=x.rec.moved==='是';
+    const odd=MAINT_FIELDS.filter(f=>x.rec.f[f.k]&&x.rec.f[f.k]!=='正常');
+    const body=odd.length
+      ? '<div style="font-size:13px;line-height:1.85;margin-top:5px">'
+        + odd.map(f=>'　<b style="color:'+(x.rec.f[f.k]==='異常'?'var(--bad,#E03131)':'var(--warn,#e8590c)')
+            +'">'+esc(f.label)+' → '+esc(x.rec.f[f.k])+'</b>').join('<br>')
+        + '<br>　備註要打：<b>'+esc(x.rec.note||'（沒寫備註，請補）')+'</b>'
+        + '<br>　其餘 '+(MAINT_FIELDS.length-odd.length)+' 項維持「正常」→ 按【保養完成】</div>'
+      : '<div style="font-size:13px;color:var(--ok,#2f9e44);margin-top:4px">'
+        + '7 項全部正常 → 院內不用動任何一格，直接按【保養完成】</div>';
+    return '<div style="padding:11px 0;border-top:1px dashed var(--line)">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      + '<b style="font-size:14px">'+esc(x.dev.name)+'<span style="font-weight:600;color:var(--ink-soft);font-size:12px">　'+esc(x.dev.id)+'・財產碼 '+esc(x.dev.asset)+'</span></b>'
+      + (moved
+          ? '<span class="tool-pill done" style="cursor:pointer" onclick="markMaintMoved(\''+x.dev.id+'\',true)">✓ 已轉入院內</span>'
+          : '<button class="btn btn-primary" style="padding:6px 12px;font-size:12.5px" onclick="markMaintMoved(\''+x.dev.id+'\')">我打好了</button>')
+      + '</div>' + body + '</div>';
+  }).join('');
+  const left=filled.filter(x=>x.rec.moved!=='是').length;
+  return '<div class="card" style="padding:12px 15px;margin-bottom:14px;border-left:4px solid '
+    + (left?'var(--warn,#e8590c)':'var(--ok,#2f9e44)') + '">'
+    + '<div style="font-weight:800;font-size:13.5px;margin-bottom:2px">📋 院內保養程式要打什麼'
+    + (left?('　<span style="color:var(--warn,#e8590c)">還有 '+left+' 台沒打</span>'):'　<span style="color:var(--ok,#2f9e44)">都打完了</span>')+'</div>'
+    + '<div style="font-size:12px;color:var(--ink-soft)">院內系統抓不到這裡的資料，要有人進院內網路點一次。打完請按「我打好了」。</div>'
+    + rows + '</div>';
+}
+
+/* ===================== 轉寫中心 =====================
+   院內電腦可以上外網，所以最省事的做法是：
+   在院內那台電腦上，左邊開這一頁、右邊開院內保養卡，照著打。
+
+   一天 18 張（6 台 × 3 班），而且院內規定就是每班一張、不能合併。
+   所以這一頁的唯一目標是：讓每一張從「要想」變成「照抄」。
+     ・全正常的（絕大多數）→ 一句話：直接按【保養完成】
+     ・有異常的 → 列出是哪一格、備註要打什麼，而且可以一鍵複製
+     ・打完按一下，下次進來就不會再看到它 —— 才不會重複打或漏打 */
+function openMaintHub(){ state.maintAllShifts=false; state.screen='maintHub'; render(); }
+function toggleMaintAll(){ state.maintAllShifts=!state.maintAllShifts; render(); }
+
+/* 複製到剪貼簿。navigator.clipboard 在非 https 會失效（院內可能是 http），
+   所以一定要留 execCommand 的退路 —— 不然她點了沒反應，會以為程式壞了。 */
+function copyText(t,btnId){
+  const done=()=>{ const b=document.getElementById(btnId);
+    if(b){ const o=b.textContent; b.textContent='✓ 已複製'; setTimeout(()=>{b.textContent=o;},1400); } };
+  try{
+    if(navigator.clipboard&&window.isSecureContext){
+      navigator.clipboard.writeText(t).then(done).catch(()=>fallbackCopy(t,done)); return;
+    }
+  }catch(e){}
+  fallbackCopy(t,done);
+}
+function fallbackCopy(t,done){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=t; ta.style.position='fixed'; ta.style.left='-9999px';
+    document.body.appendChild(ta); ta.select();
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    if(ok){ done(); return; }
+  }catch(e){}
+  window.prompt('這個瀏覽器不讓程式複製，請手動選取後複製：',t);
+}
+
+/* 一台機器、一個班 → 院內要做什麼。回 null 代表這一班還沒人填卡。 */
+function maintTodoOf(devId,shift){
+  const r=maintOf(curRcDate(),shift,devId);
+  if(!r) return null;
+  const odd=MAINT_FIELDS.filter(f=>r.f[f.k]&&r.f[f.k]!=='正常')
+    .map(f=>({label:f.label,val:r.f[f.k]}));
+  return { rec:r, odd:odd, moved:(r.moved==='是'),
+    note:String(r.note||''),
+    allOK:odd.length===0 };
+}
+function renderMaintHub(){
+  const d=curRcDate(), cur=effShift();
+  /* ★ 預設只顯示「你自己這一班」。
+     院內規定每班的人自己打自己的，所以把三班 18 格全攤出來是錯的 ——
+     那看起來像一個要護理長統一代辦的後台，反而讓人以為要幫別人登入。
+     其他班的量只用一行字帶過，需要時才展開。 */
+  const shifts=state.maintAllShifts?SHIFT_SEQ:[cur];
+  let filled=0, moved=0, waiting=0, blank=0;
+  const blocks=shifts.map(function(sh){
+    const rows=DEFIB.map(function(dev){
+      const t=maintTodoOf(dev.id,sh);
+      const bid='cp_'+sh+'_'+dev.id;
+      if(!t){ blank++;
+        return `<div class="mh-row mh-blank">
+          <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
+          <div class="mh-body">這一班還沒有人填保養卡 —— 先請該班填，再來院內打</div>
+          <div class="mh-act"></div></div>`; }
+      filled++;
+      if(t.moved){ moved++;
+        return `<div class="mh-row mh-done">
+          <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
+          <div class="mh-body">✓ 已核對院內已打${t.rec.movedBy?('（'+esc(t.rec.movedBy)+'）'):''}${t.rec.movedAt?('　'+esc(String(t.rec.movedAt).slice(5,16))):''}</div>
+          <div class="mh-act"><button class="mh-undo" onclick="markMaintMoved('${dev.id}',true,'${sh}')">取消</button></div></div>`; }
+      waiting++;
+      const body=t.allOK
+        ? `<b class="mh-ok">7 項全部正常</b>${t.rec.by?('　<span style="color:var(--ink-soft);font-weight:400">'+esc(t.rec.by)+'</span>'):''} → 院內直接按【保養完成】`
+        : `${t.odd.map(x=>`<b class="${x.val==='異常'?'mh-bad':'mh-na'}">${esc(x.label)} → ${esc(x.val)}</b>`).join('　')}
+           <div class="mh-note">備註要打：<b>${esc(t.note||'（沒寫備註，請回頭補）')}</b>
+             ${t.note?`<button class="mh-copy" id="${bid}" onclick="copyText(${JSON.stringify(t.note).replace(/"/g,'&quot;')},'${bid}')">📋 複製備註</button>`:''}</div>
+           <div class="mh-rest">其餘 ${MAINT_FIELDS.length-t.odd.length} 項維持「正常」→ 按【保養完成】</div>`;
+      return `<div class="mh-row ${t.allOK?'':'mh-warn'}">
+        <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
+        <div class="mh-body">${body}</div>
+        <div class="mh-act"><button class="mh-ok-btn" onclick="markMaintMoved('${dev.id}',false,'${sh}')">已核對</button></div></div>`;
+    }).join('');
+    return `<div class="mh-blk"><div class="mh-h">${SHIFT_NAME[sh]}（${sh}）${sh===cur?'　<span style="font-weight:600;font-size:12px;color:var(--brand)">← 目前這一班</span>':''}</div>${rows}</div>`;
+  }).join('');
+  const other=maintWaitingOther();
+  $app.innerHTML=`
+  <style>
+    .mh-blk{background:var(--card,#fff);border:1px solid var(--line);border-radius:12px;
+      overflow:hidden;margin-bottom:14px}
+    .mh-h{background:#f2f5f9;padding:9px 14px;font-weight:800;font-size:14px}
+    .mh-row{display:grid;grid-template-columns:190px 1fr 110px;gap:12px;align-items:center;
+      padding:11px 14px;border-top:1px solid var(--line);font-size:13.5px;line-height:1.75}
+    .mh-name{font-weight:700}
+    .mh-sub{display:block;font-weight:500;font-size:11.5px;color:var(--ink-soft);margin-top:2px}
+    .mh-blank{opacity:.6} .mh-blank .mh-body{color:var(--ink-soft)}
+    .mh-done{background:#f2faf4} .mh-warn{background:#fff9f2}
+    .mh-ok{color:#2f9e44} .mh-bad{color:#E03131} .mh-na{color:#e8590c}
+    .mh-note{margin-top:4px}
+    .mh-rest{font-size:12.5px;color:var(--ink-soft)}
+    .mh-tog,.mh-copy{margin-left:8px;border:1px solid var(--line);background:#fff;font-family:inherit;
+      font-size:12px;padding:3px 9px;border-radius:7px;cursor:pointer}
+    .mh-ok-btn{width:100%;border:none;background:var(--brand,#1c5fb0);color:#fff;font-family:inherit;
+      font-weight:700;font-size:13px;padding:9px 6px;border-radius:8px;cursor:pointer}
+    .mh-undo{width:100%;border:1px solid var(--line);background:transparent;color:var(--ink-soft);
+      font-family:inherit;font-size:12px;padding:7px 6px;border-radius:8px;cursor:pointer}
+    @media(max-width:700px){ .mh-row{grid-template-columns:1fr;gap:6px} .mh-act{margin-top:4px} }
+  </style>
+  <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">🛠 今天的電擊器保養</div>
+      <div class="sub">${fmtDate(curRcDateObj())} · ${state.maintAllShifts?'三班全部':SHIFT_NAME[cur]}　已填 ${filled} 格・未填 ${blank} 格${waiting?('・未核對 '+waiting):''}</div></div>
+    <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
+  <div class="screen wide">
+    <div class="card" style="padding:12px 15px;margin-bottom:14px;border-left:4px solid var(--brand)">
+      <div style="font-size:13px;line-height:1.85">
+        <b>這一頁是給妳看的，護理師不用進來。</b>
+        他們點班時把電擊器打勾「正常」，保養卡就自動記一筆 7 項全正常；標異常才要填細節。<br>
+        <b>我們沒辦法自動送進院內保養程式</b>（院內網段、沒有介面），所以院內那張卡還是要人自己打。
+        妳在這裡看到的是「今天實際的狀況」，不是「誰按了按鈕」。<br>
+        妳核對過院內確實打了，可以按「已核對」做個記號；不按也不影響任何事。
+      </div>
+      ${maintWriteOK()?'':`<div style="margin-top:9px;padding:9px 11px;border-radius:8px;background:#fdf1f1;
+        color:#b02a2a;font-size:12.5px;line-height:1.7">⚠ 後端目前是 ${esc(API_VER_SEEN||'未知')}，
+        「我打好了」需要 v18 才存得起來。請先更新並重新部署成「新版本」。</div>`}
+    </div>
+    ${rcDatePicker()}
+    ${blocks}
+    <div class="card" style="padding:11px 15px;font-size:13px;line-height:1.85;margin-bottom:10px">
+      ${state.maintAllShifts
+        ? `目前顯示三班全部。<button class="mh-tog" onclick="toggleMaintAll()">只看 ${SHIFT_NAME[cur]}</button>`
+        : `目前只顯示 ${SHIFT_NAME[cur]}。<button class="mh-tog" onclick="toggleMaintAll()">看三班全部（${DEFIB.length*SHIFT_SEQ.length} 格）</button>`}
+    </div>
+    <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin:10px 0 4px;line-height:1.9">
+      ＊一天 ${DEFIB.length*SHIFT_SEQ.length} 格（${DEFIB.length} 台 × ${SHIFT_SEQ.length} 班），院內規定每班一張、不合併。<br>
+      ＊「未填」表示那一班還沒點到電擊器，或點班時沒打勾 —— 不是漏做保養，是還沒點班。
+    </div>
+  </div>`;
+}
+/* 今天還有幾張沒在院內打（三班合計）。首頁那顆按鈕要用。 */
+/* ★★ 保養卡跟點班合一。
+   原本要人另外開一張卡、再看 7 個項目、再按儲存 —— 但護理師點班時本來就會把
+   「飛利浦 DC Shock」打一個勾，那一下就已經代表「我看過這台，沒問題」。
+   正常的時候等於做兩次，所以正常就不要多問任何一句。
+
+   ★ 但不可以變成「他不知道自己簽了什麼」：
+     打勾正常時，項目下面會多一行小字寫明「含保養 7 項全正常」，
+     他看得到自己等於簽了什麼，只是不用多按。
+
+   ★ 一個點班項目可能對到好幾台機器：
+     急救室那一項「飛利浦DC shock 1到4號」就是 ER-1~ER-4 四台。
+     打勾正常 → 四台都記正常；標異常 → 要問他是「哪幾台、哪幾項」。 */
+function isDefibItem(sheetId,name){
+  return MAINT_ON && defibOfSheet(sheetId).length>0
+    && /DC\s*SHOCK|電擊|除顫|去顫/i.test(String(name||''));
+}
+function defibForItem(sheetId,name){ return isDefibItem(sheetId,name)?defibOfSheet(sheetId):[]; }
+/* ★★ 現實檢查：我們沒辦法自動把資料送進院內保養程式（院內網段、沒有介面）。
+   在「不能自動轉」的前提下，叫護理師多按一個對他自己沒好處的按鈕，不會有人按，
+   最後只會得到一堆永遠顯示「待打」的假資料 —— 比沒有還糟。
+
+   所以分工改成：
+     ・護理師：點班打勾就好（正常零額外動作），有異常才填細節 —— 那是他本來就要做的
+     ・護理長：自己有一頁看「今天哪幾台有異常、備註要打什麼」，要核對才按
+   「已轉入院內」這一欄留在後端（成本是零），但不再要求護理師按。 */
+function maintIsLeader(){
+  if(!MAINT_ON) return false;
+  const u=state.user;
+  return !!(u&&(u.role==='護理長'||u.role==='副護理長'));
+}
+function maintQuickOf(sheetId){
+  state.maintQuick=state.maintQuick||{};
+  if(!state.maintQuick[sheetId]) state.maintQuick[sheetId]={devs:[],bad:[],note:''};
+  return state.maintQuick[sheetId];
+}
+function toggleQuickDev(sheetId,id){
+  const q=maintQuickOf(sheetId), i=q.devs.indexOf(id);
+  if(i>=0)q.devs.splice(i,1); else q.devs.push(id);
+  render();
+}
+function toggleQuickBad(sheetId,k){
+  const q=maintQuickOf(sheetId), i=q.bad.indexOf(k);
+  if(i>=0)q.bad.splice(i,1); else q.bad.push(k);
+  render();
+}
+function setQuickNote(sheetId,v){ maintQuickOf(sheetId).note=v; }
+/* 標了異常但沒講清楚是哪台／哪一項／為什麼 → 提交前要擋。
+   回傳一句話說明缺什麼，沒問題就回空字串。 */
+function maintQuickMissing(sheetId){
+  const q=maintQuickOf(sheetId);
+  if(!q.devs.length) return '請選「是哪一台」電擊器有問題';
+  if(!q.bad.length)  return '請選「哪幾項」不正常（外觀、功能檢測…）';
+  if(!String(q.note||'').trim()) return '請寫備註 —— 這段是要打進院內保養程式的';
+  return '';
+}
+/* 今天三班合計有幾台是異常的。護理長首頁那顆按鈕要用 ——
+   她要知道的是「有沒有事」，不是「有沒有人按按鈕」。 */
+function maintBadToday(){
+  const d=curRcDate(); let n=0;
+  SHIFT_SEQ.forEach(function(sh){
+    DEFIB.forEach(function(dev){
+      const r=maintOf(d,sh,dev.id);
+      if(r&&r.verdict==='異常') n++;
+    });
+  });
+  return n;
+}
+function maintWaitingIn(shift){
+  const d=curRcDate(); let n=0;
+  DEFIB.forEach(function(dev){
+    const r=maintOf(d,shift,dev.id);
+    if(r&&r.moved!=='是') n++;
+  });
+  return n;
+}
+/* 本班還有幾張沒在院內打。首頁那顆按鈕用這個 ——
+   給的是「你現在要做的事」，不是「全院今天的總量」。 */
+function maintWaitingToday(){ return maintWaitingIn(effShift()); }
+/* 其他班還欠多少（不是要你去做，是要讓它別變成沒人看見的黑洞）。 */
+function maintWaitingOther(){
+  let n=0;
+  SHIFT_SEQ.forEach(function(sh){ if(sh!==effShift()) n+=maintWaitingIn(sh); });
+  return n;
+}
+function renderMaint(){
+  const s=sheetById(state.sheetId), acolor=areaColor(s.area);
+  const d=curRcDate(), sh=effShift();
+  // ---- 單台的卡 ----
+  if(state.maintDev){
+    const dev=defibById(state.maintDev), cur=maintOf(d,sh,dev.id);
+    const draft=state.maintDraft||{}, vd=maintVerdictOf(draft);
+    const rows=MAINT_FIELDS.map(function(f){
+      const v=draft[f.k]||'正常';
+      return '<div style="padding:11px 0;border-bottom:1px solid var(--line)">'
+        + '<div style="font-size:14.5px;font-weight:700;margin-bottom:7px">'+esc(f.label)+'</div>'
+        + '<div class="chips">'+MAINT_VALS.map(function(o){
+            const on=(v===o);
+            const col=o==='異常'?'#E03131':(o==='不適用'?'#e8590c':'#2f9e44');
+            return '<button class="chip'+(on?' on':'')+'" style="'+(on?('background:'+col+';border-color:'+col+';color:#fff'):'')+'" '
+              + 'onclick="setMaintVal(\''+f.k+'\',\''+o+'\')">'+o+'</button>';
+          }).join('')+'</div></div>';
+    }).join('');
+    $app.innerHTML=`
+    <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+      <div><div class="title">🛠 ${esc(dev.name)}</div>
+        <div class="sub">${fmtDate(curRcDateObj())} · ${SHIFT_NAME[sh]} · ${esc(state.user.name)}</div></div>
+      <button class="back" onclick="maintBack()">返回</button></div></div>
+    <div class="screen lvl2">
+      <div class="card" style="padding:11px 14px;margin-bottom:12px;border-left:4px solid ${acolor}">
+        <div style="font-size:13px;color:var(--ink-soft);line-height:1.8">
+          ${esc(dev.id)}・財產碼 ${esc(dev.asset)}・${esc(dev.zone)}${dev.note?('・'+esc(dev.note)):''}<br>
+          <b>7 項預設都是「正常」，只要改有問題的那一格就好。</b>欄位跟院內保養卡一字不差。
+        </div></div>
+      ${cur?`<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#eef4fb;border-left:4px solid #1c5fb0">
+        <div style="font-size:13px;color:#1c5fb0;font-weight:700">本班已由 ${esc(cur.by||'他人')} 填過（${esc(cur.verdict||'')}）${cur.at?('　'+esc(String(cur.at).slice(11,16))):''}</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:3px">再存一次會覆蓋這一筆；「已轉入院內」的標記會保留。</div></div>`:''}
+      <div class="card" style="padding:4px 15px 14px">${rows}
+        <div style="margin-top:13px">
+          <div style="font-size:13px;font-weight:800;margin-bottom:5px">備註
+            ${vd.bad?'<span style="color:var(--bad,#E03131)">（有異常，必填 —— 這段要打進院內）</span>':'<span style="color:var(--ink-soft);font-weight:600">（選填）</span>'}</div>
+          <input class="note-in" style="width:100%" placeholder="${vd.bad?'請寫清楚狀況，例如：電池只撐 8 分鐘':'備註（選填）'}"
+            value="${esc(state.maintNote||'')}" onchange="setMaintNote(this.value)"
+            ${vd.bad&&!String(state.maintNote||'').trim()?'style="border-color:var(--bad,#E03131);width:100%"':''}>
+        </div>
+        <div style="margin-top:12px;font-size:13.5px">判定：<b style="color:${vd.bad?'var(--bad,#E03131)':'var(--ok,#2f9e44)'}">${vd.verdict}</b>
+          <span style="color:var(--ink-soft);font-size:12px">（7 項有任一項異常就是異常，不用自己判斷）</span></div>
+      </div>
+      <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="saveMaintCard()">儲存這張保養卡</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:9px" onclick="maintBack()">取消</button>
+    </div>`;
+    return;
+  }
+  // ---- 這張點班表的機器清單 ----
+  const list=defibOfSheet(s.id);
+  const cards=list.map(function(x){
+    const r=maintOf(d,sh,x.id);
+    const st=!r?['尚未填','var(--warn,#e8590c)']
+      :(r.verdict==='異常'?['異常','var(--bad,#E03131)']:['正常','var(--ok,#2f9e44)']);
+    return `<div class="card" style="padding:12px 15px;margin-bottom:10px;border-left:4px solid ${st[1]}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div><div style="font-weight:800;font-size:15px">${esc(x.name)}</div>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px">${esc(x.id)}・財產碼 ${esc(x.asset)}${x.note?('・'+esc(x.note)):''}</div>
+          <div style="font-size:13px;margin-top:5px;color:${st[1]};font-weight:700">${st[0]}${r&&r.by?('　'+esc(r.by)):''}${r&&r.moved==='是'?'　·　✓ 已轉入院內':''}</div></div>
+        <button class="btn ${r?'btn-ghost':'btn-primary'}" style="padding:9px 14px;font-size:13px;white-space:nowrap"
+          onclick="openMaintCard('${x.id}')">${r?'查看／修改':'填寫'}</button>
+      </div>
+      ${r&&r.verdict==='異常'?`<div style="margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)">
+        <div style="font-size:13px;color:var(--bad,#E03131)">異常：${esc(MAINT_FIELDS.filter(f=>r.f[f.k]==='異常').map(f=>f.label).join('、'))}</div>
+        <div style="font-size:12.5px;color:var(--ink-soft);margin-top:3px">備註：${esc(r.note||'（未填）')}</div>
+        <button class="btn btn-ghost" style="margin-top:8px;padding:7px 12px;font-size:12.5px" onclick="maintToRepair('${x.id}')">🔧 開請修單</button>
+      </div>`:''}
+    </div>`;
+  }).join('');
+  $app.innerHTML=`
+  <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">🛠 電擊器保養卡</div>
+      <div class="sub">${esc(s.name)} · ${fmtDate(curRcDateObj())} · ${SHIFT_NAME[sh]}</div></div>
+    <button class="back" onclick="maintBack()">返回</button></div></div>
+  <div class="screen lvl2">
+    ${maintWriteOK()?'':`<div class="card" style="padding:11px 14px;margin-bottom:12px;background:#fbe8e8;border:1px solid #f0c0c0;color:#c0392b">
+      <div style="font-weight:800;font-size:13.5px">⚠ 後端還不支援保養卡</div>
+      <div style="font-size:12.5px;line-height:1.7;margin-top:4px">目前後端是 ${esc(API_VER_SEEN||'未知')}，保養卡需要 v18。
+        請先更新 dianban_api.gs 並重新部署成「新版本」。現在可以先看畫面，但存不進去。</div></div>`}
+    ${cards||'<div class="card" style="padding:14px">這張點班表沒有電擊器。</div>'}
+    ${maintTodoHtml(s.id)}
+    ${maintIsLeader()?`<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="openMaintHub()">
+      🛠 今天的電擊器保養（三班 ${DEFIB.length*SHIFT_SEQ.length} 格）</button>`:''}
+    <div class="card" style="padding:12px 15px;font-size:12.5px;color:var(--ink-soft);line-height:1.8">
+      ＊欄位與院內保養卡完全一致：外觀版面無破損／外觀清潔／導線纏繞整齊／功能檢測／蓄電功能／列印記錄功能／儀器時間。<br>
+      ＊院內那張卡 7 項預設都是「正常」，所以全正常時在院內只要按【保養完成】。<br>
+      ＊這裡存的是電子紀錄；院內系統抓不到，仍需有人上院內網路點一次，打完請按「我打好了」。
+    </div>
+  </div>`;
 }
 
 // ---------- start ----------
@@ -6444,7 +7297,8 @@ const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',7
 /* 冰箱／氧氣開 App 就抓 30 天 —— 管理分析要看近 14 天登錄率，護理長也常直接翻整個月。
    它在第二波（背景）抓，不擋著開始點班。
    之後每 20 秒的自動更新只抓 3 天，但用「合併」寫回去，所以這 30 天不會被縮掉。 */
-const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry']];
+const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry']]
+  .concat(MAINT_ON?[['device_maint',7]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
   /* ★ 先用手機裡上次的資料畫畫面（幾乎瞬間），再去抓新的。
