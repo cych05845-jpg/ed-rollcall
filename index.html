@@ -985,7 +985,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-17-b58';
+const APP_VER='2026-09-17-b59';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1353,7 +1353,11 @@ async function bindSchedule(forDate){
 }
 // ---- 附加查核表(藥品冰箱溫度 / 氧氣桶審核) 接點 ----
 const FRIDGE_SHEETS={'peds-triage':'兒童檢傷 藥品冰箱（PT）','obs-1':'留觀 藥品冰箱','obs-2':'留觀 藥品冰箱','obs-cart':'留觀 藥品冰箱'};
-const O2_SHEETS={'treat23':{dept:'治療二、三',qty:10},'peds-area':{dept:'兒科',qty:2},'obs-1':{dept:'留觀',qty:5},'obs-2':{dept:'留觀',qty:5},'obs-cart':{dept:'留觀',qty:5}};
+/* ★ 氧氣桶「應有支數」目前寫在這裡，不在後端 Sheet。
+   要改數量就改這一行的 qty（2026-09-17：治療二、三 10 → 8，護理長現場核對後修正）。
+   ★ 一個 dept 可能對到多張點班表（留觀有三張），同一個 dept 的 qty 要一致，
+     否則首頁的按鈕和點班表裡的附加查核會顯示不同的數字。 */
+const O2_SHEETS={'treat23':{dept:'治療二、三',qty:8},'peds-area':{dept:'兒科',qty:2},'obs-1':{dept:'留觀',qty:5},'obs-2':{dept:'留觀',qty:5},'obs-cart':{dept:'留觀',qty:5}};
 // ★ 一定要回傳有效年月；空字串會讓冰箱/氧氣表寫入空的「年月」而永遠同步不到
 function curYM(){
   const s=(curRcDate()||'').slice(0,7);
