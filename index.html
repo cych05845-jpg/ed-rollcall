@@ -985,7 +985,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-17-b59';
+const APP_VER='2026-09-17-b60';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1510,7 +1510,51 @@ function setRcDate(v){
   let d=parseISO(v);const mn=minRcDate(),mx=maxRcDate();
   if(d<mn)d=mn; if(d>mx)d=mx;
   state.rcDate=fmtISO(d);
+  /* 記下「這個日期是人自己挑的」，之後不要自動改掉他的選擇。
+     rcManualDay 存的是挑的時候的「今天」—— 跨過一個日曆日就失效，
+     否則這個旗標會被 localStorage 一直帶著，隔天還壓著自動判斷。 */
+  state.rcDateManual=true; state.rcManualDay=todayISO();
   rebindForDate();
+}
+function rcManualActive(){
+  return !!(state.rcDateManual && state.rcManualDay===todayISO());
+}
+/* 23:30 的陷阱：有人 22:00 就登入、頁面一直掛著，23:40 才去點班。
+   班別會跟著時間變成大夜（effShift 是即時算的），
+   但 state.rcDate 是登入時寫的，還黏在前一天 ——
+   那一班就會被記成「前一天的大夜」，而前一天凌晨已經有自己的大夜了。
+   同一天兩筆大夜，交班與統計都會對不起來。
+
+   所以：沒有人手動挑過日期、現在停在今天、而且已過 23:30 →
+   自動推到隔天，跟半夜點班的人一致。
+   有手動挑過就不動他的選擇，改用 rcNightMismatchCard() 明確提醒。 */
+function rcAutoRollNight(){
+  if(rcManualActive()) return false;
+  if(!rcIsNightAhead()) return false;
+  const want=rcDefaultDate();
+  if(state.rcDate===want) return false;
+  state.rcDate=want; rebindForDate();
+  return true;
+}
+/* 手動挑了今天、但現在已過 23:30 → 明確警告並給一鍵改過去。
+   不自動改是因為那是他自己挑的；不提醒卻是我們的錯。 */
+function rcNightMismatchCard(){
+  if(!rcIsNightAhead()) return '';
+  const today=todayISO();
+  if(curRcDate()!==today) return '';
+  const want=rcDefaultDate();
+  const sh=function(x){ return x.slice(5).replace('-','/'); };
+  return '<div class="card" style="padding:12px 14px;margin-bottom:12px;'
+    + 'background:#fff4e6;border:1px solid #ffd8a8;color:#9a4a08">'
+    + '<div style="font-weight:800;font-size:13.5px">⚠ 現在 '+tpeHM()
+    + '，大夜班應該算 '+esc(sh(want))+'</div>'
+    + '<div style="font-size:12.5px;line-height:1.8;margin-top:4px">'
+    + '你目前選的是 <b>'+esc(sh(today))+'</b>。'
+    + '這一班如果記在今天，會跟今天凌晨那一班的大夜撞在一起，'
+    + '交班與統計會對不起來。</div>'
+    + '<button class="btn btn-primary btn-block" style="margin-top:9px;padding:9px;font-size:13.5px" '
+    + 'onclick="setRcDate(\''+want+'\')">改成 '+esc(sh(want))+' 大夜</button>'
+    + '</div>';
 }
 function timingKey(){return curRcDate()+'|'+(state.sheetId||'')+'|'+(state.half||'');}
 function fmtClock(ms){const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
@@ -2330,6 +2374,7 @@ function renderHome(){
       <div class="day">${weekday(now)} · 目前班別 <span class="shift-pill">🕐 ${SHIFT_NAME[cur]}</span></div>
     </div></div>
     ${tzWarnCard()}
+    ${rcNightMismatchCard()}
     <div class="section-h">今日各班狀態（點選可切換本班）</div>
     <div class="sum-row">${stat}</div>
     ${shiftBar}
@@ -4118,7 +4163,8 @@ function renderItemCheck(){
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
     +   '排法跟紙本附件二一樣：上排日期、下排 N／D／E。最右邊「合計」看這 '+n+' 天哪一項最常被跳過。<br>'
     +   '斜線格＝那一班沒點班；點格子會顯示日期、班別與狀態。'
-    +   (seal?'<br>🔒＝封籤還在，該班不必逐項點那些上鎖品項。':'')
+    +   (seal?'<br>🔒＝那一班封籤相符，上鎖品項由封籤代表，不必逐項點。'
+             +'<br>🔓＝那一班<b>封籤不符</b>，這些品項沒有人確認過，右邊「合計」不會算進去。':'')
     + '</div>'
     + page
     + '</div>';
@@ -5492,6 +5538,9 @@ function shortTime(s){
 let SYNCING=false, SYNC_AT=0, SYNC_MS=null;
 async function syncAll(){
   if(SYNCING)return;
+  /* 頁面可能已經掛了好幾個小時 —— 每次同步順手檢查有沒有跨過 23:30。
+     放在同步裡而不是另開計時器，是因為同步本來就會 render()。 */
+  try{ if(state.user) rcAutoRollNight(); }catch(e){ console.warn('大夜跨日檢查失敗',e); }
   SYNCING=true;
   const btn=document.getElementById('syncBtn');
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
@@ -7289,7 +7338,12 @@ applyTheme();
 store.load();
 if(!state.user)state.screen='login';
 render();
-if(state.user){ state.rcDate=rcDefaultDate(); rebindForDate(); }
+if(state.user){
+  /* 開 App 時：沒手動挑過就用系統判斷（含 23:30 之後算隔天）；
+     手動挑過而且還是同一個日曆日，就尊重他的選擇。 */
+  if(!rcManualActive()) state.rcDate=rcDefaultDate();
+  rebindForDate();
+}
 /* ★★★ 啟動分兩波，不要一次抓 12 張表。
    實測她的初次同步 39.9 秒 —— 慢的是 Apps Script 讀試算表，
    而那 39.9 秒裡有一大半花在「首頁根本用不到」的表上：
