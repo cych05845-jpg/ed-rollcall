@@ -333,6 +333,9 @@
 .ic-tbl thead th{background:#f1f1f1;font-weight:500;font-size:10.5px;line-height:1.3}
 .ic-it{text-align:left!important;font-size:11px;line-height:1.3}
 .ic-qty{color:#666;font-weight:400;font-size:9.5px;margin-left:3px}
+/* 數量欄：紙本點班簿在品項右邊有一欄「數量」，抽查時要對得出來 */
+.ic-n{width:34px;min-width:34px;background:#fafafa;font-weight:700;font-size:10px;
+  font-variant-numeric:tabular-nums}
 .ic-lk{color:#0f5f68;font-size:9px;margin-left:3px}
 .ic-grp{background:#f8f8f8;text-align:left!important;font-weight:700;font-size:10.5px;
   letter-spacing:.04em;color:#333}
@@ -350,6 +353,7 @@
 .ic-dense th,.ic-dense td{padding:1px 0;font-size:10px;height:17px;line-height:1.1}
 .ic-dense .ic-it{padding:1px 5px 1px 4px;font-size:10.5px;white-space:nowrap}
 .ic-dense .ic-grp{padding:2px 5px;font-size:10px}
+.ic-dense .ic-n{padding:1px 2px;font-size:9.5px}
 .ic-dense .ic-ok,.ic-dense .ic-bad,.ic-dense .ic-un,.ic-dense .ic-qm{font-size:11px}
 .ic-dense .ic-seal{font-size:9px}
 .ic-dh{background:#ececec;font-weight:700;font-size:10px;white-space:nowrap}
@@ -359,6 +363,10 @@
 .ic-sum{width:38px;min-width:38px;background:#fafafa}
 .ic-dend{border-right:1.4px solid #6a6a6a!important}
 .ic-sec{font-size:11px;font-weight:700;margin:9px 0 3px;color:#111}
+/* 「物品流向」底下的兩張小表，縮排一階，看得出是同一個區塊 */
+.ic-sub{font-size:9.5px;color:#555;margin:-2px 0 4px}
+.ic-sec2{font-weight:600;font-size:10.5px;margin:7px 0 3px 10px;color:#333}
+.ic-sec2+table,.ic-sec2+.ic-none{margin-left:10px;width:calc(100% - 10px)}
 .ic-who{border:1px solid #9a9a9a;padding:4px 7px}
 .ic-who-r{font-size:10px;line-height:1.75;color:#111;font-variant-numeric:tabular-nums}
 /* 班別欄底下的「點到幾項」 */
@@ -985,7 +993,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-17-b60';
+const APP_VER='2026-09-18-b62';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1364,7 +1372,11 @@ function curYM(){
   if(/^\d{4}-\d{2}$/.test(s))return s;
   const t=tpeParts();return t.y+'-'+String(t.m).padStart(2,'0');
 }
-function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}`,'🌡 藥品冰箱溫度 · '+unit);}
+/* ★ 一起帶員編：冰箱表的「主管查核」要靠員編認出是誰，
+   才知道該畫哪一張簽名圖，也才留得住證據。 */
+function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');
+  const emp=encodeURIComponent(state.user?state.user.id:'');
+  openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}&emp=${emp}`,'🌡 藥品冰箱溫度 · '+unit);}
 function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
 function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
 // 用本機紀錄判斷「今天這一區」冰箱/氧氣是否已登錄,回傳簽名者(空=未完成)
@@ -2397,7 +2409,7 @@ function renderHome(){
     ${(!hasAdmin&&can('record.print'))?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
       onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px"
-      onclick="openItemCheck()">🔍 急救車逐項查看（抽查用）</button>`:''}
+      onclick="openItemCheck()">🔍 點班表逐項查看（可列印・一頁一週）</button>`:''}
     ${(!hasAdmin&&auditCanEdit())?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
       onclick="openCartAudit()">📅 急救車雙月效期盤點（2/5/8/11 月）</button>`:''}
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:6px;line-height:1.8">
@@ -3084,7 +3096,7 @@ function renderAdminHub(){
     b('主管簽核 · 完成總表','openLeader()'),
     b('簽核／點班紀錄','openRecords()'),
     b('🖨 每週點班紀錄（可列印·主管審閱）','openPrintWeek()'),
-    b('🔍 急救車逐項查看（哪一項有沒有被點）','openItemCheck()'),
+    b('🔍 點班表逐項查看（哪一項有沒有被點・可列印）','openItemCheck()'),
     b('📅 急救車雙月效期盤點（附件一・2/5/8/11 月）','openCartAudit()'),
     b('🩺 後端連線診斷（畫面顯示都沒點時用）','openNetDiag()'),
     b('🗄 封存說明（每 3 個月歸檔，查得到）','archHelp()'),
@@ -3296,13 +3308,13 @@ function renderPrintWeek(){
     +   '<button class="btn btn-ghost" onclick="pwShift(1)">下一週 →</button>'
     +   '<select onchange="state.pwArea=this.value;render()" style="padding:9px 10px;border:1px solid var(--line);'
     +     'border-radius:9px;font-family:inherit;font-size:14px;background:transparent;color:inherit">'+areaOpts+'</select>'
-    +   '<button class="btn btn-ghost" onclick="openItemCheck()">🔍 急救車逐項查看</button>'
+    +   '<button class="btn btn-ghost" onclick="openItemCheck()">🔍 點班表逐項查看</button>'
     +   archBtn(400)
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
     +   '這一週有紀錄的點班表各印一張（A4 直式），沒紀錄的不印以免浪費紙。<br>'
-    +   '要看急救車「哪一項到底有沒有被點」，按上面的<b>🔍 急救車逐項查看</b>。<br>'
+    +   '要看「哪一項到底有沒有被點」，按上面的<b>🔍 點班表逐項查看</b>（14 張表都可以印，一頁一週）。<br>'
     +   '主管審閱有兩格：左邊是<b>系統的週簽核</b>（在「主管簽核 · 完成總表」按過就會自動印出來），'
     +   '右邊留空白給<b>實體簽章</b>。'
     + '</div>'
@@ -3899,13 +3911,26 @@ const IC_MARK={ ok:['✓','ic-ok','已點'], bad:['✗','ic-bad','異常'], un:[
   sealbad:['🔓','ic-bad','封籤不符 —— 該班未逐項清點，這些品項無人確認'],
   na:['','ic-na','該班未點班'],
   nolog:['·','ic-na','無逐項資料'], qm:['?','ic-qm','名單過長已截斷'] };
-// 急救車優先；找不到就給全部表，讓她自己選
+/* ★ icSheets() 只回急救車 —— 附件一（雙月效期盤點）只有急救車要做，
+     不可以因為逐項查看開放全部表就跟著變成全部表。 */
 function icSheets(){
   const c=SHEETS.filter(function(s){ return /急救車|急救推車/.test(s.name||'')||s.mode==='seal'; });
   return c.length?c:SHEETS.slice();
 }
-const IC_SPANS=[3,5,7];                  // 可選的天數（紙本附件二是 7 天 × N/D/E）
-function icSpan(){ const n=+state.icSpan; return IC_SPANS.indexOf(n)>=0?n:5; }
+function isCartSheet(id){
+  const s=sheetById(id); if(!s) return false;
+  return /急救車|急救推車/.test(s.name||'')||s.mode==='seal';
+}
+/* 逐項查看／點班表：全部 14 張都能印，急救車排前面（最常抽查）。 */
+function icPickSheets(){
+  const cart=[], rest=[];
+  SHEETS.forEach(function(s){ isCartSheet(s.id)?cart.push(s):rest.push(s); });
+  return cart.concat(rest);
+}
+/* 紙本點班簿就是一頁一週（7 天 × N/D/E），所以預設 7 天。
+   3／5 天留著給「只想看最近幾天」用。 */
+const IC_SPANS=[3,5,7];
+function icSpan(){ const n=+state.icSpan; return IC_SPANS.indexOf(n)>=0?n:7; }
 function icSetSpan(n){ state.icSpan=n; render(); }
 function openItemCheck(sheetId){
   if(!can('record.print')){ alert('逐項查看開放給主管與各班 Leader（小組長以上）。'); return; }
@@ -3913,7 +3938,7 @@ function openItemCheck(sheetId){
   state.screen='itemCheck';
   if(sheetId) state.icSheet=sheetId;
   if(!state.icSheet||!SHEETS.some(function(s){return s.id===state.icSheet;}))
-    state.icSheet=(icSheets()[0]||{}).id||'';
+    state.icSheet=(icPickSheets()[0]||{}).id||'';
   if(!state.icDate) state.icDate=todayISO();       // ★ icDate＝區間的「最後一天」
   render();
   loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff'],['owed']]).then(function(){
@@ -4001,7 +4026,7 @@ function renderItemCheck(){
   const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹';
   function supNum(n){ return String(n).split('').map(function(c){ return SUP.charAt(+c); }).join(''); }
 
-  const NCOL=1+n*3+1;
+  const NCOL=2+n*3+1;                    // 品項 ＋ 數量 ＋ 各班 ＋ 合計
   let body='';
   order.forEach(function(t){
     body+='<tr><td class="ic-grp" colspan="'+NCOL+'">'+esc(t)+'（'+group[t].length+' 項）</td></tr>';
@@ -4027,16 +4052,18 @@ function renderItemCheck(){
         });
       });
       const stat=cells?('<span class="ic-wk '+(seen<cells?'ic-wk-lo':'')+'">'+seen+'/'+cells+'</span>'):'—';
+      /* ★ 數量獨立一欄（紙本點班簿就是「品項｜數量｜日期…」）。
+         原本塞在品項後面當小字，印出來跟品項名擠在一起，抽查時要瞇著眼找。 */
       return '<tr><th class="ic-it">'+esc(o.name)
-           + (o.qty?('<span class="ic-qty">×'+esc(o.qty)+'</span>'):'')
            + (lockedOn(sid,o)?'<span class="ic-lk">🔒</span>':'')
-           + '</th>'+tds+'<td class="ic-sum">'+stat+'</td></tr>';
+           + '</th><td class="ic-n">'+esc(o.qty||'')+'</td>'
+           + tds+'<td class="ic-sum">'+stat+'</td></tr>';
     }).join('');
   });
 
   /* 兩層表頭：上排日期（跨 3 欄）、下排 N/D/E。
      紙本附件二就是這個排法，人員與稽核都認得。 */
-  let h1='<tr><th class="ic-it" rowspan="2">品項</th>';
+  let h1='<tr><th class="ic-it" rowspan="2">品項</th><th class="ic-n" rowspan="2">數量</th>';
   days.forEach(function(d){
     h1+='<th class="ic-dh ic-dend" colspan="3">'+(d.getMonth()+1)+'/'+d.getDate()
       + '<span class="ic-dw">'+'日一二三四五六'.charAt(d.getDay())+'</span></th>';
@@ -4071,11 +4098,12 @@ function renderItemCheck(){
 
   const page='<section class="pw-page">'
     + '<div class="pw-head"><div class="pw-org">財團法人嘉義基督教醫院　急診護理站</div>'
-    + '<div class="pw-ttl">急救車逐項點班查核表</div>'
+    + '<div class="pw-ttl">急診點班表（逐項紀錄）</div>'
     + '<div class="pw-unit">'+esc(s.name||'')+'</div>'
     + '<div class="pw-meta">'+esc(label)+'（'+n+' 天 × 三班）　'
     + (seal?'本車<b>有上鎖</b>：封籤還在的班，上鎖品項由封籤代表'
-           :'本車<b>無上鎖</b>：每班全品項逐項點')+'</div></div>'
+           :(isCartSheet(sid)?'本車<b>無上鎖</b>：每班全品項逐項點'
+                             :'<b>每班全品項逐項點</b>'))+'</div></div>'
     + (noLogKeys.length?('<div class="ic-warn">'
         + (oldOnly?'這個區間<b>全部 '+cells+' 個班</b>'
                   :'這個區間有 <b>'+noLogKeys.length+' / '+cells+' 個班</b>')
@@ -4090,8 +4118,13 @@ function renderItemCheck(){
     + '<table class="ic-tbl ic-dense"><thead>'+h1+h2+'</thead>'
     + '<tbody>'+(body||'<tr><td colspan="'+NCOL+'" class="pw-empty" style="height:36px">這張表沒有品項資料</td></tr>')
     + '</tbody></table>'
-    + '<div class="ic-sec">各班點班人員</div><div class="ic-who">'+whoRows+'</div>'
-    + '<div class="ic-sec">異常明細（'+esc(label)+'）</div>'
+    + '<div class="ic-sec">點班人員</div><div class="ic-who">'+whoRows+'</div>'
+    /* ★ 紙本點班簿最下面那一大格叫「物品流向」，人手寫「X 借給 OO／Y 送修」。
+       系統裡這件事本來就分成兩份資料（異常原因、欠物本），所以合成一個區塊印，
+       跟紙本對得起來，也不用再翻第二張表。 */
+    + '<div class="ic-sec">物品流向</div>'
+    + '<div class="ic-sub">＝ 這段期間的異常紀錄 ＋ 這一區尚未結案的欠物</div>'
+    + '<div class="ic-sec ic-sec2">異常明細（'+esc(label)+'）</div>'
     + (issRows.length
       ? '<table class="ic-iss"><colgroup><col style="width:24px"><col style="width:56px">'
         + '<col style="width:26px"><col><col style="width:76px"><col><col style="width:60px"></colgroup>'
@@ -4108,7 +4141,7 @@ function renderItemCheck(){
       : '<div class="ic-none">這段期間沒有異常紀錄</div>')
     /* ★ 欠物本：異常裡「借出未還／數量短少」最後都會進欠物本。
        兩份分開看就會漏掉「這一項到底補回來沒有」，所以印在同一張。只列未結案的。 */
-    + '<div class="ic-sec">欠物本 · 尚未結案（'+esc((areaById(s.area)||{}).name||'')+'）</div>'
+    + '<div class="ic-sec ic-sec2">欠物本 · 尚未結案（'+esc((areaById(s.area)||{}).name||'')+'）</div>'
     + (owedRows.length
       ? '<table class="ic-iss"><colgroup><col style="width:56px"><col><col style="width:88px">'
         + '<col style="width:62px"><col></colgroup>'
@@ -4138,7 +4171,7 @@ function renderItemCheck(){
     + esc(tpeDate().toLocaleDateString('zh-TW'))+'</div>'
     + '</section>';
 
-  const shOpts=icSheets().map(function(x){
+  const shOpts=icPickSheets().map(function(x){
     return '<option value="'+x.id+'"'+(x.id===sid?' selected':'')+'>'+esc(x.name)+'</option>'; }).join('');
 
   const spanBtns=IC_SPANS.map(function(x){
@@ -4147,7 +4180,7 @@ function renderItemCheck(){
 
   $app.innerHTML=
     '<div class="topbar noprint"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">'
-    + '<div><div class="title">🔍 急救車逐項查看</div><div class="sub">'+esc(s.name||'')+' · '+esc(label)+'</div></div>'
+    + '<div><div class="title">🔍 點班表逐項查看</div><div class="sub">'+esc(s.name||'')+' · '+esc(label)+'</div></div>'
     + '<button class="back" onclick="state.screen=\'' + esc(state.icBack||'home') + '\';render()">返回</button></div></div>'
     + '<div class="screen wide">'
     + '<div class="card noprint" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
@@ -4161,7 +4194,7 @@ function renderItemCheck(){
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
     + '</div>'
     + '<div class="card noprint" style="font-size:12.5px;color:var(--ink-soft);line-height:1.8">'
-    +   '排法跟紙本附件二一樣：上排日期、下排 N／D／E。最右邊「合計」看這 '+n+' 天哪一項最常被跳過。<br>'
+    +   '排法跟紙本點班簿一樣：品項｜數量｜上排日期、下排 N／D／E。最右邊「合計」看這 '+n+' 天哪一項最常被跳過。<br>'
     +   '斜線格＝那一班沒點班；點格子會顯示日期、班別與狀態。'
     +   (seal?'<br>🔒＝那一班封籤相符，上鎖品項由封籤代表，不必逐項點。'
              +'<br>🔓＝那一班<b>封籤不符</b>，這些品項沒有人確認過，右邊「合計」不會算進去。':'')

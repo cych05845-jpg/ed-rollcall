@@ -49,7 +49,10 @@
   .superv{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px}
   .superv input{padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-family:inherit}
   @media print{
-    body{background:#fff}.bar,.legend .noprint,.btn{display:none!important}
+    /* 列印時：工具列、所有標了 noprint 的區塊、按鈕一律隱藏。
+       原本只寫 .legend .noprint，所以螢幕用的異常編輯表也會被印出來，
+       跟上面格線裡的同一份資料重複印兩次。 */
+    body{background:#fff}.bar,.noprint,.btn{display:none!important}
     .wrap{max-width:none;padding:0}.sheet{box-shadow:none;border-radius:0;overflow:visible}
     @page{size:A4 landscape;margin:8mm}
   }
@@ -84,12 +87,12 @@ function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const UNITS=["兒童檢傷 藥品冰箱（PT）","留觀 藥品冰箱","急救室 藥品冰箱","治療區 藥品冰箱"];
 const SHIFTS=["0","8","16"];
 const TMIN=0,TMAX=10,LOW=2,HIGH=8;
-const AXISW=42, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;
+const AXISW=64, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;   // 左欄要放得下「主管查核／日期」與「異常狀況處理」群組
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-16-b33';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-10-v11';
+const APP_VER='2026-09-18-b37';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-17-v21';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
@@ -173,6 +176,146 @@ function ymOf(v){
   return s;
 }
 function rkey(day,si){ return day+'_'+SHIFTS[si]; }
+
+/* ===================== 個人簽名／印章圖 =====================
+   紙本「主管查核／日期」那一格是簽名或蓋章，電子表只印名字，歸檔時看起來不一致。
+   所以讓本人上傳一張簽名／印章圖，列印時畫在那一格。
+
+   ★ 界線要講清楚：圖是「呈現」，不是「證據」。
+     存起來的圖，任何能按到按鈕的人都能貼上去 —— 看起來更正式，
+     證明力其實比「員編＋時間」弱。所以 superv 那筆紀錄照舊存員編與時間，
+     圖只影響印出來的樣子。
+
+   ★ 只有本人的圖會顯示：以員編為 key，畫的時候比對 sv.empId。
+   ★ Google Sheets 單格上限 5 萬字元，所以上傳前一定要壓到 40KB 以內。 */
+let SIGNIMG={};                     // 員編 → dataURL
+/* 員編從網址帶進來（index.html 開這一頁時會加 &emp=）。
+   ★ 沒有員編就不讓上傳簽名圖 —— 認不出是誰的圖，存下去也沒意義。 */
+function myEmp(){ return String(P.get('emp')||'').trim(); }
+function signOf(emp){ return SIGNIMG[String(emp||'').trim()]||''; }
+async function loadSignImgs(){
+  if(!API_URL) return;
+  try{
+    const r=await fetch(API_URL+'?table=staff_sign');
+    const a=await r.json();
+    if(!Array.isArray(a)) return;
+    const m={};
+    a.forEach(function(o){
+      const e=String(o['員編']||o.empId||'').trim();
+      const img=String(o['簽名圖']||o.image||'');
+      if(e&&img.indexOf('data:image/')===0) m[e]=img;
+    });
+    SIGNIMG=m;
+  }catch(e){ console.warn('讀簽名圖失敗（不影響其他功能）',e); }
+}
+/* 直接拍照上傳用：
+   1) 先找出「印泥紅」或「筆跡黑」的像素，裁掉四周的紙（拍整張紙也沒關係）
+   2) 紙的灰底一律洗成純白，只留下印章／簽名本身
+   3) 再壓成 PNG。簽名是線條，PNG 比 JPEG 乾淨（不會有壓縮雜點）
+   存不進去比畫質差難處理得多，所以寬度會一階一階往下退。 */
+function signInkMap(im){
+  const W0=900, s=Math.min(1,W0/im.width);
+  const w=Math.max(1,Math.round(im.width*s)), h=Math.max(1,Math.round(im.height*s));
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,w,h);
+  g.drawImage(im,0,0,w,h);
+  let d; try{ d=g.getImageData(0,0,w,h); }catch(e){ return null; }  // 跨來源圖會擋，退回原本做法
+  const p=d.data;
+  // 先量一次紙的亮度（取最亮的那群），暗到一定程度才算筆跡
+  let mx=1;
+  for(let i=0;i<p.length;i+=4){ const v=Math.max(p[i],p[i+1],p[i+2]); if(v>mx) mx=v; }
+  const dark=mx*0.62;
+  let x0=w,y0=h,x1=-1,y1=-1;
+  const al=new Float32Array(w*h), hueR=new Uint8Array(w*h);
+  for(let y=0,k=0;y<h;y++) for(let x=0;x<w;x++,k++){
+    const i=k*4, R=p[i],G=p[i+1],B=p[i+2];
+    const red=R-(G+B)/2, lum=(R*0.3+G*0.59+B*0.11);
+    let a=0, isRed=0;
+    if(red>14){ a=Math.min(1,(red-12)/45); isRed=1; }
+    const ad=Math.min(1,(dark-lum)/(dark*0.45));
+    if(ad>a){ a=ad; isRed=0; }
+    if(a>0.06){ al[k]=a; hueR[k]=isRed;
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  }
+  if(x1<0) return null;                       // 整張都白的，交給原本做法
+  // 留白要照「裁出來的大小」算，照整張紙算會把小印章的長寬比撐歪
+  const pad=Math.max(2,Math.round(Math.max(x1-x0,y1-y0)*0.03));
+  x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad);
+  x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const cw=x1-x0+1, ch=y1-y0+1;
+  if(cw<20||ch<12) return null;
+  const oc=document.createElement('canvas'); oc.width=cw; oc.height=ch;
+  const og=oc.getContext('2d'); const od=og.createImageData(cw,ch); const q=od.data;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){
+    const k=(y+y0)*w+(x+x0), j=(y*cw+x)*4;
+    // 濃淡切成 8 階：肉眼看不出來，但 PNG 會小很多（存得進 Sheets 單格）
+    const a=Math.round(al[k]*8)/8;
+    const ir=hueR[k]?196:26, ig=hueR[k]?32:26, ib=hueR[k]?38:30;
+    q[j]  =255*(1-a)+ir*a;
+    q[j+1]=255*(1-a)+ig*a;
+    q[j+2]=255*(1-a)+ib*a;
+    q[j+3]=255;
+  }
+  og.putImageData(od,0,0);
+  return oc;
+}
+function signShrink(file){
+  return new Promise(function(res,rej){
+    const fr=new FileReader();
+    fr.onload=function(){
+      const im=new Image();
+      im.onload=function(){
+        let src=im, sw=im.width, sh=im.height;
+        try{ const t=signInkMap(im); if(t){ src=t; sw=t.width; sh=t.height; } }catch(e){}
+        const tries=[360,300,260,200,150];
+        for(let i=0;i<tries.length;i++){
+          const w=Math.min(tries[i],sw), h=Math.max(1,Math.round(sh*w/sw));
+          const c=document.createElement('canvas'); c.width=w; c.height=h;
+          const g=c.getContext('2d');
+          g.fillStyle='#fff'; g.fillRect(0,0,w,h);     // 透明底在列印時會變黑，先鋪白
+          g.drawImage(src,0,0,w,h);
+          const url=c.toDataURL('image/png');
+          if(url.length<=40000||i===tries.length-1) return res(url);
+        }
+      };
+      im.onerror=function(){ rej(new Error('讀不到這張圖')); };
+      im.src=fr.result;
+    };
+    fr.onerror=function(){ rej(new Error('檔案讀取失敗')); };
+    fr.readAsDataURL(file);
+  });
+}
+async function signUpload(input){
+  const f=input.files&&input.files[0]; if(!f)return;
+  input.value='';
+  const emp=myEmp();
+  if(!emp){ alert('看不到你的員編，無法認定這張圖是誰的。\n請從點班系統的冰箱入口進來（網址會帶員編）。'); return; }
+  let url;
+  try{ url=await signShrink(f); }
+  catch(e){ alert('這張圖處理失敗：'+e.message); return; }
+  if(url.length>45000){ alert('壓縮後還是太大。請裁掉空白、只留簽名的部分再試。'); return; }
+  const r=await signWrite(emp,url);
+  if(!r.ok){ alert('沒有存進後端：'+(r.error||'連線失敗')); return; }
+  SIGNIMG[emp]=url; render();
+  alert('簽名圖已存好，之後主管查核那一格就會印出這張圖。\n\n'
+    +'提醒：圖只是印出來好看，真正留證的是你的員編與查核時間。');
+}
+async function signWrite(emp,url){
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'sign_set',
+      payload:{empId:emp,name:curName(),image:url}})});
+    const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
+    return j||{ok:false,error:'後端回傳格式不對（可能是 GS 沒重新部署）'};
+  }catch(e){ return {ok:false,error:String(e)}; }
+}
+async function signClear(){
+  const emp=myEmp(); if(!emp)return;
+  if(!confirm('要移除你的簽名圖嗎？\n之後主管查核那一格會改成印名字。'))return;
+  const r=await signWrite(emp,'');
+  if(!r.ok){ alert('移除失敗：'+(r.error||'連線失敗')); return; }
+  delete SIGNIMG[emp]; render();
+}
 // 單位名稱正規化：全形括號、空白差異不該影響比對
 function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
 /* 從後端載入本單位本月已登錄的溫度，與本機資料合併 → 換手機/電腦看到的都一樣。
@@ -502,7 +645,17 @@ function retrySync(){
 function render(){
   document.getElementById('ymSel').value=data.ym||'';
   const days=daysInMonth(data.ym); const cols=days*3;
-  const W=AXISW+cols*COLW+8, H=PADTOP+PLOTH+80; const mg=minguo(data.ym);
+  /* 紙本在溫度圖下面還有五列，而且是跟日期／班別同一組格線：
+       簽名 ／（異常狀況處理：處理代號・簽名・結果）／ 主管查核·日期
+     原本這幾列是另外做成表格列在下面，欄位對不起來，稽核要自己數格子。
+     現在一起畫進同一張 SVG，格線與上方完全對齊。 */
+  const RS=34, RC=20, RA=30, RR=30, RV=26;        // 各列高度
+  const BTOP=PADTOP+PLOTH+16;                     // 下方區塊起點（班別字下面）
+  // 欄名照紙本折成兩行，才塞得進左欄（紙本也是折行寫的）
+  const BOT=[['簽名',RS],['處理|代號',RC],['簽名',RA],['結果',RR],['主管查核|日期',RV]];
+  const BH=BOT.reduce(function(a,x){return a+x[1];},0);
+  const GLW=17;                                   // 「異常狀況處理」直書群組欄寬
+  const W=AXISW+cols*COLW+8, H=BTOP+BH+14; const mg=minguo(data.ym);
   let g='';
   g+=`<rect x="${AXISW}" y="${yT(HIGH)}" width="${cols*COLW}" height="${yT(LOW)-yT(HIGH)}" fill="var(--band)"/>`;
   for(let t=TMAX;t>=TMIN;t--){ const y=yT(t); const isRed=(t===HIGH||t===LOW);
@@ -528,27 +681,146 @@ function render(){
   }
   for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const idx=(d-1)*3+si; const x=AXISW+idx*COLW; g+=`<rect class="cell-hit" x="${x}" y="${PADTOP}" width="${COLW}" height="${PLOTH}" onclick="openEntry(${d},${si})"></rect>`; }
 
-  // 簽名畫進同一張圖表:每欄正下方直書,與溫度點(●)對齊,不會位移
-  g+=`<line x1="${AXISW}" y1="${PADTOP+PLOTH+16}" x2="${AXISW+cols*COLW}" y2="${PADTOP+PLOTH+16}" stroke="#dde5ea"/>`;
-  g+=`<text x="${AXISW-6}" y="${PADTOP+PLOTH+34}" text-anchor="end" font-size="10" fill="#5d6c77">簽名</text>`;
+  /* ---------- 下方五列：跟紙本一樣，與上方共用同一組格線 ---------- */
+  const yRow=[]; { let y=BTOP; BOT.forEach(function(r){ yRow.push(y); y+=r[1]; }); yRow.push(y); }
+  const BBOT=yRow[yRow.length-1];
+  // 橫線
+  for(let i=0;i<yRow.length;i++){
+    const heavy=(i===0||i===yRow.length-1);
+    g+=`<line x1="0" y1="${yRow[i]}" x2="${AXISW+cols*COLW}" y2="${yRow[i]}" stroke="${heavy?'#9fb4c2':'#dde5ea'}" stroke-width="${heavy?1.4:1}"/>`;
+  }
+  /* 直線：每一班一格，日界加粗（跟溫度圖同一組）
+     ★ 只畫到「主管查核／日期」那一列的上緣 —— 紙本那一列是每 7 天一大格，
+       不是每天／每班一格（原稿 16～31 日整段只有 1 條直線，落在第 8 天）。 */
+  for(let c=0;c<=cols;c++){ const x=AXISW+c*COLW; const day=(c%3===0);
+    g+=`<line x1="${x}" y1="${BTOP}" x2="${x}" y2="${yRow[4]}" stroke="${day?'#9fb4c2':'#eef3f6'}" stroke-width="${day?1.4:1}"/>`; }
+  // 主管查核那一列：每 7 天一格（1–7 / 8–14 / 15–21 / 22–28 / 29–月底）
+  const WEEKS=[]; for(let d=1;d<=days;d+=7) WEEKS.push([d,Math.min(days,d+6)]);
+  WEEKS.forEach(function(w){
+    const x=AXISW+(w[0]-1)*3*COLW;
+    g+=`<line x1="${x}" y1="${yRow[4]}" x2="${x}" y2="${BBOT}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+  });
+  g+=`<line x1="${AXISW+cols*COLW}" y1="${yRow[4]}" x2="${AXISW+cols*COLW}" y2="${BBOT}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+  // 左側列名（用 | 折行，跟紙本一樣）
+  BOT.forEach(function(r,i){
+    const ls=String(r[0]).split('|');
+    const y0=yRow[i]+r[1]/2+3.5-(ls.length-1)*5;
+    let ts='';
+    for(let k=0;k<ls.length;k++) ts+=`<tspan x="${AXISW-5}" dy="${k===0?0:10}">${ls[k]}</tspan>`;
+    g+=`<text x="${AXISW-5}" y="${y0}" text-anchor="end" font-size="9.5" fill="#5d6c77">${ts}</text>`;
+  });
+  g+=`<line x1="${AXISW}" y1="${BTOP}" x2="${AXISW}" y2="${BBOT}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+  /* 「異常狀況處理」直書群組標籤，涵蓋 處理代號／簽名／結果 三列。
+     ★ 放在最左邊（x=0），不可以跟右邊的欄名共用同一段寬度 ——
+        之前兩者都畫在 AXISW-GLW..AXISW，字直接疊在一起看不懂。 */
+  {
+    const gy0=yRow[1], gy1=yRow[4], gx=0;
+    g+=`<line x1="${gx}" y1="${gy0}" x2="${gx}" y2="${gy1}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+    g+=`<line x1="${gx}" y1="${gy0}" x2="${AXISW}" y2="${gy0}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+    g+=`<line x1="${gx}" y1="${gy1}" x2="${AXISW}" y2="${gy1}" stroke="#9fb4c2" stroke-width="1.4"/>`;
+    const lbl='異常狀況處理', step=(gy1-gy0-8)/lbl.length;
+    let ts='';
+    for(let i=0;i<lbl.length;i++) ts+=`<tspan x="${gx+GLW/2}" dy="${i===0?0:step}">${lbl[i]}</tspan>`;
+    g+=`<text x="${gx+GLW/2}" y="${gy0+step*0.95}" text-anchor="middle" font-size="8.5" fill="#5d6c77">${ts}</text>`;
+  }
+  // 簽名（直書，跟溫度點同一欄正下方）
   for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(!r||!r.sign)continue;
     const x=xCol((d-1)*3+si); const nm=String(r.sign); let ts='';
-    for(let ci=0;ci<Math.min(nm.length,4);ci++){ ts+=`<tspan x="${x}" dy="${ci===0?0:11}">${esc(nm[ci])}</tspan>`; }
-    g+=`<text x="${x}" y="${PADTOP+PLOTH+28}" text-anchor="middle" font-size="10" fill="#23313b">${ts}</text>`;
+    for(let ci=0;ci<Math.min(nm.length,3);ci++){ ts+=`<tspan x="${x}" dy="${ci===0?0:10}">${esc(nm[ci])}</tspan>`; }
+    g+=`<text x="${x}" y="${yRow[0]+11}" text-anchor="middle" font-size="9.5" fill="#23313b">${ts}</text>`;
   }
+  // 異常三列：處理代號／簽名／結果，填在該班那一格
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){
+    const a=data.abn[d+'_'+SHIFTS[si]]; if(!a)continue;
+    const x=xCol((d-1)*3+si);
+    g+=`<text x="${x}" y="${yRow[1]+RC/2+4}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--red)">${esc(a.code||'')}</text>`;
+    if(a.sign){ const nm=String(a.sign); let ts='';
+      for(let ci=0;ci<Math.min(nm.length,3);ci++) ts+=`<tspan x="${x}" dy="${ci===0?0:9}">${esc(nm[ci])}</tspan>`;
+      g+=`<text x="${x}" y="${yRow[2]+9}" text-anchor="middle" font-size="8.5" fill="#23313b">${ts}</text>`; }
+    if(a.result){ const rs=String(a.result); let ts='';
+      for(let ci=0;ci<Math.min(rs.length,3);ci++) ts+=`<tspan x="${x}" dy="${ci===0?0:9}">${esc(rs[ci])}</tspan>`;
+      g+=`<text x="${x}" y="${yRow[3]+9}" text-anchor="middle" font-size="8.5" fill="#23313b">${ts}</text>`; }
+  }
+  /* 主管查核·日期：蓋在「那 7 天」的整格裡，不是那一天的格子。
+     同一週查核兩次以上就並排放，不要疊在一起。 */
+  {
+    const byWeek={};
+    (data.superv||[]).forEach(function(sv){
+      const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(sv.date||'')); if(!m)return;
+      if((m[1]+'-'+m[2])!==data.ym) return;
+      const d=+m[3]; if(d<1||d>days) return;
+      const wi=Math.floor((d-1)/7); if(wi>=WEEKS.length) return;
+      (byWeek[wi]=byWeek[wi]||[]).push({sv:sv,d:d});
+    });
+    Object.keys(byWeek).forEach(function(k){
+      const wi=+k, w=WEEKS[wi], list=byWeek[k];
+      const x0=AXISW+(w[0]-1)*3*COLW, cw=(w[1]-w[0]+1)*3*COLW;
+      const slot=cw/list.length;
+      list.forEach(function(e,i){
+        const cx=x0+slot*(i+0.5), img=signOf(e.sv.empId);
+        const dtxt=(+data.ym.slice(5,7))+'/'+e.d;
+        if(img){
+          /* 有簽名圖就蓋圖（跟紙本一樣）：圖在左、日期在右，兩個都塞得下才這樣排 */
+          const ih=RV-5;
+          let iw=Math.min(slot*0.55, ih*3.2);
+          const gap=4, dw=22;
+          const bw=iw+gap+dw, bx=cx-bw/2;
+          g+=`<image x="${bx}" y="${yRow[4]+2.5}" width="${iw}" height="${ih}"
+                preserveAspectRatio="xMidYMid meet" href="${img}"/>`;
+          g+=`<text x="${bx+iw+gap}" y="${yRow[4]+RV/2+3.5}" font-size="8.5" fill="#5d6c77">${esc(dtxt)}</text>`;
+        }else{
+          g+=`<text x="${cx}" y="${yRow[4]+RV/2+3.5}" text-anchor="middle" font-size="9" fill="#23313b">${esc(String(e.sv.sign||'').slice(0,4))}　${esc(dtxt)}</text>`;
+        }
+      });
+    });
+  }
+  // 點格子可編輯（螢幕上用；列印時看不出差別）
+  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const x=AXISW+((d-1)*3+si)*COLW;
+    g+=`<rect class="cell-hit" x="${x}" y="${yRow[1]}" width="${COLW}" height="${yRow[4]-yRow[1]}" onclick="openAbn('${d}',${si})"></rect>`; }
   const sig='';
 
   const abnRows=Object.keys(data.abn).sort().map(k=>{ const a=data.abn[k]; const [d,s]=k.split('_');
     return `<tr><td>${d} 日 ${s} 時</td><td><span class="pill p${a.code}">${a.code}</span></td><td>${esc(a.sign||'')}</td><td>${esc(a.result||'')}</td>
       <td><button class="btn btn-g" style="padding:4px 10px" onclick="openAbn('${d}',${SHIFTS.indexOf(s)})">編輯</button></td></tr>`; }).join('');
-  const abnHtml=`<div class="abn"><h3>異常狀況處理（溫度不在 2–8°C）</h3>
+  /* ★ 異常明細已經畫進上面的格線裡（跟紙本一樣）。
+     這張表只留在螢幕上當編輯清單，列印時隱藏，免得同一份資料印兩次。 */
+  const abnHtml=`<div class="abn noprint"><h3>異常狀況處理（溫度不在 2–8°C）· 螢幕編輯用</h3>
     <table class="abn-t"><tr><th>日期時段</th><th>處理代號</th><th>簽名</th><th>結果</th><th></th></tr>
     ${abnRows||'<tr><td colspan="5" style="color:#8894a0">目前無異常紀錄 🎉</td></tr>'}</table></div>`;
 
   const supRows=(data.superv||[]).map((s,i)=>`<span style="border:1px solid var(--line);border-radius:8px;padding:4px 10px">${esc(s.sign)} · ${esc(s.date)} <a href="#" onclick="delSup(${i});return false" style="color:var(--red);text-decoration:none">✕</a></span>`).join('');
-  const supHtml=`<div class="superv"><b>主管查核／日期（每週一次）：</b>${supRows||'<span style="color:#8894a0">尚無</span>'}
+  /* 紙本規定主管每 7 天要查核一次 —— 算給她看，超過就變紅，不要靠記憶。 */
+  const svAll=(data.superv||[]).slice().sort(function(a,b){ return String(a.date)<String(b.date)?1:-1; });
+  const lastSv=svAll[0];
+  let dueTxt='';
+  if(lastSv&&/^\d{4}-\d{2}-\d{2}$/.test(String(lastSv.date))){
+    const p1=String(lastSv.date).split('-');
+    const gap=Math.round((Date.now()-Date.UTC(+p1[0],+p1[1]-1,+p1[2]))/86400000);
+    dueTxt=gap>7
+      ? `<span style="color:var(--red);font-weight:800">已隔 ${gap} 天（超過 7 天）</span>`
+      : `<span style="color:#1f7a43;font-weight:700">已隔 ${gap} 天</span>`;
+  }else{
+    dueTxt='<span style="color:var(--red);font-weight:800">本月尚未查核</span>';
+  }
+  const mySign=signOf(myEmp());
+  const supHtml=`<div class="superv noprint">
+     <div style="width:100%;margin-bottom:6px"><b>主管查核／日期（每 7 天一次）：</b>${dueTxt}</div>
+     ${supRows||'<span style="color:#8894a0">本月尚無</span>'}
      <input id="supName" placeholder="主管簽名" style="width:100px"><input id="supDate" type="date" style="width:150px">
-     <button class="btn btn-p noprint" onclick="addSup()">＋ 查核</button></div>`;
+     <button class="btn btn-p" onclick="addSup()">＋ 查核</button>
+     <span style="width:100%;height:1px"></span>
+     <div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+         background:#f4f7f9;border-radius:9px;padding:8px 10px">
+       <b style="font-size:12.5px">我的簽名／印章圖</b>
+       ${mySign?`<img src="${mySign}" alt="簽名" style="height:30px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:2px">`
+               :'<span style="font-size:12.5px;color:#8894a0">尚未上傳（會改印名字）</span>'}
+       <input id="signFile" type="file" accept="image/*" style="display:none" onchange="signUpload(this)">
+       <button class="btn btn-w" onclick="document.getElementById('signFile').click()">${mySign?'換一張':'上傳'}</button>
+       ${mySign?'<button class="btn btn-g" onclick="signClear()">移除</button>':''}
+       <span style="font-size:11.5px;color:#8894a0;flex:1;min-width:220px">
+         白紙上簽名或蓋章拍一張，裁到只剩簽名即可。只有你本人的圖會印在你查核的那一格；
+         圖只是列印呈現，留證的是員編與查核時間。</span>
+     </div></div>`;
 
   document.getElementById('sheet').innerHTML=`
     <div class="head">
@@ -559,10 +831,11 @@ function render(){
     <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>
     ${sig}${abnHtml}${supHtml}
     <div class="legend">
-      <b>溫度登錄：</b>每班查核者需在上班前完成查檢溫度並登錄。<b>主管每週查核一次。</b><br>
-      <b>呈現方式：</b>現在溫度以 <b style="color:var(--blue)">●</b> 標示並與前一班連線；高溫 <b style="color:#b5680f">V</b>、低溫 <b style="color:#1c7ed6">∧</b>；大於 10℃ 或小於 0℃ 以數字書寫。冷藏藥品應維持 <b>2–8℃</b>。<br>
-      <b>異常代號：</b><span class="pill pA">A</span> 溫度不在 2–8℃（藥物暫移至 2–8℃ 非食物冰箱），30 分鐘內再檢查；<span class="pill pB">B</span> 30 分鐘後未恢復，已通知工務請修；<span class="pill pC">C</span> 溫度恢復正常。<br>
-      <span class="noprint" style="color:#8894a0">＊點格子輸入該班溫度；超出 2–8℃ 會要求填異常處理。資料同步寫回後端 Sheet(fridge_temp)。</span>
+      ※ 溫度登錄：每班查核者需在上班前完成查檢溫度並登錄。※ 主管查核／日期：主管每星期需查核一次冰箱的保管記錄。<br>
+      ※ 溫度呈現方式：高溫以「<b style="color:#b5680f">V</b>」、低溫以「<b style="color:#1c7ed6">∧</b>」、現在溫度以「<b style="color:var(--blue)">●</b>」在該溫度的中間虛線上標示，現在溫度須與前一班溫度連線，高、低溫不需連線（BR 疫苗冰箱配合疾管局規定，三種溫度均需連線）；大於 10℃ 或小於 0℃ 以數字書寫。<br>
+      ※ 冷藏藥品冰箱溫度應保持在 <b>2-8℃</b> 範圍，不在 2-8℃ 範圍呈現處理情形：代號 <span class="pill pA">A</span>－溫度不在 2-8℃ 範圍（藥物需暫時移到管控於 2-8℃ 的非食物冰箱），30 分鐘內再檢查；
+      代號 <span class="pill pB">B</span>－30 分鐘後未恢復 2-8℃ 已通知工務請修；代號 <span class="pill pC">C</span>－溫度恢復正常。<br>
+      <span class="noprint" style="color:#8894a0">＊點溫度格輸入該班溫度；點下方「異常狀況處理」那三列可填處理代號／簽名／結果。資料同步寫回後端 Sheet(fridge_temp)。</span>
     </div>`;
   save();
 }
@@ -714,7 +987,14 @@ function openAbn(day,si,fromEntry){
 function saveAbn(k){ data.abn[k]={code:document.getElementById('a_code').value,sign:document.getElementById('a_sign').value.trim(),result:document.getElementById('a_result').value.trim()}; save(); closeModal(); }
 function delAbn(k){ delete data.abn[k]; save(); closeModal(); }
 
-function addSup(){ const n=document.getElementById('supName').value.trim(), d=document.getElementById('supDate').value; if(!n||!d){alert('請填主管簽名與日期');return;} data.superv=data.superv||[]; data.superv.push({sign:n,date:d}); save(); render(); }
+function addSup(){
+  const n=document.getElementById('supName').value.trim(), d=document.getElementById('supDate').value;
+  if(!n||!d){alert('請填主管簽名與日期');return;}
+  data.superv=data.superv||[];
+  /* ★ 一定要記員編：那才是留證的東西，而且要靠它才知道該畫誰的簽名圖。 */
+  data.superv.push({sign:n,date:d,empId:myEmp(),at:new Date().toISOString()});
+  save(); render();
+}
 function delSup(i){ data.superv.splice(i,1); save(); render(); }
 
 function exportCSV(){
@@ -733,6 +1013,8 @@ function boot(){
   syncBanner();
   srvBadge();                        // 先把徽章放上去，才看得到「正在讀取後端…」
   syncFromServer();
+  /* 簽名圖另外抓：抓失敗只會變成「印名字」，不可以拖累溫度同步。 */
+  loadSignImgs().then(function(){ render(); }).catch(function(){});
   setInterval(function(){ if(!document.hidden) autoSync(); },25000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
   window.addEventListener('focus',function(){ autoSync(); });
