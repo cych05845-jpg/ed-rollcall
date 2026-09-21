@@ -279,6 +279,22 @@
   .owe-close{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
   .owe-f{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:10px}
   .owe-f select,.owe-f input{display:block;width:100%;margin-top:4px;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;background:var(--card);color:var(--ink)}
+  .miss-card{padding:0;margin-bottom:12px;border-left:4px solid #c92a2a;overflow:hidden}
+  .miss-h{padding:12px 14px;font-weight:800;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+  .miss-tg{font-weight:400;font-size:12px;color:var(--ink-soft)}
+  .miss-sub{padding:4px 14px 2px;font-size:12.5px;font-weight:700;color:#8a1c1c}
+  .miss-foot{padding:4px 14px 12px;font-size:11.5px;color:var(--ink-soft)}
+  .carry-card{padding:12px 14px;margin-bottom:12px;border-left:4px solid #7048e8;background:#f6f3ff}
+  .carry-h{font-weight:800;font-size:14px;color:#5f3dc4}
+  .carry-ul{margin:6px 0 0 18px;padding:0;font-size:13px;line-height:1.7}
+  .carry-s{font-size:12px;color:var(--ink-soft);line-height:1.6;margin-top:4px}
+  .carry-tag{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:#5f3dc4;background:#efe9ff;border-radius:6px;padding:1px 6px}
+  .chip.owed{border-color:#b5680f;color:#8a4b00}
+  .chip.owed.on{background:#b5680f;color:#fff}
+  .owed-info{margin:8px 0 4px;padding:8px 10px;border-radius:10px;background:#fff4e6;border:1px solid #f0c78a;font-size:12.5px;line-height:1.6;color:#7a4300}
+  .owed-info span{color:#5d6c77}
+  .owed-warn{margin:6px 0 0;font-size:12px;color:#b5680f;font-weight:600}
+  .abn-where{margin:6px 0 0;font-size:11.5px;color:var(--ink-soft);line-height:1.55}
   .stk{margin:8px 0 4px;padding:8px 10px;border:1px dashed #d9a441;border-radius:10px;background:#fffaf0}
   .stk-h{font-size:12.5px;font-weight:700;color:#8a5a00;margin-bottom:6px}
   .stk-s{font-weight:400;color:#8a7a5a;margin-left:6px;font-size:11.5px}
@@ -1001,7 +1017,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-21-b64';
+const APP_VER='2026-09-22-b65';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -2066,6 +2082,9 @@ function roleBadgeOf(role){
    但「其他」不寫清楚等於沒登記，所以選它的時候備註改成必填。 */
 const REASONS=['數量短少','借出未還','待補貨','送修','漏計價','遺失','其他'];
 function reasonNeedsNote(r){ return String(r||'')==='其他'; }
+/* ★ 這一項本來就在欠物本裡（🔖 欠物中）：點班時它當然還是「沒有」，
+   但不該逼人再挑一次原因、再記一次欠物。給一個專用原因，一按就好。 */
+const OWED_REASON='已在欠物本';
 
 // item key & filtering
 // 原始清單（含上鎖物品）。只有「上鎖物品名冊」與後台管理會用到。
@@ -2167,7 +2186,7 @@ let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{}
 /* ★ 'audits'＝雙月盤點還沒送到後端的那幾筆，跟 rcPending 同一個等級的東西，
      換版絕對不能清掉（清掉就真的不見了）。 */
 const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs','audits',
-                             'checks','reason','note','part','theme'];
+                             'checks','reason','note','part','carry','carryDone','rcSlot','theme'];
 const store={
   save(){try{state._v=APP_VER;localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
   load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}
@@ -2408,6 +2427,7 @@ function renderHome(){
     ${syncBar()}
     ${sealCard()}
     ${renderTodoCard()}
+    ${renderMissCard()}
     ${renderAuxCard()}
     ${owedDutyCard()}
     <div class="section-h">作業</div>
@@ -2481,6 +2501,23 @@ function renderPick(){
     </div>
     <div class="sheet-list">${rows}</div></div>`;
 }
+/* ★★ 勾選紀錄只屬於「這一班」。
+   state.checks 的 key 是「表＋第幾項」，沒有日期班別，而且整包存在手機裡 ——
+   同一支手機下一班再打開同一張表，上一班的勾會原封不動地出現（看起來已經點完了）。
+   所以進表時比對：勾的時候是哪一天哪一班，跟現在不同就清掉這張表的舊勾。 */
+function rcSlotNow(){ return curRcDate()+'|'+effShift(); }
+function rcClearSheet(id){
+  const pre=String(id)+'|';
+  ['checks','reason','note','part','carry'].forEach(function(f){
+    const o=state[f]; if(!o) return;
+    Object.keys(o).forEach(function(k){ if(k.indexOf(pre)===0) delete o[k]; }); });
+}
+function rcEnsureSlot(id){
+  state.rcSlot=state.rcSlot||{};
+  const now=rcSlotNow();
+  if(state.rcSlot[id]&&state.rcSlot[id]!==now) rcClearSheet(id);
+  state.rcSlot[id]=now;
+}
 function openSheet(id){
   const s=sheetById(id);
   // ★ 已有人點完就先確認，避免重複點班
@@ -2491,6 +2528,7 @@ function openSheet(id){
     if(!ok)return;
   }
   state.sheetId=id;
+  rcEnsureSlot(id);
   /* ★ 封籤式（留觀急救車）：每班點的是封籤號，不進逐項打勾的畫面。
      只有「已開封／待清點」時才會從封籤畫面導去全品項清點。 */
   /* ★ 封籤式（留觀急救車）：逐項點班照舊——人員本來就在點這些東西。
@@ -2556,6 +2594,7 @@ function renderRollcall(){
         ${_sd.isDone?'如非必要不需重複點班；要複點請繼續操作。':'可接續完成剩下的項目。'}</div>
     </div>`:'';
 
+  const carryBanner=carryBannerHtml();
   // 依類別分組（器械/儀器/耗材/藥品/其他）
   let blocks='';
   CAT_DEFS.forEach(cat=>{
@@ -2617,7 +2656,7 @@ function renderRollcall(){
   <div class="screen wide lvl2">
     ${banner}
     ${actBanner}
-    ${srvBanner}
+    ${srvBanner}${carryBanner}
     ${sealActive(s.id)?sealBar(s):''}
     ${extraChecks}
     <div class="card" style="padding:13px 15px;margin-bottom:14px;border-left:4px solid ${acolor}">
@@ -2676,22 +2715,26 @@ function renderItem(o,s){
         7 項全正常　<span style="opacity:.8">提交後自動記錄，不用另外填</span></div>` : '';
   const abn=st==='bad'?`<div class="li-abn">
      <div class="abn-h">⚠ 異常／沒有 — 請註記</div>
-     <div class="chips">${REASONS.map(r=>{const on=state.reason[k]===r;
-        const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':'');
+     <div class="chips">${(_owes.length?[OWED_REASON]:[]).concat(REASONS).map(r=>{const on=state.reason[k]===r;
+        const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':(r===OWED_REASON?'owed':''));
         return `<button class="chip ${on?'on':''} ${cls}" onclick="setReason('${k}','${r}')">${r}</button>`}).join('')}</div>
      ${repairNote}
-     ${stackPickHtml(o,k)}
+     ${state.reason[k]===OWED_REASON?`<div class="owed-info">🔖 已在欠物本 ${_owes.length} 筆：
+        ${_owes.map(w=>esc(w.item)+'（'+esc(w.names||'')+(w.date?' · '+esc(String(w.date).slice(5)):'')+'）').join('、')}<br>
+        <span>這一格只註記「仍欠」，<b>不會再記一筆欠物</b>。東西回來後到欠物本結案。</span></div>`:stackPickHtml(o,k)}
      ${reasonNeedsNote(state.reason[k])?`<div style="font-size:12px;color:var(--bad,#E03131);font-weight:700;margin:2px 0 4px">
        選「其他」請在備註寫清楚是什麼狀況（必填）</div>`:''}
      <input class="note-in" placeholder="${reasonNeedsNote(state.reason[k])?'請說明狀況（必填）':'備註（選填）'}"
        value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"
        ${reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim()?'style="border-color:var(--bad,#E03131)"':''}>
+     <div class="abn-where">📝 上面的原因與備註記在「異常紀錄」（交班、逐項表看得到），不會自己進欠物本。${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?'要進欠物本請按下面的「＋記欠物」。':(state.reason[k]===OWED_REASON?'':'只有選「數量短少／借出未還／待補貨／遺失」才會出現「＋記欠物」。')}</div>
+     ${_owes.length&&['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<div class="owed-warn">⚠ 這一項已有 ${_owes.length} 筆欠物中 —— 確定是<b>另外又少的</b>才按＋記欠物，否則請改選「${OWED_REASON}」。</div>`:''}
      ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}','${k}')">＋記欠物${partPicked(k).length>1?'（'+partPicked(k).length+' 筆，一件一筆）':''}</button>`:''}
      ${_defibs.length?maintQuickBlock(s.id,_defibs):''}</div>`:'';
   return `<div class="li ${st==='bad'?'is-bad':''}">
     <div class="li-tap" onclick="setCheck('${k}','ok')">
       ${dot}
-      <div class="li-body"><div class="li-name">${esc(o.name)}${assignB}${oweTag}</div>
+      <div class="li-body"><div class="li-name">${esc(o.name)}${assignB}${oweTag}${(state.carry||{})[k]&&st==='bad'?`<span class="carry-tag">↩ 延續 ${esc(state.carry[k])}</span>`:''}</div>
         <div class="li-qty">標準 ${esc(o.qty)} <span class="tb t-${o.type}">${o.type}</span></div></div>
     </div>
     <div class="li-ctrl">${dev}<button class="flagbtn ${st==='bad'?'on':''}" onclick="setCheck('${k}','bad')">異常</button></div>
@@ -2725,7 +2768,87 @@ function maintQuickBlock(sheetId,devs){
         ${esc(MAINT_FIELDS.filter(f=>q.bad.indexOf(f.k)>=0).map(f=>f.label).join('、'))} 記為異常</div>`}
   </div>`;
 }
-function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k];if(state.part)delete state.part[k]}render();postProgress();}
+/* ===================== 帶入上次點班的異常 =====================
+   上一班標過異常的項目（含「其他」），這一班多半還是那個狀況。
+   以前每一班都要重新找出來、重挑原因、重打備註；現在一個按鈕帶進來，
+   帶進來的只是「先標成異常＋原因＋備註照抄」，人還是要看過 —— 已經好了的點一下改正常。
+   ★ 不會重記欠物：本來就在欠物本的，原因自動改成「已在欠物本」。 */
+const SLOT_ORD={N:0,D:1,E:2};
+function slotKeyOf(date,sh){ return String(date)+'|'+(SLOT_ORD[sh]!=null?SLOT_ORD[sh]:9); }
+function slotText(date,sh){ const p=String(date).split('-'); return (+p[1])+'/'+(+p[2])+' '+(SHIFT_NAME[sh]||sh); }
+function lastRollOf(sheetId,half){
+  const cur=slotKeyOf(curRcDate(),effShift());
+  let best=null;
+  (SIGNLOG||[]).forEach(function(r){
+    if(sheetIdOf(r)!==String(sheetId)) return;
+    if(half){ const a=assignOf(r); if(a&&a!==String(half)) return; }
+    const d=dateOfLog(r), sh=String(logShiftOf(r)||'');
+    if(!d||SLOT_ORD[sh]==null) return;
+    const kk=slotKeyOf(d,sh); if(kk>=cur) return;
+    if(!best||kk>best.k) best={k:kk,date:d,sh:sh,by:nameOf(r)};
+  });
+  return best;
+}
+function carryList(sheetId,half){
+  const last=lastRollOf(sheetId,half); if(!last) return {last:null,list:[]};
+  const s=sheetById(sheetId), zn=(areaById(s.area)||{}).name||'';
+  const byName={}; itemsOf(sheetId,half).forEach(function(o){ byName[normItem(o.name)]=o; });
+  const list=[], seen={};
+  (ISSUES||[]).forEach(function(r){
+    if(String(fld(r,['sheetId','sheetId'])||'')!==String(sheetId)) return;
+    if(dateOfLog(r)!==last.date) return;
+    if(String(fld(r,['shift','班別'])||'')!==last.sh) return;
+    const o=byName[normItem(fld(r,['item','項目'])||'')]; if(!o) return;
+    const k=keyOf(o); if(seen[k]) return; seen[k]=1;
+    list.push({o:o,k:k,reason:String(fld(r,['reason','原因'])||''),note:String(fld(r,['note','備註'])||''),
+               owed:owedFor(o.name,zn).length>0});
+  });
+  return {last:last,list:list};
+}
+function carryTag(sheetId,half){ const l=lastRollOf(sheetId,half); return l?(sheetId+'|'+(half||'')+'|'+curRcDate()+'|'+effShift()+'<'+l.k):''; }
+function carryApply(){
+  const s=sheetById(state.sheetId), c=carryList(s.id,state.half);
+  state.carry=state.carry||{}; state.carryDone=state.carryDone||{};
+  let n=0;
+  c.list.forEach(function(x){
+    if(state.checks[x.k]) return;                   // 這一班已經有人動過這一項，就不蓋
+    state.checks[x.k]='bad';
+    state.reason[x.k]= x.owed?OWED_REASON : (REASONS.indexOf(x.reason)>=0?x.reason:(x.reason===OWED_REASON?OWED_REASON:'其他'));
+    let note=x.note;
+    if(state.reason[x.k]==='其他'&&x.reason&&x.reason!=='其他') note=x.reason+(note?'・'+note:'');
+    state.note[x.k]=note||(state.reason[x.k]==='其他'?'延續上一班':'');
+    state.carry[x.k]=slotText(c.last.date,c.last.sh);
+    n++;
+  });
+  carryPrune(); state.carryDone[carryTag(s.id,state.half)]=1;
+  render(); postProgress();
+  toast('已帶入 '+n+' 項，請逐一確認');
+}
+function carryPrune(){ const d='|'+curRcDate()+'|'; state.carryDone=state.carryDone||{};
+  Object.keys(state.carryDone).forEach(function(k){ if(k.indexOf(d)<0) delete state.carryDone[k]; }); }
+function carryDismiss(){ carryPrune(); state.carryDone[carryTag(state.sheetId,state.half)]=1; render(); }
+function carryBannerHtml(){
+  const s=sheetById(state.sheetId); if(!s) return '';
+  const tag=carryTag(s.id,state.half); if(!tag||(state.carryDone||{})[tag]) return '';
+  const c=carryList(s.id,state.half);
+  const todo=c.list.filter(function(x){ return !state.checks[x.k]; });
+  if(!todo.length) return '';
+  const rows=todo.map(function(x){
+    return '<li><b>'+esc(x.o.name)+'</b>　'+esc(x.owed?OWED_REASON:(x.reason||'未註記'))+(x.note?'・'+esc(x.note):'')+'</li>'; }).join('');
+  return `<div class="card carry-card">
+    <div class="carry-h">↩ 上次點班（${esc(slotText(c.last.date,c.last.sh))}${c.last.by?'・'+esc(c.last.by):''}）有 ${todo.length} 項異常</div>
+    <ul class="carry-ul">${rows}</ul>
+    <div class="carry-s">按「帶入」會把這幾項先標成<b>異常</b>、原因與備註照抄；請走過去看一眼，<b>已經好了的點一下改成正常</b>。
+      本來就在欠物本的會標「${OWED_REASON}」，<b>不會再記一次欠物</b>。</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" style="flex:2" onclick="carryApply()">↩ 帶入本次（${todo.length} 項）</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="carryDismiss()">不用</button></div></div>`;
+}
+function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k];if(state.part)delete state.part[k];if(state.carry)delete state.carry[k]}
+  /* 本來就欠物中的品項標異常 → 直接預選「已在欠物本」，不用再挑原因 */
+  else if(!state.reason[k]){ try{ const s=sheetById(state.sheetId), o=itemsOf(s.id,state.half).find(x=>keyOf(x)===k);
+    if(o&&owedFor(o.name,areaById(s.area).name).length) state.reason[k]=OWED_REASON; }catch(e){} }
+  render();postProgress();}
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
@@ -3010,7 +3133,7 @@ function openZoneOwed(zoneName){
 }
 function markBadFromOwe(k){
   const el=document.getElementById('oweDetail');if(el)el.remove();
-  state.checks[k]='bad';render();
+  state.checks[k]='bad'; state.reason[k]=OWED_REASON; render();
 }
 function showOwedDetail(name,zoneName,k){
   const list=owedFor(name,zoneName);
@@ -4844,6 +4967,56 @@ function renderAuxCard(){
       ＊上方百分比只看「本班」——當班範圍內有完成就算完成，還沒開始的班不列入。</div></div>`;
 }
 
+/* ===================== 上一班／今日未完成提醒 =====================
+   ★ 一般人員：上一班「我負責的分區」有哪張表沒點完 —— 接班時第一眼就知道要補或要回報。
+   ★ Leader（當日 Leader 班或小組長以上）：今天到目前為止「每一班、每一張表」誰沒點完，
+     不用自己一張一張點進去看。
+   沒有人點＝「沒有人點」；點到一半＝「點到 18/22（誰）」。 */
+function prevSlotOf(date,sh){
+  if(sh==='D') return {date:date,sh:'N'};
+  if(sh==='E') return {date:date,sh:'D'};
+  const d=parseISO(date); d.setDate(d.getDate()-1); return {date:fmtISO(d),sh:'E'};
+}
+function missIn(slot,sheets){
+  return sheets.map(function(s){ return {s:s,sd:shiftDoneAt(s.id,null,slot.date,slot.sh)}; })
+               .filter(function(x){ return !(x.sd&&x.sd.isDone); });
+}
+function missRow(x){
+  const sub=x.sd?('點到 '+x.sd.done+'/'+x.sd.total+(x.sd.by?'（'+esc(x.sd.by)+'）':'')):'沒有人點';
+  return `<div class="rem-li" onclick="openArea('${x.s.area}')" style="cursor:pointer">
+    <span><span class="area-dot" style="background:${areaColor(x.s.area)}"></span>${esc(areaById(x.s.area).name)} · ${esc(x.s.name)}
+      <div style="font-size:11.5px;color:${x.sd?'#b5680f':'#c92a2a'};margin-top:2px">${sub}</div></span>
+    <span class="pill-bad">${x.sd?'未點完':'未點'}</span></div>`;
+}
+function renderMissCard(){
+  if(!state.user) return '';
+  const cur={date:curRcDate(),sh:effShift()};
+  const leader=isLeaderToday()||isShiftLeader();
+  if(leader){
+    // 今天在本班之前的每一班；如果現在就是今天第一班（大夜），就看前一天小夜
+    let slots=['N','D','E'].filter(function(sh){ return SLOT_ORD[sh]<SLOT_ORD[cur.sh]; })
+                          .map(function(sh){ return {date:cur.date,sh:sh}; });
+    if(!slots.length) slots=[prevSlotOf(cur.date,cur.sh)];
+    const groups=slots.map(function(sl){ return {sl:sl,list:missIn(sl,SHEETS)}; }).filter(function(g){ return g.list.length; });
+    if(!groups.length) return '';
+    const n=groups.reduce(function(a,g){ return a+g.list.length; },0);
+    const open=state.missOpen!==false;
+    return `<div class="card miss-card">
+      <div class="miss-h" onclick="state.missOpen=${open?'false':'true'};render()">
+        <span>📋 今日點班未完成（Leader 總覽）· ${n} 張</span><span class="miss-tg">${open?'收起 ▲':'展開 ▼'}</span></div>
+      ${open?groups.map(function(g){ return `<div class="miss-sub">${esc(slotText(g.sl.date,g.sl.sh))}　${g.list.length} 張</div>
+        <div style="padding:0 6px 4px">${g.list.map(missRow).join('')}</div>`; }).join('')
+        +'<div class="miss-foot">點下去會進到那一區。要補點請在點班表切換日期／班別（可往回 14 天）。</div>':''}
+    </div>`;
+  }
+  const sl=prevSlotOf(cur.date,cur.sh);
+  const list=missIn(sl,myTodoSheets());
+  if(!list.length) return '';
+  return `<div class="card miss-card">
+    <div class="miss-h"><span>⏮ 上一班（${esc(slotText(sl.date,sl.sh))}）有 ${list.length} 張沒點完</span></div>
+    <div style="padding:0 6px 4px">${list.map(missRow).join('')}</div>
+    <div class="miss-foot">接班請先確認這些東西；有問題回報當班 Leader。</div></div>`;
+}
 function renderTodoCard(){
   const t=todoList(), n=t.sheets.length+t.extra.length;
   const areas=myBindAreas();
@@ -5644,8 +5817,9 @@ function nameOf(r){ return fld(r,['name','姓名']); }
 /* ★★ 跨裝置「本班是否已有人點過」——這是人員端最重要的資訊。
    原本清單的進度只看本機 state.checks，所以 A 在別台點完，B 這台完全看不到，
    結果同一區被重複點好幾次。這裡改成從後端 rollcall_log 判斷。 */
-function shiftDoneOf(sheetId, half){
-  const d=curRcDate(), sh=effShift();
+function shiftDoneOf(sheetId, half){ return shiftDoneAt(sheetId, half, curRcDate(), effShift()); }
+/* 指定哪一天哪一班（上一班未完成提醒要用） */
+function shiftDoneAt(sheetId, half, d, sh){
   const hits=(SIGNLOG||[]).filter(function(r){
     if(sheetIdOf(r)!==String(sheetId))return false;
     if(dateOfLog(r)!==d)return false;
@@ -5694,7 +5868,8 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal']]
+    /* rollcall_issue 3 天：點班畫面「帶入上次異常」要用（量很小） */
+    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal'],['rollcall_issue',3]]
                       .concat(MAINT_ON?[['device_maint',3]]:[]),
                      {merge:true});     // ★ 合併：只更新這 3 天，手上的 30 天不會被縮掉
     SYNC_MS=Date.now()-t0;
@@ -7503,7 +7678,7 @@ const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',7
 /* 冰箱／氧氣開 App 就抓 30 天 —— 管理分析要看近 14 天登錄率，護理長也常直接翻整個月。
    它在第二波（背景）抓，不擋著開始點班。
    之後每 20 秒的自動更新只抓 3 天，但用「合併」寫回去，所以這 30 天不會被縮掉。 */
-const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry']]
+const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry'],['rollcall_issue',3]]
   .concat(MAINT_ON?[['device_maint',7]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{

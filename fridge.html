@@ -18,6 +18,8 @@
   .btn-p{background:var(--brand);color:#fff}
   .btn-g{background:#fff;border:1.5px solid var(--line);color:var(--ink)}
   .sheet{background:#fff;border-radius:12px;box-shadow:0 1px 6px rgba(20,40,55,.08);padding:14px;margin-top:14px;overflow:auto}
+  .printonly{display:none}
+  .fpage+.fpage{margin-top:22px}
   .head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;border-bottom:2px solid var(--ink);padding-bottom:8px}
   .head .hosp{font-weight:800;color:var(--red)}
   .head .ttl{font-weight:800;font-size:18px}
@@ -56,6 +58,9 @@
     body{background:#fff}.bar,.noprint,.btn{display:none!important}
     .wrap{max-width:none;padding:0}.sheet{box-shadow:none;border-radius:0;overflow:visible}
     @page{size:A4 landscape;margin:8mm}
+    .printonly{display:block!important}
+    .fpage{page-break-after:always}
+    .fpage-last{page-break-after:auto}
   }
 </style>
 </head>
@@ -92,8 +97,8 @@ const AXISW=64, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;   // 左欄
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-21-b38';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-21-v22';
+const APP_VER='2026-09-22-b39';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-22-v23';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
@@ -108,6 +113,7 @@ async function autoSync(force){
   SRV_AT=Date.now();
   await syncFromServer();
   loadSuperv().then(render);
+  loadAbn().then(render);
 }
 
 /* ★★★ 啟動程序移到整份程式的最後面（見檔尾 boot()）。
@@ -163,7 +169,7 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('fridge_lastName')||''; nm.onchange=()=>localStorage.setItem('fridge_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('fridge_lastName',n); } };
 }
-function switchTo(unit,ym){ save(); data=loadFor(unit,ym||data.ym); data.unit=unit; if(ym)data.ym=ym; SV_LOADED=false; render(); syncFromServer(); loadSuperv().then(render); }
+function switchTo(unit,ym){ save(); data=loadFor(unit,ym||data.ym); data.unit=unit; if(ym)data.ym=ym; SV_LOADED=false; render(); syncFromServer(); loadSuperv().then(render); loadAbn().then(render); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
@@ -369,8 +375,15 @@ async function loadSuperv(){
     loc.filter(function(s){ return me && String(s.empId||'')===me; }).forEach(function(s){ svPush(s,true); });
   }catch(e){ console.warn('讀主管查核失敗（不影響其他功能）',e); }
 }
+/* ★ 背景補傳要有煞車：後端是舊版時每 25 秒自動同步都會再送一次，
+   舊版 GS 會把不認得的任務丟給 AI —— 每次都白燒額度。所以一個階段只試一次，
+   而且只要後端回「舊版」就整個停掉，直到重新整理頁面。 */
+let BG_TRIED={}, BG_OLD=false;
+function bgOnce(key){ if(BG_OLD||BG_TRIED[key]) return false; BG_TRIED[key]=1; return true; }
 async function svPush(rec,quiet){
+  if(quiet && !bgOnce('sv|'+rec.date+'|'+rec.empId)) return false;
   const r=await postTask('superv_add',{type:SV_TYPE,unit:svUnit(),date:rec.date,empId:rec.empId,name:rec.sign});
+  if(r.old) BG_OLD=true;
   if(r.ok){ delete rec._unsync; save(); render(); return true; }
   if(!quiet) alert('查核先存在這台，還沒進後端：\n'+r.error);
   return false;
@@ -764,20 +777,17 @@ function retrySync(){
   syncBanner();
 }
 
-function render(){
-  document.getElementById('ymSel').value=data.ym||'';
-  const days=daysInMonth(data.ym); const cols=days*3;
-  /* 紙本在溫度圖下面還有五列，而且是跟日期／班別同一組格線：
-       簽名 ／（異常狀況處理：處理代號・簽名・結果）／ 主管查核·日期
-     原本這幾列是另外做成表格列在下面，欄位對不起來，稽核要自己數格子。
-     現在一起畫進同一張 SVG，格線與上方完全對齊。 */
+/* ★ 一張 SVG＝一頁（半個月）。紙本就是半個月一頁：1–15 一張、16–月底一張。
+   原本整個月畫在同一張，31 天 × 3 班 = 93 欄擠在 A4 橫向上，字小到看不清楚。 */
+function pageSvg(D0,D1){
+  const cols=(D1-D0+1)*3;
   const RS=34, RC=20, RA=30, RR=30, RV=26;        // 各列高度
   const BTOP=PADTOP+PLOTH+16;                     // 下方區塊起點（班別字下面）
   // 欄名照紙本折成兩行，才塞得進左欄（紙本也是折行寫的）
   const BOT=[['簽名',RS],['處理|代號',RC],['簽名',RA],['結果',RR],['主管查核|日期',RV]];
   const BH=BOT.reduce(function(a,x){return a+x[1];},0);
   const GLW=17;                                   // 「異常狀況處理」直書群組欄寬
-  const W=AXISW+cols*COLW+8, H=BTOP+BH+14; const mg=minguo(data.ym);
+  const W=AXISW+cols*COLW+8, H=BTOP+BH+14;
   let g='';
   g+=`<rect x="${AXISW}" y="${yT(HIGH)}" width="${cols*COLW}" height="${yT(LOW)-yT(HIGH)}" fill="var(--band)"/>`;
   for(let t=TMAX;t>=TMIN;t--){ const y=yT(t); const isRed=(t===HIGH||t===LOW);
@@ -785,23 +795,23 @@ function render(){
     g+=`<text x="${AXISW-6}" y="${y+4}" text-anchor="end" font-size="11" fill="#5d6c77">${t}°C</text>`;
     if(t>TMIN){const yh=yT(t-0.5);g+=`<line x1="${AXISW}" y1="${yh}" x2="${AXISW+cols*COLW}" y2="${yh}" stroke="#eef3f6" stroke-width="1" stroke-dasharray="2 3"/>`;}
   }
-  for(let d=0;d<=days;d++){ const x=AXISW+d*3*COLW; g+=`<line x1="${x}" y1="${PADTOP}" x2="${x}" y2="${PADTOP+PLOTH}" stroke="#9fb4c2" stroke-width="1.4"/>`; }
+  for(let d=0;d<=D1-D0+1;d++){ const x=AXISW+d*3*COLW; g+=`<line x1="${x}" y1="${PADTOP}" x2="${x}" y2="${PADTOP+PLOTH}" stroke="#9fb4c2" stroke-width="1.4"/>`; }
   for(let c=0;c<cols;c++){ if(c%3!==0){const x=AXISW+c*COLW;g+=`<line x1="${x}" y1="${PADTOP}" x2="${x}" y2="${PADTOP+PLOTH}" stroke="#eef3f6" stroke-width="1"/>`;} }
-  for(let d=1;d<=days;d++){ const x0=AXISW+(d-1)*3*COLW;
+  for(let d=D0;d<=D1;d++){ const x0=AXISW+(d-D0)*3*COLW;
     g+=`<text x="${x0+1.5*COLW}" y="${PADTOP-2}" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2d33">${d}</text>`;
     for(let si=0;si<3;si++){ g+=`<text x="${x0+si*COLW+COLW/2}" y="${PADTOP+PLOTH+12}" text-anchor="middle" font-size="9" fill="#8894a0">${SHIFTS[si]}</text>`; }
   }
   const pts=[];
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(r&&r.cur!=null&&r.cur!==''){ const idx=(d-1)*3+si; pts.push([xCol(idx),yT(clampPlot(+r.cur))]); } }
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(r&&r.cur!=null&&r.cur!==''){ const idx=(d-D0)*3+si; pts.push([xCol(idx),yT(clampPlot(+r.cur))]); } }
   if(pts.length>1){ g+=`<polyline points="${pts.map(p=>p[0]+','+p[1]).join(' ')}" fill="none" stroke="var(--blue)" stroke-width="1.6"/>`; }
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){
-    const r=data.readings[rkey(d,si)]; if(!r)continue; const idx=(d-1)*3+si; const x=xCol(idx);
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){
+    const r=data.readings[rkey(d,si)]; if(!r)continue; const idx=(d-D0)*3+si; const x=xCol(idx);
     if(r.cur!=null&&r.cur!==''){ const bad=(+r.cur<LOW||+r.cur>HIGH); g+=`<circle cx="${x}" cy="${yT(clampPlot(+r.cur))}" r="3" fill="${bad?'var(--red)':'var(--blue)'}"/>`;
       if(+r.cur>TMAX||+r.cur<TMIN) g+=`<text x="${x}" y="${yT(clampPlot(+r.cur))-6}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--red)">${r.cur}</text>`; }
     if(r.hi!=null&&r.hi!=='') g+=`<text x="${x}" y="${yT(clampPlot(+r.hi))+3}" text-anchor="middle" font-size="11" font-weight="800" fill="#b5680f">V</text>`;
     if(r.lo!=null&&r.lo!=='') g+=`<text x="${x}" y="${yT(clampPlot(+r.lo))+4}" text-anchor="middle" font-size="11" font-weight="800" fill="#1c7ed6">∧</text>`;
   }
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const idx=(d-1)*3+si; const x=AXISW+idx*COLW; g+=`<rect class="cell-hit" x="${x}" y="${PADTOP}" width="${COLW}" height="${PLOTH}" onclick="openEntry(${d},${si})"></rect>`; }
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){ const idx=(d-D0)*3+si; const x=AXISW+idx*COLW; g+=`<rect class="cell-hit" x="${x}" y="${PADTOP}" width="${COLW}" height="${PLOTH}" onclick="openEntry(${d},${si})"></rect>`; }
 
   /* ---------- 下方五列：跟紙本一樣，與上方共用同一組格線 ---------- */
   const yRow=[]; { let y=BTOP; BOT.forEach(function(r){ yRow.push(y); y+=r[1]; }); yRow.push(y); }
@@ -816,10 +826,12 @@ function render(){
        不是每天／每班一格（原稿 16～31 日整段只有 1 條直線，落在第 8 天）。 */
   for(let c=0;c<=cols;c++){ const x=AXISW+c*COLW; const day=(c%3===0);
     g+=`<line x1="${x}" y1="${BTOP}" x2="${x}" y2="${yRow[4]}" stroke="${day?'#9fb4c2':'#eef3f6'}" stroke-width="${day?1.4:1}"/>`; }
-  // 主管查核那一列：每 7 天一格（1–7 / 8–14 / 15–21 / 22–28 / 29–月底）
-  const WEEKS=[]; for(let d=1;d<=days;d+=7) WEEKS.push([d,Math.min(days,d+6)]);
+  /* 主管查核那一列：每 7 天一格，從「這一頁的第一天」起算 ——
+     紙本就是這樣：16～31 那一頁的直線落在 23 日（16+7），不是 22 日。
+     所以 1–7／8–14／15　｜　16–22／23–29／30–月底 */
+  const WEEKS=[]; for(let d=D0;d<=D1;d+=7) WEEKS.push([d,Math.min(D1,d+6)]);
   WEEKS.forEach(function(w){
-    const x=AXISW+(w[0]-1)*3*COLW;
+    const x=AXISW+(w[0]-D0)*3*COLW;
     g+=`<line x1="${x}" y1="${yRow[4]}" x2="${x}" y2="${BBOT}" stroke="#9fb4c2" stroke-width="1.4"/>`;
   });
   g+=`<line x1="${AXISW+cols*COLW}" y1="${yRow[4]}" x2="${AXISW+cols*COLW}" y2="${BBOT}" stroke="#9fb4c2" stroke-width="1.4"/>`;
@@ -846,15 +858,15 @@ function render(){
     g+=`<text x="${gx+GLW/2}" y="${gy0+step*0.95}" text-anchor="middle" font-size="8.5" fill="#5d6c77">${ts}</text>`;
   }
   // 簽名（直書，跟溫度點同一欄正下方）
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(!r||!r.sign)continue;
-    const x=xCol((d-1)*3+si); const nm=String(r.sign); let ts='';
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){ const r=data.readings[rkey(d,si)]; if(!r||!r.sign)continue;
+    const x=xCol((d-D0)*3+si); const nm=String(r.sign); let ts='';
     for(let ci=0;ci<Math.min(nm.length,3);ci++){ ts+=`<tspan x="${x}" dy="${ci===0?0:10}">${esc(nm[ci])}</tspan>`; }
     g+=`<text x="${x}" y="${yRow[0]+11}" text-anchor="middle" font-size="9.5" fill="#23313b">${ts}</text>`;
   }
   // 異常三列：處理代號／簽名／結果，填在該班那一格
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){
     const a=data.abn[d+'_'+SHIFTS[si]]; if(!a)continue;
-    const x=xCol((d-1)*3+si);
+    const x=xCol((d-D0)*3+si);
     g+=`<text x="${x}" y="${yRow[1]+RC/2+4}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--red)">${esc(a.code||'')}</text>`;
     if(a.sign){ const nm=String(a.sign); let ts='';
       for(let ci=0;ci<Math.min(nm.length,3);ci++) ts+=`<tspan x="${x}" dy="${ci===0?0:9}">${esc(nm[ci])}</tspan>`;
@@ -870,13 +882,13 @@ function render(){
     (data.superv||[]).forEach(function(sv){
       const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(sv.date||'')); if(!m)return;
       if((m[1]+'-'+m[2])!==data.ym) return;
-      const d=+m[3]; if(d<1||d>days) return;
-      const wi=Math.floor((d-1)/7); if(wi>=WEEKS.length) return;
+      const d=+m[3]; if(d<D0||d>D1) return;
+      const wi=Math.floor((d-D0)/7); if(wi>=WEEKS.length) return;
       (byWeek[wi]=byWeek[wi]||[]).push({sv:sv,d:d});
     });
     Object.keys(byWeek).forEach(function(k){
       const wi=+k, w=WEEKS[wi], list=byWeek[k];
-      const x0=AXISW+(w[0]-1)*3*COLW, cw=(w[1]-w[0]+1)*3*COLW;
+      const x0=AXISW+(w[0]-D0)*3*COLW, cw=(w[1]-w[0]+1)*3*COLW;
       const slot=cw/list.length;
       list.forEach(function(e,i){
         const cx=x0+slot*(i+0.5), img=signOf(e.sv.empId);
@@ -898,12 +910,23 @@ function render(){
     });
   }
   // 點格子可編輯（螢幕上用；列印時看不出差別）
-  for(let d=1;d<=days;d++)for(let si=0;si<3;si++){ const x=AXISW+((d-1)*3+si)*COLW;
+  for(let d=D0;d<=D1;d++)for(let si=0;si<3;si++){ const x=AXISW+((d-D0)*3+si)*COLW;
     g+=`<rect class="cell-hit" x="${x}" y="${yRow[1]}" width="${COLW}" height="${yRow[4]-yRow[1]}" onclick="openAbn('${d}',${si})"></rect>`; }
+  return {g:g,W:W,H:H};
+}
+function render(){
+  document.getElementById('ymSel').value=data.ym||'';
+  const days=daysInMonth(data.ym); const cols=days*3;
+  /* 紙本在溫度圖下面還有五列，而且是跟日期／班別同一組格線：
+       簽名 ／（異常狀況處理：處理代號・簽名・結果）／ 主管查核·日期
+     原本這幾列是另外做成表格列在下面，欄位對不起來，稽核要自己數格子。
+     現在一起畫進同一張 SVG，格線與上方完全對齊。 */
+  const mg=minguo(data.ym);
+  const PAGES=[[1,15],[16,days]].map(function(r){ return Object.assign({d0:r[0],d1:r[1]},pageSvg(r[0],r[1])); });
   const sig='';
 
   const abnRows=Object.keys(data.abn).sort().map(k=>{ const a=data.abn[k]; const [d,s]=k.split('_');
-    return `<tr><td>${d} 日 ${s} 時</td><td><span class="pill p${a.code}">${a.code}</span></td><td>${esc(a.sign||'')}</td><td>${esc(a.result||'')}</td>
+    return `<tr><td>${d} 日 ${s} 時${a._unsync?' <b style="color:var(--red)" title="還沒進後端">⚠ 只在這台</b>':''}</td><td><span class="pill p${a.code}">${a.code}</span></td><td>${esc(a.sign||'')}</td><td>${esc(a.result||'')}</td>
       <td><button class="btn btn-g" style="padding:4px 10px" onclick="openAbn('${d}',${SHIFTS.indexOf(s)})">編輯</button></td></tr>`; }).join('');
   /* ★ 異常明細已經畫進上面的格線裡（跟紙本一樣）。
      這張表只留在螢幕上當編輯清單，列印時隱藏，免得同一份資料印兩次。 */
@@ -913,21 +936,24 @@ function render(){
 
   const supHtml=svPanelHtml();
 
-  document.getElementById('sheet').innerHTML=`
-    <div class="head">
-      <div class="hosp">${HOSP}</div>
-      <div class="ttl">藥品冰箱溫度查核登錄表</div>
-      <div class="meta">單位：${esc(data.unit)}　${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}</div>
-    </div>
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>
-    ${sig}${abnHtml}${supHtml}
-    <div class="legend">
+  const LEGEND=`<div class="legend">
       ※ 溫度登錄：每班查核者需在上班前完成查檢溫度並登錄。※ 主管查核／日期：主管每星期需查核一次冰箱的保管記錄。<br>
       ※ 溫度呈現方式：高溫以「<b style="color:#b5680f">V</b>」、低溫以「<b style="color:#1c7ed6">∧</b>」、現在溫度以「<b style="color:var(--blue)">●</b>」在該溫度的中間虛線上標示，現在溫度須與前一班溫度連線，高、低溫不需連線（BR 疫苗冰箱配合疾管局規定，三種溫度均需連線）；大於 10℃ 或小於 0℃ 以數字書寫。<br>
       ※ 冷藏藥品冰箱溫度應保持在 <b>2-8℃</b> 範圍，不在 2-8℃ 範圍呈現處理情形：代號 <span class="pill pA">A</span>－溫度不在 2-8℃ 範圍（藥物需暫時移到管控於 2-8℃ 的非食物冰箱），30 分鐘內再檢查；
       代號 <span class="pill pB">B</span>－30 分鐘後未恢復 2-8℃ 已通知工務請修；代號 <span class="pill pC">C</span>－溫度恢復正常。<br>
-      <span class="noprint" style="color:#8894a0">＊點溫度格輸入該班溫度；點下方「異常狀況處理」那三列可填處理代號／簽名／結果。資料同步寫回後端 Sheet(fridge_temp)。</span>
+      <span class="noprint" style="color:#8894a0">＊點溫度格輸入該班溫度；點下方「異常狀況處理」那三列可填處理代號／簽名／結果。溫度寫回後端 fridge_temp、異常處理寫回 fridge_abn、主管查核寫回 supervise_log。</span>
     </div>`;
+  const pageHtml=function(P,i){
+    return `<div class="fpage${i===PAGES.length-1?' fpage-last':''}">
+    <div class="head">
+      <div class="hosp">${HOSP}</div>
+      <div class="ttl">藥品冰箱溫度查核登錄表</div>
+      <div class="meta">單位：${esc(data.unit)}　${mg.y?('民國 '+mg.y+' 年 '+mg.m+' 月'):'（請選年月）'}　<b>${P.d0}–${P.d1} 日</b>（第 ${i+1}／${PAGES.length} 頁）</div>
+    </div>
+    <svg width="${P.W}" height="${P.H}" viewBox="0 0 ${P.W} ${P.H}">${P.g}</svg>
+    ${i<PAGES.length-1?`<div class="printonly">${LEGEND}</div>`:LEGEND}
+    </div>`; };
+  document.getElementById('sheet').innerHTML=PAGES.map(pageHtml).join('')+`${sig}${abnHtml}${supHtml}`;
   save();
 }
 
@@ -1075,8 +1101,62 @@ function openAbn(day,si,fromEntry){
     </div>
   </div></div>`;
 }
-function saveAbn(k){ data.abn[k]={code:document.getElementById('a_code').value,sign:document.getElementById('a_sign').value.trim(),result:document.getElementById('a_result').value.trim()}; save(); closeModal(); }
-function delAbn(k){ delete data.abn[k]; save(); closeModal(); }
+/* ===================== 異常狀況處理（存後端 fridge_abn）=====================
+   ★ v23 之前只存在那一支手機：A 在手機上登錄處理代號，護理站電腦印出來是空的。
+   現在跟主管查核一樣寫後端；本機先顯示（體感快），送不上去標「⚠ 只在這台」並自動重試。
+   ★ 刪除不真的刪：後端改「已刪除」並記下誰刪的。 */
+function abnPayload(k,a){
+  const [d,slot]=k.split('_');
+  return {unit:data.unit,ym:ymOf(data.ym),day:d,slot:slot,code:a?a.code:'',
+          sign:a?a.sign:'',result:a?a.result:'',empId:myEmp()};
+}
+async function abnPush(k,quiet){
+  if(quiet && !bgOnce('abn|'+data.unit+'|'+data.ym+'|'+k)) return false;
+  const a=data.abn[k];
+  const r=await postTask('fridge_abn_set',abnPayload(k,a));
+  if(r.old) BG_OLD=true;
+  if(r.ok){ if(data.abn[k]) delete data.abn[k]._unsync; save(); render(); return true; }
+  if(!quiet) alert('異常處理先存在這台，還沒進後端：\n'+r.error);
+  return false;
+}
+async function saveAbn(k){
+  data.abn[k]={code:document.getElementById('a_code').value,sign:document.getElementById('a_sign').value.trim(),
+               result:document.getElementById('a_result').value.trim(),_unsync:true};
+  save(); closeModal();
+  await abnPush(k,false);
+}
+async function delAbn(k){
+  const keep=data.abn[k];
+  delete data.abn[k]; save(); closeModal();
+  const r=await postTask('fridge_abn_set',abnPayload(k,null));
+  if(!r.ok){ data.abn[k]=keep; save(); render(); alert('刪除沒有成功（後端還留著）：\n'+r.error); }
+}
+async function loadAbn(){
+  if(!API_URL||!data.ym) return;
+  try{
+    const res=await fetch(API_URL+'?table=fridge_abn&_='+Date.now(),{cache:'no-store'});
+    const a=await res.json(); if(!Array.isArray(a)) return;
+    const seen={};
+    a.forEach(function(o){
+      if(normU(o['單位'])!==normU(data.unit)) return;
+      if(ymOf(o['年月'])!==ymOf(data.ym)) return;
+      /* ★ 時段 "0" 會被 Sheets 存成數字 0 —— 一定要用 pick0，不能用 ||（跟溫度大夜那一題一樣） */
+      const d=String(+(pick0(o,['日'])||0)), slot=String(pick0(o,['時段']));
+      if(d==='0'||['0','8','16'].indexOf(slot)<0) return;
+      const k=d+'_'+slot; seen[k]=1;
+      const loc=data.abn[k];
+      if(loc&&loc._unsync) return;                 // 剛改還沒送上去的，不要被舊資料蓋掉
+      if(String(o['狀態']||'')==='已刪除'){ delete data.abn[k]; return; }
+      data.abn[k]={code:String(o['處理代號']||''),sign:String(o['簽名']||''),result:String(o['結果']||'')};
+    });
+    /* 本機有、後端完全沒有這一格的：多半是 v23 之前只存在這台的，補傳上去 */
+    Object.keys(data.abn).forEach(function(k){
+      if(seen[k]) return;
+      data.abn[k]._unsync=true; abnPush(k,true);
+    });
+    save();
+  }catch(e){ console.warn('讀異常處理失敗（不影響其他功能）',e); }
+}
 
 /* addSup／delSup 已移到上面「主管查核（存後端）」那一段 */
 
@@ -1099,6 +1179,7 @@ function boot(){
   /* 簽名圖另外抓：抓失敗只會變成「印名字」，不可以拖累溫度同步。 */
   loadSignImgs().then(function(){ render(); }).catch(function(){});
   loadSuperv().then(function(){ render(); });
+  loadAbn().then(function(){ render(); });
   setInterval(function(){ if(!document.hidden) autoSync(); },25000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
   window.addEventListener('focus',function(){ autoSync(); });
