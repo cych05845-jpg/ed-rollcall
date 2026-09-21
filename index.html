@@ -279,6 +279,10 @@
   .owe-close{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
   .owe-f{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:10px}
   .owe-f select,.owe-f input{display:block;width:100%;margin-top:4px;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;background:var(--card);color:var(--ink)}
+  .stk{margin:8px 0 4px;padding:8px 10px;border:1px dashed #d9a441;border-radius:10px;background:#fffaf0}
+  .stk-h{font-size:12.5px;font-weight:700;color:#8a5a00;margin-bottom:6px}
+  .stk-s{font-weight:400;color:#8a7a5a;margin-left:6px;font-size:11.5px}
+  .stk-ok{font-size:12px;color:#1f7a43;font-weight:700;margin-top:4px}
   .owe-mini{margin-top:8px;border:1.5px solid #b5680f;color:#b5680f;background:#fff8ee;border-radius:8px;padding:6px 13px;font-size:13px;font-weight:700;font-family:inherit;cursor:pointer}
   .toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(20px);background:#23313b;color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;z-index:1200;opacity:0;transition:.3s;box-shadow:0 6px 20px rgba(0,0,0,.3)}
   .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
@@ -608,7 +612,7 @@ let NET_ERR='';        // 最近一次讀取失敗的原因（首頁與診斷頁
 
    spec 寫法：[['items'],['rollcall_log',7],['fridge_temp',30]]
    後端不支援 ?tables= 時（GS 還沒更新）會自動退回逐張抓，功能不會壞。 */
-let BUNDLE_OK=true;
+let BUNDLE_OK=true, BUNDLE_AT=0;   // BUNDLE_AT＝最後一次批次讀取「成功」的時間
 /* ★ 後端實際跑的版本（批次讀取時後端會回 _version）。
    為什麼一定要知道：v11 不認識 cart_seal_check 這類新任務，doPost 會讓它
    「掉進 AI 分支」—— 等於每次提交點班都白打一次 Gemini，吃掉每日 AI 額度。
@@ -989,11 +993,15 @@ async function loadBundle(spec,opts){
     }));
     cacheMerge(j);                 // ★ 抓到的直接留一份在手機裡，下次開啟先用它
     SHOW_CACHE=false;
+    /* ★ 「這一次批次讀取真的成功了」的唯一可靠訊號。
+       loadBundle 失敗時會自己吞掉例外改走 fallback，外面 .catch 不到，
+       所以想做「讀失敗就別把它當成已讀」的地方要看這個時間戳。 */
+    BUNDLE_AT=Date.now();
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-18-b62';
+const APP_VER='2026-09-21-b64';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1223,7 +1231,7 @@ async function submitRollcall(){
     // ★ 異常明細：一筆異常一列，之後才分析得出「哪些器械最常壞、哪些耗材最常短少」
     issues: list.filter(o=>state.checks[keyOf(o)]==='bad').map(function(o){
       const k=keyOf(o);
-      return { item:o.name, type:o.type||'', reason:state.reason[k]||'未註記', note:state.note[k]||'' };
+      return { item:o.name, type:o.type||'', reason:state.reason[k]||'未註記', note:noteFull(k) };
     }).concat(sealBad?[{ item:'上鎖物品封籤', type:'器械', reason:'封籤不符',
       note:'人員在車上看到 '+sealSeen+'，與系統紀錄不一致' }]:[])};
   state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
@@ -1296,7 +1304,7 @@ async function aiHandover(){
   const s=sheetById(state.sheetId);const list=itemsOf(s.id,state.half);
   const issues=[];
   list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
-    const r=state.reason[k]||'未註記原因';issues.push({t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')});}});
+    const r=state.reason[k]||'未註記原因';issues.push({t:o.name,d:r+(noteFull(k)?'・'+noteFull(k):'')});}});
   const box=document.getElementById('aiBox');box.style.display='block';box.textContent='AI 產生中…';
   try{ box.textContent=await askAI('handover',{sheet:s.name,shift:SHIFT_NAME[effShift()],issues}); }
   catch(e){ box.textContent='AI 失敗:'+e; }
@@ -1377,7 +1385,10 @@ function curYM(){
 function openFridge(unit){const nm=encodeURIComponent(state.user?state.user.name:'');
   const emp=encodeURIComponent(state.user?state.user.id:'');
   openEmbed(`fridge.html?unit=${encodeURIComponent(unit)}&ym=${curYM()}&name=${nm}&emp=${emp}`,'🌡 藥品冰箱溫度 · '+unit);}
-function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}`,'🫧 氧氣桶審核 · '+dept);}
+function openO2(dept,qty){const nm=encodeURIComponent(state.user?state.user.name:'');
+  /* ★ 帶員編：主管查核與簽名圖都要靠它認人（b64 起氧氣表也有主管查核） */
+  const emp=encodeURIComponent(state.user?state.user.id:'');
+  openEmbed(`o2.html?dept=${encodeURIComponent(dept)}&qty=${qty}&ym=${curYM()}&name=${nm}&emp=${emp}`,'🫧 氧氣桶審核 · '+dept);}
 function openEmbed(url,title){state.embedUrl=url;state.embedTitle=title;state.embedBack=(state.screen==='embed'?state.embedBack:state.screen)||'home';state.screen='embed';render();}
 // 用本機紀錄判斷「今天這一區」冰箱/氧氣是否已登錄,回傳簽名者(空=未完成)
 /* 附加查核完成狀態：以「後端紀錄」為準（跨裝置一致），連不到後端才退回本機快取。
@@ -2144,7 +2155,7 @@ function lockedItemsOf(sheetId){
 function keyOf(o){return o.sheet+'|'+o.i}
 
 // ---------- state ----------
-let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{},reason:{},note:{}};
+let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{},reason:{},note:{},part:{}};
 /* ★★ 換版本時要自己清掉「暫時性」的本機資料。
    這幾個月已經踩過兩次：舊版算錯的班別、上一班打的封籤號，都被整包存進
    localStorage，改好程式也沒用，因為舊值優先。
@@ -2156,7 +2167,7 @@ let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{}
 /* ★ 'audits'＝雙月盤點還沒送到後端的那幾筆，跟 rcPending 同一個等級的東西，
      換版絕對不能清掉（清掉就真的不見了）。 */
 const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs','audits',
-                             'checks','reason','note','theme'];
+                             'checks','reason','note','part','theme'];
 const store={
   save(){try{state._v=APP_VER;localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
   load(){try{const s=localStorage.getItem('ed_rc2');if(s)state=JSON.parse(s)}catch(e){}
@@ -2165,7 +2176,7 @@ const store={
       STATE_KEEP_ON_UPGRADE.forEach(function(k){ if(state[k]!==undefined)keep[k]=state[k]; });
       console.info('版本從 '+state._v+' 換到 '+APP_VER+'，已清掉本機暫存（保留登入與未送出的紀錄）');
       state=Object.assign({screen:'home',areaId:null,sheetId:null,half:null,
-        checks:{},reason:{},note:{}},keep);
+        checks:{},reason:{},note:{},part:{}},keep);
     }
     if(state) state._v=APP_VER;
     /* ★ 班別不可以沾黏。整包 state 都存進 localStorage，班別也被存進去，
@@ -2333,7 +2344,7 @@ async function doLogin_(){
   catch(e){ state.todayBind={status:'nomatch'}; }
   if(state.screen==='home') renderHome();
 }
-function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.screen='login';render()}
+function logout(){state.user=null;state.checks={};state.reason={};state.note={};state.part={};state.screen='login';render()}
 
 function renderHome(){
   const now=tpeDate(),cur=effShift();
@@ -2669,12 +2680,13 @@ function renderItem(o,s){
         const cls=(r==='漏計價'||r==='遺失')?'money':(r==='送修'?'repair':'');
         return `<button class="chip ${on?'on':''} ${cls}" onclick="setReason('${k}','${r}')">${r}</button>`}).join('')}</div>
      ${repairNote}
+     ${stackPickHtml(o,k)}
      ${reasonNeedsNote(state.reason[k])?`<div style="font-size:12px;color:var(--bad,#E03131);font-weight:700;margin:2px 0 4px">
        選「其他」請在備註寫清楚是什麼狀況（必填）</div>`:''}
      <input class="note-in" placeholder="${reasonNeedsNote(state.reason[k])?'請說明狀況（必填）':'備註（選填）'}"
        value="${esc(state.note[k]||'')}" onchange="setNote('${k}',this.value)"
        ${reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim()?'style="border-color:var(--bad,#E03131)"':''}>
-     ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}')">＋記欠物</button>`:''}
+     ${['數量短少','借出未還','待補貨','遺失'].includes(state.reason[k])?`<button class="owe-mini" onclick="oweFromRollcall('${esc(areaById(s.area).name)}','${esc(o.name).replace(/'/g,"")}','${state.reason[k]}','${k}')">＋記欠物${partPicked(k).length>1?'（'+partPicked(k).length+' 筆，一件一筆）':''}</button>`:''}
      ${_defibs.length?maintQuickBlock(s.id,_defibs):''}</div>`:'';
   return `<div class="li ${st==='bad'?'is-bad':''}">
     <div class="li-tap" onclick="setCheck('${k}','ok')">
@@ -2713,7 +2725,7 @@ function maintQuickBlock(sheetId,devs){
         ${esc(MAINT_FIELDS.filter(f=>q.bad.indexOf(f.k)>=0).map(f=>f.label).join('、'))} 記為異常</div>`}
   </div>`;
 }
-function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k]}render();postProgress();}
+function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.checks[k]!=='bad'){delete state.reason[k];delete state.note[k];if(state.part)delete state.part[k]}render();postProgress();}
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
@@ -2853,12 +2865,89 @@ async function submitOwedClose(id){
   toast('已結案，見證人已記錄');
 }
 // 點班內一鍵記欠物
-async function oweFromRollcall(zone,item,reason){
-  const today=new Date().toISOString().slice(0,10);
-  OWED.push({id:'tmp'+Date.now(),zone,date:today,item,names:state.user.name,status:'欠物中',way:'',closer:'',note:reason});
-  toast('已記入欠物本：'+item);
-  await owedWrite('owed_add',{zone,item,names:state.user.name,note:reason,date:today});
+/* ★ 疊加品項（例：NIS護理車 I 車+Barcode+座充、IV Pump(1-10號)）：
+   選了缺哪一件就一件記一筆，物品名寫成「原品項 — 缺件」。
+   原本只能整組記一筆，之後其中一件找回來、另一件還沒，就沒辦法分開結案，
+   欠物本上也看不出到底少的是哪一個。
+   「原品項 — 缺件」這個寫法也讓點班畫面上的 🔖 欠物中 仍然對得到那一列。
+   ★ 日期用台北時間：原本用 toISOString()，大夜 00:00–08:00 記的欠物日期會是前一天。 */
+async function oweFromRollcall(zone,item,reason,k){
+  const today=todayISO();
+  const parts=k?partPicked(k):[];
+  const items=parts.length?parts.map(function(p){ return item+' — '+p; }):[item];
+  const extra=k&&String(state.note[k]||'').trim()?('・'+String(state.note[k]).trim()):'';
+  items.forEach(function(it){
+    OWED.push({id:'tmp'+Date.now()+Math.random(),zone,date:today,item:it,names:state.user.name,status:'欠物中',way:'',closer:'',note:reason+extra}); });
+  toast('已記入欠物本：'+(items.length>1?(items.length+' 筆（'+parts.join('、')+'）'):items[0]));
+  for(const it of items)
+    await owedWrite('owed_add',{zone,item:it,names:state.user.name,note:reason+extra,date:today,
+      by:state.user.name,byId:state.user.id,at:new Date().toISOString()});
   await loadOwed(); if(state.screen==='rollcall')render();
+}
+/* ===================== 疊加品項：缺的是哪一件 =====================
+   一列裡其實是好幾樣東西（或好幾台）時，標異常要能說出是哪一件。
+   拆法（依序試）：
+   ① 名稱有「+」→ 每一段是一件（NIS護理車 I 車 + Barcode + 座充）
+   ② 名稱有號碼範圍 →（1-10號）→ 1號…10號
+   ③ 名稱括號裡有「/」→（大/小）→ 大、小
+   ④ 數量大於 1 → 問「少幾個」
+   都不是 → 不顯示（單一品項本來就不用選）。 */
+function stackParts(o){
+  const name=String(o&&o.name||''), qty=String(o&&o.qty||'');
+  const segs=name.split(/[+＋]/).map(function(t){ return t.trim(); }).filter(Boolean);
+  if(segs.length>=2){
+    const q=qty.split(/[\/／]/).map(function(t){ return t.trim(); });
+    return {kind:'set', parts:segs.map(function(t,i){
+      return (q.length===segs.length&&/^\d+$/.test(q[i])&&+q[i]>1)?(t+'×'+q[i]):t; })};
+  }
+  const rg=name.match(/(\d+)\s*號?\s*[-~～–]\s*(\d+)\s*號/);
+  if(rg){ const a=+rg[1], b=+rg[2];
+    if(b>a&&b-a<=30){ const p=[]; for(let n=a;n<=b;n++) p.push(n+'號'); return {kind:'num',parts:p}; } }
+  const vm=name.match(/[（(]([^()（）]*[\/／][^()（）]*)[)）]/);
+  if(vm){ const p=vm[1].split(/[\/／]/).map(function(t){ return t.trim(); }).filter(Boolean);
+    if(p.length>=2) return {kind:'var',parts:p}; }
+  const n=parseInt(qty,10);
+  if(n>1&&n<=60&&!/[\/／]/.test(qty)) return {kind:'count',max:n};
+  return null;
+}
+function partPicked(k){ return ((state.part||{})[k]||[]).slice(); }
+function togglePart(k,p){
+  state.part=state.part||{};
+  const a=state.part[k]=(state.part[k]||[]).slice();
+  const i=a.indexOf(p); if(i>=0)a.splice(i,1); else a.push(p);
+  if(!a.length) delete state.part[k];
+  render();
+}
+function setPartCount(k,n){
+  state.part=state.part||{};
+  if(n>0) state.part[k]=['缺'+n]; else delete state.part[k];
+  render();
+}
+/* 送出、摘要、交班都用這個：自動在備註前面加上「缺：座充、Barcode」 */
+function noteFull(k){
+  const p=partPicked(k), n=String((state.note||{})[k]||'').trim();
+  const head=p.length?((/^缺\d+$/.test(p[0])?p[0].replace('缺','缺 ')+' 個':'缺：'+p.join('、'))):'';
+  return head&&n?(head+'；'+n):(head||n);
+}
+function stackPickHtml(o,k){
+  const sp=stackParts(o); if(!sp) return '';
+  const on=partPicked(k);
+  if(sp.kind==='count'){
+    const cur=on.length?+String(on[0]).replace('缺',''):0;
+    let b='';
+    for(let n=1;n<=Math.min(sp.max,10);n++)
+      b+=`<button class="chip ${cur===n?'on':''}" onclick="setPartCount('${k}',${cur===n?0:n})">${n}</button>`;
+    if(sp.max>10) b+=`<input class="note-in" style="width:90px;display:inline-block;margin:0" type="number" min="1" max="${sp.max}"
+      placeholder="其他" value="${cur>10?cur:''}" onchange="setPartCount('${k}',Math.max(0,Math.min(${sp.max},parseInt(this.value,10)||0)))">`;
+    return `<div class="stk"><div class="stk-h">標準 ${esc(o.qty)}，少了幾個？</div><div class="chips">${b}</div></div>`;
+  }
+  const chips=sp.parts.map(function(p){
+    const v=String(p).replace(/'/g,'');
+    return `<button class="chip ${on.indexOf(v)>=0?'on':''}" onclick="togglePart('${k}','${esc(v)}')">${esc(p)}</button>`; }).join('');
+  const hint=sp.kind==='num'?'是哪一號？':'缺（或壞）的是哪一件？';
+  return `<div class="stk"><div class="stk-h">${hint}<span class="stk-s">可複選；沒選＝整組都有問題</span></div>
+    <div class="chips">${chips}</div>
+    ${on.length?`<div class="stk-ok">會記成「缺：${esc(on.join('、'))}」${on.length>1?'，記欠物時一件一筆':''}</div>`:''}</div>`;
 }
 function normName(s){return String(s||'').replace(/[\s()（）\[\]／/]/g,'').toLowerCase();}
 function nameToks(s){return (String(s||'').toLowerCase().match(/[a-z0-9]+|[一-鿿]+/g))||[];}
@@ -3941,8 +4030,33 @@ function openItemCheck(sheetId){
     state.icSheet=(icPickSheets()[0]||{}).id||'';
   if(!state.icDate) state.icDate=todayISO();       // ★ icDate＝區間的「最後一天」
   render();
-  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff'],['owed']]).then(function(){
-    if(state.screen==='itemCheck')render(); });
+  icLoad(false);
+}
+/* ★ 這一支要抓 60 天的 rollcall_log，是全 App 最重的一次讀取。
+   b62 之前只有急救車會開，現在 14 張表都能開，如果每按一次就重抓，
+   在分區之間比對時會一直等。所以 90 秒內重開就用手上的資料，
+   要最新的按畫面上的「↻ 重新讀取」。
+   換分區、換天數、翻頁都只是重畫，本來就不會再抓。 */
+let IC_LOADED_AT=0, IC_LOADING=false;
+function icLoad(force){
+  if(!force && Date.now()-IC_LOADED_AT<90000) return;
+  if(IC_LOADING) return;
+  IC_LOADING=true;
+  const mark=BUNDLE_AT;
+  loadBundle([['rollcall_log',60],['rollcall_issue',60],['rollcall_signoff'],['owed']])
+    .then(function(){
+      IC_LOADING=false;
+      /* ★ 只有真的讀成功才記時間戳。loadBundle 讀失敗會自己吞掉例外走 fallback，
+         這裡若無腦記時間，斷線那 90 秒內重開就會一直用空資料還不重試。 */
+      if(BUNDLE_AT!==mark) IC_LOADED_AT=Date.now();
+      if(state.screen==='itemCheck')render();
+    })
+    .catch(function(e){ IC_LOADING=false; console.warn('逐項查看讀取失敗',e); });
+}
+function icAgeLabel(){
+  if(!IC_LOADED_AT) return '尚未讀取';
+  const s=Math.round((Date.now()-IC_LOADED_AT)/1000);
+  return s<60?(s+' 秒前讀取'):(Math.round(s/60)+' 分鐘前讀取');
 }
 /* ★ 欠物本的「分區」是人填的區名（檢傷／急救室／治療／留觀區…），
    不是 sheetId，所以要用分區名對照，而且要寬鬆比對（留觀＝留觀區）。 */
@@ -4189,6 +4303,7 @@ function renderItemCheck(){
     +   spanBtns
     +   '<button class="btn btn-ghost" onclick="icMove(-1)">← 前 '+n+' 天</button>'
     +   '<button class="btn btn-ghost" onclick="state.icDate=todayISO();render()">到今天</button>'
+    +   '<button class="btn btn-ghost" onclick="icLoad(true);render()" title="換分區、換天數都是用手上的資料重畫，不會再連後端；要最新的按這裡">↻ 重新讀取<span style="font-size:11px;color:var(--ink-soft);margin-left:5px">'+esc(icAgeLabel())+'</span></button>'
     +   '<button class="btn btn-ghost" onclick="icMove(1)">後 '+n+' 天 →</button>'
     +   archBtn(400)
     +   '<button class="btn btn-primary" style="margin-left:auto" onclick="window.print()">🖨 列印</button>'
@@ -6849,7 +6964,7 @@ function renderSummary(){
   const issues=[];
   list.forEach(o=>{const k=keyOf(o);if(state.checks[k]==='bad'){
     const r=state.reason[k]||'未註記原因';const money=(r==='漏計價'||r==='遺失');
-    issues.push({type:money?'bad':'warn',t:o.name,d:r+(state.note[k]?'・'+state.note[k]:'')})}});
+    issues.push({type:money?'bad':'warn',t:o.name,d:r+(noteFull(k)?'・'+noteFull(k):'')})}});
   const issuesHtml=issues.length?issues.map(i=>`<div class="issue">
      <div class="issue-ic ${i.type}">${i.type==='bad'?'⚠':'!'}</div>
      <div><div class="issue-t">${esc(i.t)}</div><div class="issue-d">${esc(i.d)}</div></div></div>`).join('')

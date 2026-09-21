@@ -33,7 +33,9 @@
   table.o2 td.cell:hover{background:rgba(15,122,134,.10)}
   table.o2 td.mk{color:#0a5b64;font-weight:800;font-size:15px}
   table.o2 td.note{cursor:pointer;font-size:11px;text-align:left;padding:2px 4px;white-space:nowrap;overflow:hidden}
-  table.o2 td.sigcell{font-size:11px;font-weight:700;color:#0a5b64;line-height:1;padding:1px 0;writing-mode:vertical-rl;text-orientation:upright;white-space:nowrap;letter-spacing:0;vertical-align:middle}
+  /* ★ 不用 writing-mode：表格格子裡的直書 Chrome 排不好，字會疊成一個（印出來只看到最後一個字）。
+     改成一個字一行。 */
+  table.o2 td.sigcell{font-size:11px;font-weight:700;color:#0a5b64;line-height:1.1;padding:2px 0;vertical-align:middle}
   .hint{font-size:12px;color:var(--soft);margin-top:8px}
   .qc{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#eef6f7;border:1px solid #bfe0e3;border-radius:10px;padding:10px 12px;margin:0 0 12px}
   .qc select{padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;font-size:16px;font-family:inherit}
@@ -54,6 +56,21 @@
     .weekpage:last-child{page-break-after:auto}
     @page{size:A4 landscape;margin:6mm}
   }
+  /* 主管查核（螢幕操作區，列印時隱藏） */
+  .superv{margin:12px 0 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px;
+    border:1px solid #c9d3da;border-radius:10px;padding:10px 12px;background:#fbfcfd}
+  .superv input{padding:8px 10px;border:1.5px solid #c9d3da;border-radius:8px;font-family:inherit}
+  .superv .btn-p{background:var(--brand);color:#fff}
+  .superv .btn-w{background:#fff;color:var(--ink);border:1.5px solid #c9d3da}
+  .superv .btn-g{background:#fff;color:#c92a2a;border:1.5px solid #e0b4b4}
+  .sv-chip{border:1px solid #c9d3da;border-radius:8px;padding:4px 10px;background:#fff}
+  table.o2 td.supcell{height:40px;text-align:left;padding:2px 6px}
+  /* 簽名直書 2～3 個字，30px 高會溢到下一列（備註）去，印出來字被切一半 */
+  table.o2 td.sigcell{height:46px}
+  .sv-st{display:inline-flex;align-items:center;gap:4px;margin-right:14px;vertical-align:middle}
+  .sv-st img{height:30px}
+  .sv-st .d{font-size:11px;color:#444}
+  @media print{.superv{display:none!important}}
 </style>
 </head>
 <body>
@@ -86,8 +103,8 @@ const SHIFTS=["N","D","E"];
 const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
-const APP_VER='2026-09-15-b31';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-10-v11';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-21-b32';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-21-v22';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
 // （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
@@ -208,7 +225,7 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('o2_lastName')||''; nm.onchange=()=>localStorage.setItem('o2_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('o2_lastName',n); } };
 }
-function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; render(); SRV_AT=0; autoSync(true); }
+function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; SV_LOADED=false; render(); SRV_AT=0; autoSync(true); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
@@ -222,6 +239,257 @@ function ymOf(v){
   if(m) return m[1]+'-'+('0'+m[2]).slice(-2);
   return s;
 }
+
+/* ===== 簽名／印章圖（與冰箱表共用後端 staff_sign，本人上傳一次兩張表都會用）===== */
+let SIGNIMG={};                     // 員編 → dataURL
+/* 員編從網址帶進來（index.html 開這一頁時會加 &emp=）。
+   ★ 沒有員編就不讓上傳簽名圖 —— 認不出是誰的圖，存下去也沒意義。 */
+function signOf(emp){ return SIGNIMG[String(emp||'').trim()]||''; }
+async function loadSignImgs(){
+  if(!API_URL) return;
+  try{
+    const r=await fetch(API_URL+'?table=staff_sign');
+    const a=await r.json();
+    if(!Array.isArray(a)) return;
+    const m={};
+    a.forEach(function(o){
+      const e=String(o['員編']||o.empId||'').trim();
+      const img=String(o['簽名圖']||o.image||'');
+      if(e&&img.indexOf('data:image/')===0) m[e]=img;
+    });
+    SIGNIMG=m;
+  }catch(e){ console.warn('讀簽名圖失敗（不影響其他功能）',e); }
+}
+/* 直接拍照上傳用：
+   1) 先找出「印泥紅」或「筆跡黑」的像素，裁掉四周的紙（拍整張紙也沒關係）
+   2) 紙的灰底一律洗成純白，只留下印章／簽名本身
+   3) 再壓成 PNG。簽名是線條，PNG 比 JPEG 乾淨（不會有壓縮雜點）
+   存不進去比畫質差難處理得多，所以寬度會一階一階往下退。 */
+function signInkMap(im){
+  const W0=900, s=Math.min(1,W0/im.width);
+  const w=Math.max(1,Math.round(im.width*s)), h=Math.max(1,Math.round(im.height*s));
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,w,h);
+  g.drawImage(im,0,0,w,h);
+  let d; try{ d=g.getImageData(0,0,w,h); }catch(e){ return null; }  // 跨來源圖會擋，退回原本做法
+  const p=d.data;
+  // 先量一次紙的亮度（取最亮的那群），暗到一定程度才算筆跡
+  let mx=1;
+  for(let i=0;i<p.length;i+=4){ const v=Math.max(p[i],p[i+1],p[i+2]); if(v>mx) mx=v; }
+  const dark=mx*0.62;
+  let x0=w,y0=h,x1=-1,y1=-1;
+  const al=new Float32Array(w*h), hueR=new Uint8Array(w*h);
+  for(let y=0,k=0;y<h;y++) for(let x=0;x<w;x++,k++){
+    const i=k*4, R=p[i],G=p[i+1],B=p[i+2];
+    const red=R-(G+B)/2, lum=(R*0.3+G*0.59+B*0.11);
+    let a=0, isRed=0;
+    if(red>14){ a=Math.min(1,(red-12)/45); isRed=1; }
+    const ad=Math.min(1,(dark-lum)/(dark*0.45));
+    if(ad>a){ a=ad; isRed=0; }
+    if(a>0.06){ al[k]=a; hueR[k]=isRed;
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  }
+  if(x1<0) return null;                       // 整張都白的，交給原本做法
+  // 留白要照「裁出來的大小」算，照整張紙算會把小印章的長寬比撐歪
+  const pad=Math.max(2,Math.round(Math.max(x1-x0,y1-y0)*0.03));
+  x0=Math.max(0,x0-pad); y0=Math.max(0,y0-pad);
+  x1=Math.min(w-1,x1+pad); y1=Math.min(h-1,y1+pad);
+  const cw=x1-x0+1, ch=y1-y0+1;
+  if(cw<20||ch<12) return null;
+  const oc=document.createElement('canvas'); oc.width=cw; oc.height=ch;
+  const og=oc.getContext('2d'); const od=og.createImageData(cw,ch); const q=od.data;
+  for(let y=0;y<ch;y++) for(let x=0;x<cw;x++){
+    const k=(y+y0)*w+(x+x0), j=(y*cw+x)*4;
+    // 濃淡切成 8 階：肉眼看不出來，但 PNG 會小很多（存得進 Sheets 單格）
+    const a=Math.round(al[k]*8)/8;
+    const ir=hueR[k]?196:26, ig=hueR[k]?32:26, ib=hueR[k]?38:30;
+    q[j]  =255*(1-a)+ir*a;
+    q[j+1]=255*(1-a)+ig*a;
+    q[j+2]=255*(1-a)+ib*a;
+    q[j+3]=255;
+  }
+  og.putImageData(od,0,0);
+  return oc;
+}
+function signShrink(file){
+  return new Promise(function(res,rej){
+    const fr=new FileReader();
+    fr.onload=function(){
+      const im=new Image();
+      im.onload=function(){
+        let src=im, sw=im.width, sh=im.height;
+        try{ const t=signInkMap(im); if(t){ src=t; sw=t.width; sh=t.height; } }catch(e){}
+        const tries=[360,300,260,200,150];
+        for(let i=0;i<tries.length;i++){
+          const w=Math.min(tries[i],sw), h=Math.max(1,Math.round(sh*w/sw));
+          const c=document.createElement('canvas'); c.width=w; c.height=h;
+          const g=c.getContext('2d');
+          g.fillStyle='#fff'; g.fillRect(0,0,w,h);     // 透明底在列印時會變黑，先鋪白
+          g.drawImage(src,0,0,w,h);
+          const url=c.toDataURL('image/png');
+          if(url.length<=40000||i===tries.length-1) return res(url);
+        }
+      };
+      im.onerror=function(){ rej(new Error('讀不到這張圖')); };
+      im.src=fr.result;
+    };
+    fr.onerror=function(){ rej(new Error('檔案讀取失敗')); };
+    fr.readAsDataURL(file);
+  });
+}
+async function signUpload(input){
+  const f=input.files&&input.files[0]; if(!f)return;
+  input.value='';
+  const emp=myEmp();
+  if(!emp){ alert('看不到你的員編，無法認定這張圖是誰的。\n請從點班系統裡的入口進來（網址會帶員編）。'); return; }
+  let url;
+  try{ url=await signShrink(f); }
+  catch(e){ alert('這張圖處理失敗：'+e.message); return; }
+  if(url.length>45000){ alert('壓縮後還是太大。請裁掉空白、只留簽名的部分再試。'); return; }
+  const r=await signWrite(emp,url);
+  if(!r.ok){ alert('簽名圖沒有存進後端：\n'+(r.error||'連線失敗')); return; }
+  SIGNIMG[emp]=url; render();
+  alert('簽名圖已存好，之後主管查核那一格就會印出這張圖。\n\n'
+    +'提醒：圖只是印出來好看，真正留證的是你的員編與查核時間。');
+}
+async function signWrite(emp,url){
+  return postTask('sign_set',{empId:emp,name:svMyName(),image:url});
+}
+async function signClear(){
+  const emp=myEmp(); if(!emp)return;
+  if(!confirm('要移除你的簽名圖嗎？\n之後主管查核那一格會改成印名字。'))return;
+  const r=await signWrite(emp,'');
+  if(!r.ok){ alert('移除失敗：\n'+(r.error||'連線失敗')); return; }
+  delete SIGNIMG[emp]; render();
+}
+
+const SV_TYPE='o2';
+function svUnit(){ return data.dept; }
+function svYm(){ return ymOf(data.ym); }
+function myEmp(){ return String(P.get('emp')||'').trim(); }
+/* ===================== 主管查核（存後端 supervise_log）=====================
+   ★ v22 之前冰箱的主管查核只存在那一支手機（localStorage）：
+     手機上查核 → 護理站電腦列印，那一格是空的；「已隔 N 天」也只算得到本機。
+   現在一律寫後端，冰箱與氧氣共用同一張表（類型 fridge／o2）。
+   ★ 只記登入者本人：員編從網址帶進來（點班系統開這一頁時會加 &emp=），
+     不再讓人自己打「主管簽名」—— 那一格打誰的名字都可以，等於沒有意義。
+   ★ 只能撤銷自己的；撤銷不是刪列，後端會留「已刪除＋撤銷時間」。 */
+let SV_LOADED=false;
+function svToday(){ const t=tpeParts(); return t.y+'-'+String(t.m).padStart(2,'0')+'-'+String(t.d).padStart(2,'0'); }
+function svMyName(){ return String(P.get('name')||'').trim()||(typeof curName==='function'?curName():''); }
+/* 所有寫後端的動作共用：把「為什麼失敗」翻成人看得懂的話。
+   上次簽名圖「上傳失敗」卻看不出原因，就是因為這裡只會說「連線失敗」。 */
+async function postTask(task,payload){
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:task,payload:payload})});
+    const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
+    if(!j) return {ok:false,error:/^\s*<(!doctype|html)/i.test(t)
+      ?'後端回的是 Google 登入網頁 —— 部署時「誰可以存取」要選【任何人】'
+      :'後端回傳看不懂（HTTP '+res.status+'）'};
+    if(j.ok===true) return j;
+    if(j.code==='unknown_task') return {ok:false,old:true,error:j.error};
+    /* 舊版 GS 不認得的任務會掉進 AI 分支：回 {text:…} 或「尚未設定 GEMINI_KEY／額度用完」，沒有 ok */
+    if(j.ok===undefined && (j.text!==undefined || /GEMINI|AI 額度/.test(String(j.error||''))))
+      return {ok:false,old:true,error:'後端（GS）還是舊版，不認得「'+task+'」。\n'
+        +'請把新的 dianban_api.gs 貼上 → 部署 → 管理部署 → ✏️ 編輯 → 版本選「新版本」→ 部署。'};
+    return {ok:false,error:String(j.error||'後端沒有回 ok')};
+  }catch(e){ return {ok:false,error:'連不上後端：'+String(e&&e.message||e)}; }
+}
+async function loadSuperv(){
+  if(!API_URL||!svYm()) return;
+  try{
+    const r=await fetch(API_URL+'?table=supervise_log&_='+Date.now(),{cache:'no-store'});
+    const a=await r.json(); if(!Array.isArray(a)) return;
+    const srv=[];
+    a.forEach(function(o){
+      if(String(o['類型']||'')!==SV_TYPE) return;
+      if(normU(o['單位'])!==normU(svUnit())) return;
+      const d=String(o['日期']||'').slice(0,10);
+      if(d.slice(0,7)!==svYm()) return;
+      if(String(o['狀態']||'')==='已刪除') return;
+      srv.push({sign:String(o['姓名']||''),date:d,empId:String(o['員編']||'').trim(),at:String(o['查核時間']||'')});
+    });
+    /* 本機有、後端沒有的：多半是 v22 之前存在這台的舊查核，或剛剛離線按的。
+       是本人的就補傳；別人的留著但標「只在這台」，不可以默默丟掉。 */
+    const loc=(data.superv||[]).filter(function(s){
+      return !srv.some(function(m){ return m.date===s.date && m.empId===String(s.empId||''); }); });
+    loc.forEach(function(s){ s._unsync=true; });
+    data.superv=srv.concat(loc);
+    SV_LOADED=true; save();
+    const me=myEmp();
+    loc.filter(function(s){ return me && String(s.empId||'')===me; }).forEach(function(s){ svPush(s,true); });
+  }catch(e){ console.warn('讀主管查核失敗（不影響其他功能）',e); }
+}
+async function svPush(rec,quiet){
+  const r=await postTask('superv_add',{type:SV_TYPE,unit:svUnit(),date:rec.date,empId:rec.empId,name:rec.sign});
+  if(r.ok){ delete rec._unsync; save(); render(); return true; }
+  if(!quiet) alert('查核先存在這台，還沒進後端：\n'+r.error);
+  return false;
+}
+async function addSup(){
+  const emp=myEmp();
+  if(!emp){ alert('看不到你的員編，無法記錄是誰查核的。\n請從點班系統裡的入口進來（網址會帶員編）。'); return; }
+  const el=document.getElementById('supDate');
+  const d=(el&&el.value)||svToday();
+  if(d.slice(0,7)!==svYm()){ alert('查核日期要在本月（'+svYm()+'）之內。'); return; }
+  data.superv=(data.superv||[]).filter(function(s){ return !(s.date===d&&String(s.empId||'')===emp); });
+  const rec={sign:svMyName(),date:d,empId:emp,at:new Date().toISOString(),_unsync:true};
+  data.superv.push(rec); save(); render();           // 先顯示，再送後端
+  await svPush(rec,false);
+}
+async function delSup(i){
+  const s=(data.superv||[])[i]; if(!s) return;
+  if(String(s.empId||'')!==myEmp()){ alert('只能撤銷你自己的查核。'); return; }
+  if(!confirm('撤銷 '+s.date+' 的查核？\n（後端會留下撤銷紀錄）')) return;
+  if(!s._unsync){
+    const r=await postTask('superv_del',{type:SV_TYPE,unit:svUnit(),date:s.date,empId:s.empId});
+    if(!r.ok){ alert('撤銷失敗：\n'+r.error); return; }
+  }
+  data.superv.splice(i,1); save(); render();
+}
+/* 螢幕上的查核區塊（列印時隱藏）。冰箱、氧氣共用。 */
+function svPanelHtml(){
+  const me=myEmp();
+  const rows=(data.superv||[]).map(function(s,i){
+    const mine=String(s.empId||'')===me;
+    return '<span class="sv-chip">'+esc(s.sign||'(未署名)')+' · '+esc(s.date)
+      +(s._unsync?' <b style="color:#c92a2a" title="還沒進後端">⚠ 只在這台</b>':'')
+      +(mine?' <a href="#" onclick="delSup('+i+');return false" style="color:#c92a2a;text-decoration:none" title="撤銷">✕</a>':'')
+      +'</span>';
+  }).join('');
+  const all=(data.superv||[]).slice().sort(function(a,b){ return String(a.date)<String(b.date)?1:-1; });
+  let due;
+  if(all[0]&&/^\d{4}-\d{2}-\d{2}$/.test(all[0].date)){
+    const p=all[0].date.split('-'), t=svToday().split('-');
+    const gap=Math.round((Date.UTC(+t[0],+t[1]-1,+t[2])-Date.UTC(+p[0],+p[1]-1,+p[2]))/86400000);
+    due=gap>7?'<span style="color:#c92a2a;font-weight:800">已隔 '+gap+' 天（超過 7 天）</span>'
+             :'<span style="color:#1f7a43;font-weight:700">已隔 '+gap+' 天</span>';
+  }else due='<span style="color:#c92a2a;font-weight:800">本月尚未查核</span>';
+  const mySign=signOf(me);
+  return '<div class="superv noprint">'
+    + '<div style="width:100%;margin-bottom:6px"><b>主管查核／日期（每 7 天一次）：</b>'+due
+    + (SV_LOADED?'':' <span style="color:#8894a0;font-size:12px">（讀取後端中…）</span>')+'</div>'
+    + (rows||'<span style="color:#8894a0">本月尚無</span>')
+    + (me
+      ? '<span style="font-size:13px">以 <b>'+esc(svMyName()||me)+'</b>（'+esc(me)+'）查核</span>'
+        + '<input id="supDate" type="date" value="'+svToday()+'" style="width:150px">'
+        + '<button class="btn btn-p" onclick="addSup()">＋ 查核</button>'
+      : '<span style="font-size:12.5px;color:#c92a2a">要從點班系統的入口進來才能查核（需要員編）</span>')
+    + '<span style="width:100%;height:1px"></span>'
+    + '<div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f4f7f9;border-radius:9px;padding:8px 10px">'
+    +   '<b style="font-size:12.5px">我的簽名／印章圖</b>'
+    +   (mySign?'<img src="'+mySign+'" alt="簽名" style="height:30px;background:#fff;border:1px solid #c9d3da;border-radius:6px;padding:2px">'
+               :'<span style="font-size:12.5px;color:#8894a0">尚未上傳（會改印名字）</span>')
+    +   (me?'<input id="signFile" type="file" accept="image/*" style="display:none" onchange="signUpload(this)">'
+          + '<button class="btn btn-w" onclick="document.getElementById(\'signFile\').click()">'+(mySign?'換一張':'上傳')+'</button>'
+          + (mySign?'<button class="btn btn-g" onclick="signClear()">移除</button>':''):'')
+    +   '<span style="font-size:11.5px;color:#8894a0;flex:1;min-width:220px">'
+    +     '白紙上簽名或蓋章拍一張就好，會自動裁邊。冰箱表與氧氣表共用同一張圖。'
+    +     '圖只是列印呈現，留證的是員編與查核時間。</span>'
+    + '</div></div>';
+}
+
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
 /* 從後端載入本科別本月已勾選的紀錄，與本機合併 → 換裝置看到的都一樣。
    ★ 原本這裡有三個毛病，造成「後台有資料但沒顯示」：
@@ -283,6 +551,7 @@ async function autoSync(force){
   if(!force&&Date.now()-SRV_AT<20000)return;
   SRV_AT=Date.now();
   await syncFromServer();
+  loadSuperv().then(render);
 }
 // 科別／單位名稱正規化，全形括號與空白差異不影響比對
 function normU(v){ return String(v==null?'':v).replace(/[（]/g,'(').replace(/[）]/g,')').replace(/\s+/g,'').toUpperCase(); }
@@ -313,11 +582,20 @@ function chunkTable(daysArr){
       body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="toggle('${code}',${d},${si})">${m?'✓':''}</td>`; } });
     body+='</tr>'; });
   body+='<tr><th class="rowh">簽名</th>';
-  daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const by=o2SignOf(d,si); body+=`<td class="sigcell" title="${esc(by)}">${esc(by)}</td>`; } });
+  daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const by=o2SignOf(d,si); body+=`<td class="sigcell" title="${esc(by)}">${Array.from(String(by).slice(0,3)).map(esc).join('<br>')}</td>`; } });
   body+='</tr>';
   body+='<tr><th class="rowh">備註</th>';
   daysArr.forEach(d=>{ const n=data.notes[d]||''; body+=`<td class="note" colspan="3" title="${esc(n)}" onclick="editNote(${d})">${esc(n)}</td>`; });
   body+='</tr>';
+  /* ★ 主管查核／日期：一頁＝一週，所以這一列是整週合併成一格（跟冰箱表每 7 天一格同一個規則）。
+     有本人簽名／印章圖就蓋圖，沒有就印名字；旁邊一定印日期。 */
+  const inWk=(data.superv||[]).filter(s=>{ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date||''));
+    return m && (m[1]+'-'+m[2])===ymOf(data.ym) && daysArr.indexOf(+m[3])>=0; })
+    .sort((a,b)=>String(a.date)<String(b.date)?-1:1);
+  const stamps=inWk.map(s=>{ const img=signOf(s.empId), d=+String(s.date).slice(8,10), m=+String(s.date).slice(5,7), y=+String(s.date).slice(0,4)-1911;
+    return '<span class="sv-st">'+(img?'<img src="'+img+'" alt="'+esc(s.sign||'')+'">':'<b>'+esc(s.sign||'')+'</b>')
+      +'<span class="d">'+y+'/'+m+'/'+d+'</span></span>'; }).join('');   // ★ 簽章日期帶民國年
+  body+=`<tr><th class="rowh" style="font-size:11px;line-height:1.25">主管查核<br>日期</th><td class="supcell" colspan="${daysArr.length*3}">${stamps}</td></tr>`;
   return `<table class="o2">${h1}${h2}${body}</table>`;
 }
 function o2SignOf(d,si){ for(let i=0;i<CRIT.length;i++){ const m=data.marks[ck(CRIT[i][0],d,si)]; if(m&&m.by) return m.by; } return '';
@@ -356,6 +634,7 @@ function render(){
       ${qc}
       ${wknav}
       <div class="o2scroll">${chunkTable(cur)}</div>
+      ${svPanelHtml()}
     </div>
     <div class="printview">${printAll}</div>`;
   save();
@@ -399,6 +678,8 @@ function boot(){
   render();
   syncBanner();
   syncFromServer();                                  // ★ 一進來就抓，並顯示「正在讀取後端…」
+  loadSignImgs().then(function(){ render(); }).catch(function(){});
+  loadSuperv().then(function(){ render(); });
   setInterval(function(){ if(!document.hidden) autoSync(); },25000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
   window.addEventListener('focus',function(){ autoSync(); });
