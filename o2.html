@@ -85,7 +85,7 @@
       <input type="month" id="ymSel">
       <input id="empIn" placeholder="刷/輸入員編" inputmode="numeric" style="width:110px">
       <input id="nameIn" placeholder="簽名(自動帶入)" style="width:110px">
-      <button class="btn btn-w" onclick="window.print()">🖨 列印</button>
+      <button class="btn btn-w" onclick="printSheet()">🖨 列印</button>
       <button class="btn btn-w" onclick="exportCSV()">⤓ 匯出CSV</button>
     </div>
   </div>
@@ -103,8 +103,8 @@ const SHIFTS=["N","D","E"];
 const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
-const APP_VER='2026-09-22-b33';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-21-v22';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-23-b36';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-23-v26';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
 // （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
@@ -139,6 +139,7 @@ async function pumpWQ(g,day,si){
                  by:curName(),at:new Date().toISOString(),items:codes.slice()};
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check_batch',payload:payload})});
+    try{ if(typeof tickAlign==='function') tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
     ok=!!(j&&j.ok);
   }catch(e){ console.error('氧氣批次寫回失敗',e); }
@@ -225,7 +226,7 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('o2_lastName')||''; nm.onchange=()=>localStorage.setItem('o2_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('o2_lastName',n); } };
 }
-function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; SV_LOADED=false; render(); SRV_AT=0; autoSync(true); }
+function switchTo(dept,ym){ save(); data=loadFor(dept,ym||data.ym); data.dept=dept; if(ym)data.ym=ym; SV_LOADED=false; O2_FULL_AT=0; render(); SRV_AT=0; autoSync(true); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
@@ -245,10 +246,39 @@ let SIGNIMG={};                     // 員編 → dataURL
 /* 員編從網址帶進來（index.html 開這一頁時會加 &emp=）。
    ★ 沒有員編就不讓上傳簽名圖 —— 認不出是誰的圖，存下去也沒意義。 */
 function signOf(emp){ return SIGNIMG[String(emp||'').trim()]||''; }
-async function loadSignImgs(){
+/* ★ 簽名／印章圖一張就有 30~40KB，一個單位十幾個人就是好幾百 KB。
+   它幾乎不會變 —— 存在本機，12 小時才重新抓一次。 */
+const SIGN_CACHE_KEY='ed_sign_cache', SIGN_TTL=12*3600*1000;
+function signCacheRead(){
+  try{ const o=JSON.parse(localStorage.getItem(SIGN_CACHE_KEY)||'null');
+    if(o&&o.at&&Date.now()-o.at<SIGN_TTL&&o.m) return o.m; }catch(e){}
+  return null;
+}
+/* ★ v25：只抓「這張表上真的會蓋章的那幾個人」。
+   整張 staff_sign 回傳 = 每個人 30~40KB × 全單位，十幾個人就是好幾百 KB，
+   而畫面上通常只會用到護理長自己那一張。 */
+function signNeededEmps(){
+  const set={}; const me=myEmp(); if(me) set[me]=1;
+  (data.superv||[]).forEach(function(s){ const e=String(s.empId||'').trim(); if(e) set[e]=1; });
+  return Object.keys(set);
+}
+async function loadSignNeeded(){
+  const need=signNeededEmps().filter(function(e){ return SIGNIMG[e]===undefined; });
+  if(!need.length) return;
+  await loadSignImgs(false,need);
+  render();
+}
+async function loadSignImgs(force,emps){
   if(!API_URL) return;
+  const c=signCacheRead();
+  if(c&&!force){
+    SIGNIMG=Object.assign({},c,SIGNIMG);
+    // 需要的人都在本機那份裡就不用連後端
+    if(!emps||emps.every(function(e){ return c[e]!==undefined; })) return;
+  }
   try{
-    const r=await fetch(API_URL+'?table=staff_sign');
+    const q=(emps&&emps.length)?('&emp='+encodeURIComponent(emps.join(','))):'';
+    const r=await fetch(API_URL+'?table=staff_sign'+q);
     const a=await r.json();
     if(!Array.isArray(a)) return;
     const m={};
@@ -257,7 +287,10 @@ async function loadSignImgs(){
       const img=String(o['簽名圖']||o.image||'');
       if(e&&img.indexOf('data:image/')===0) m[e]=img;
     });
-    SIGNIMG=m;
+    /* 沒有回傳的員編記成 ''（＝這個人沒有上傳過），才不會每次都再去問一次 */
+    (emps||[]).forEach(function(e){ if(m[e]===undefined) m[e]=''; });
+    SIGNIMG=Object.assign({},SIGNIMG,m);
+    try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
   }catch(e){ console.warn('讀簽名圖失敗（不影響其他功能）',e); }
 }
 /* 直接拍照上傳用：
@@ -349,7 +382,9 @@ async function signUpload(input){
   if(url.length>45000){ alert('壓縮後還是太大。請裁掉空白、只留簽名的部分再試。'); return; }
   const r=await signWrite(emp,url);
   if(!r.ok){ alert('簽名圖沒有存進後端：\n'+(r.error||'連線失敗')); return; }
-  SIGNIMG[emp]=url; render();
+  SIGNIMG[emp]=url;
+  try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
+  render();
   alert('簽名圖已存好，之後主管查核那一格就會印出這張圖。\n\n'
     +'提醒：圖只是印出來好看，真正留證的是你的員編與查核時間。');
 }
@@ -361,7 +396,9 @@ async function signClear(){
   if(!confirm('要移除你的簽名圖嗎？\n之後主管查核那一格會改成印名字。'))return;
   const r=await signWrite(emp,'');
   if(!r.ok){ alert('移除失敗：\n'+(r.error||'連線失敗')); return; }
-  delete SIGNIMG[emp]; render();
+  SIGNIMG[emp]='';
+  try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
+  render();
 }
 
 const SV_TYPE='o2';
@@ -383,6 +420,7 @@ function svMyName(){ return String(P.get('name')||'').trim()||(typeof curName===
 async function postTask(task,payload){
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:task,payload:payload})});
+    try{ tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
     if(!j) return {ok:false,error:/^\s*<(!doctype|html)/i.test(t)
       ?'後端回的是 Google 登入網頁 —— 部署時「誰可以存取」要選【任何人】'
@@ -399,7 +437,7 @@ async function postTask(task,payload){
 async function loadSuperv(){
   if(!API_URL||!svYm()) return;
   try{
-    const r=await fetch(API_URL+'?table=supervise_log&_='+Date.now(),{cache:'no-store'});
+    const r=await fetch(API_URL+'?table=supervise_log&days='+daysBackFor(data.ym,45)+'&_='+Date.now(),{cache:'no-store'});
     const a=await r.json(); if(!Array.isArray(a)) return;
     const srv=[];
     a.forEach(function(o){
@@ -521,11 +559,26 @@ function srvBadge(){
   el.textContent='☁ 後端 '+(serverCount==null?'—':serverCount)+' 格 · 本機 '+local
     +' 格 · 本月 '+(data.ym||'')+' · 版本 '+APP_VER;
 }
-async function syncFromServer(){
+/* ★ v25：一進來先抓「最近 10 天」（＝正在看的這一週那一頁），其餘在背景補。
+   原本是整張表抓回來 —— o2_check 是全院三個科別 × 每天三班 × 六個評值項目，長得最快。 */
+/* ★ 「往回幾天」要看現在在看哪一個月：看的是本月就用 base 天，
+   看更早的月份就要從今天回推到那個月的月初，否則 days 過濾會把整個月濾掉、畫面一片空白。 */
+function daysBackFor(ym, base){
+  var m=/^(\d{4})-(\d{2})$/.exec(String(ym||'')); if(!m) return base;
+  var t=tpeParts();
+  if(+m[1]===t.y && +m[2]===t.m) return base;
+  var start=Date.UTC(+m[1],+m[2]-1,1), now=Date.UTC(t.y,t.m-1,t.d);
+  var d=Math.round((now-start)/86400000)+35;
+  return (d>0&&d<3000)?d:base;
+}
+const O2_FAST_DAYS=10, O2_FULL_DAYS=70;
+let O2_FULL_AT=0;
+async function syncFromServer(days){
   if(!API_URL)return;
   syncing=true; srvBadge();
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check',{cache:'no-store'});
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'table=o2_check&days='
+      +daysBackFor(data.ym,(days||O2_FAST_DAYS))+'&_='+Date.now(),{cache:'no-store'});
     const a=await r.json();
     if(!Array.isArray(a)){ serverCount=-1; syncing=false; srvBadge();
       console.error('後端回傳不是陣列',a); return; }
@@ -553,9 +606,56 @@ async function syncFromServer(){
 /* ★ 自動同步：每 25 秒 ＋ 切回分頁／取得焦點時立刻同步。
    別台剛登錄的會自己出現，不必手動重整。 */
 let SRV_AT=0;
+/* ★ 整個月「要用到才抓」：列印整月、或翻到比較前面的那幾週時才補。 */
+async function o2FillFull(){
+  if(Date.now()-O2_FULL_AT<10*60000) return;
+  O2_FULL_AT=Date.now();
+  try{ await syncFromServer(O2_FULL_DAYS); render(); }catch(e){ O2_FULL_AT=0; }
+}
+async function printSheet(){
+  const b=document.getElementById('srvBadge');
+  if(b) b.textContent='⏳ 正在補齊整個月的資料…';
+  try{ await o2FillFull(); }catch(e){}
+  srvBadge(); window.print();
+}
+/* 翻到「這一週的第一天比目前抓進來的還早」時，就把整個月補齊 */
+function wkNeedsMore(c){
+  if(!c||!c.length) return false;
+  const t=tpeParts(), ym=data.ym||'';
+  const p=ym.split('-').map(Number);
+  if(!(p[0]===t.y&&p[1]===t.m)) return true;            // 不是本月 → 直接補
+  return (t.d-c[0])>=O2_FAST_DAYS-1;                    // 這一週比抓進來的範圍還早
+}
+/* ★★ v26 心跳：每 10 秒只問後端一個數字（最後一次寫入的時間戳），
+   沒變就什麼都不抓 —— 這一頁原本每 25 秒要抓 12~50KB，其實九成的時候資料根本沒變。
+   後端還沒更新到 v26（不認得 ?tick=1）就自動退回原本的固定間隔。 */
+var TICK_V=null, TICK_BAD=0, TICK_ON=true;
+async function tickChanged(){
+  if(!TICK_ON||!API_URL) return null;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(!j||j.v===undefined){ if(++TICK_BAD>=3) TICK_ON=false; return null; }
+    TICK_BAD=0;
+    const v=String(j.v);
+    if(TICK_V===null){ TICK_V=v; return false; }     // 第一次只記起來
+    if(v===TICK_V) return false;
+    TICK_V=v; return true;
+  }catch(e){ if(++TICK_BAD>=3) TICK_ON=false; return null; }
+}
+function tickAlign(){                                 // 自己寫完之後對齊，免得又同步一次
+  if(!TICK_ON||!API_URL) return;
+  fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if(j&&j.v!==undefined) TICK_V=String(j.v); }).catch(function(){});
+}
 async function autoSync(force){
   if(!API_URL)return;
-  if(!force&&Date.now()-SRV_AT<20000)return;
+  if(!force){
+    if(Date.now()-SRV_AT<9000) return;
+    const ch=await tickChanged();
+    if(TICK_ON&&ch===false&&Date.now()-SRV_AT<180000) return;
+  }
   SRV_AT=Date.now();
   await syncFromServer();
   loadSuperv().then(render);
@@ -607,7 +707,8 @@ function chunkTable(daysArr){
 }
 function o2SignOf(d,si){ for(let i=0;i<CRIT.length;i++){ const m=data.marks[ck(CRIT[i][0],d,si)]; if(m&&m.by) return m.by; } return '';
 }
-function gotoWk(i){ const c=monthChunks(); if(i<0||i>=c.length)return; wkIdx=i; render(); }
+function gotoWk(i){ const c=monthChunks(); if(i<0||i>=c.length)return; wkIdx=i; render();
+  if(wkNeedsMore(c[i])) o2FillFull(); }
 function quickDone(){
   if(!data.ym){alert('請先選年月');return;}
   const day=+document.getElementById('qcDay').value, sh=document.getElementById('qcShift').value, si=SHIFTS.indexOf(sh);
@@ -685,9 +786,8 @@ function boot(){
   render();
   syncBanner();
   syncFromServer();                                  // ★ 一進來就抓，並顯示「正在讀取後端…」
-  loadSignImgs().then(function(){ render(); }).catch(function(){});
-  loadSuperv().then(function(){ render(); });
-  setInterval(function(){ if(!document.hidden) autoSync(); },25000);
+  loadSuperv().then(function(){ render(); loadSignNeeded(); });
+  setInterval(function(){ if(!document.hidden) autoSync(); },10000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
   window.addEventListener('focus',function(){ autoSync(); });
 }

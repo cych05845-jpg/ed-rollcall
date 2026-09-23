@@ -992,8 +992,10 @@ async function loadBundle(spec,opts){
     /* spec 第三個值＝要不要一起帶封存資料（<表名>_archive）。
        ['rollcall_log',400,true] → rollcall_log:400:arch
        ['rollcall_log',null,true] → rollcall_log::arch（中間留空＝不限天數） */
+    /* spec：[表名, 天數, 要不要含封存, 要不要精簡欄位]
+       → rollcall_log:2:lite ／ rollcall_log:400:arch */
     const q='tables='+encodeURIComponent(spec.map(function(x){
-      return x[0] + (x[1]?(':'+x[1]):(x[2]?':':'')) + (x[2]?':arch':'');
+      return x[0] + (x[1]?(':'+x[1]):((x[2]||x[3])?':':'')) + (x[2]?':arch':'') + (x[3]?':lite':'');
     }).join(','));
     const j=await getJSON(q);
     if(j&&j._version) API_VER_SEEN=String(j._version);
@@ -1017,7 +1019,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-22-b65';
+const APP_VER='2026-09-23-b68';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -2518,8 +2520,23 @@ function rcEnsureSlot(id){
   if(state.rcSlot[id]&&state.rcSlot[id]!==now) rcClearSheet(id);
   state.rcSlot[id]=now;
 }
+/* 「帶入上次異常」要用 rollcall_issue —— 只有進點班表時才需要，
+   所以從每 20 秒的自動更新裡拿掉，改成進表時抓一次（90 秒內不重抓）。 */
+let ISS_AT=0, ISS_LOADING=false;
+function issLoad(force){
+  if(ISS_LOADING) return;
+  if(!force && Date.now()-ISS_AT<90000) return;
+  ISS_LOADING=true;
+  const mark=BUNDLE_AT;
+  loadBundle([['rollcall_issue',3]],{merge:true}).then(function(){
+    ISS_LOADING=false;
+    if(BUNDLE_AT!==mark) ISS_AT=Date.now();
+    if(state.screen==='rollcall')render();
+  }).catch(function(){ ISS_LOADING=false; });
+}
 function openSheet(id){
   const s=sheetById(id);
+  issLoad(false);
   // ★ 已有人點完就先確認，避免重複點班
   const sd=shiftDoneOf(id,null);
   if(sd&&sd.isDone){
@@ -5868,15 +5885,27 @@ async function syncAll(){
   if(btn){btn.textContent='⏳ 更新中…';btn.disabled=true;}
   const t0=Date.now();
   try{
-    /* rollcall_issue 3 天：點班畫面「帶入上次異常」要用（量很小） */
-    await loadBundle([['rollcall_log',3],['rollcall_active'],['fridge_temp',3],['o2_check',3],['cart_seal'],['rollcall_issue',3]]
-                      .concat(MAINT_ON?[['device_maint',3]]:[]),
-                     {merge:true});     // ★ 合併：只更新這 3 天，手上的 30 天不會被縮掉
+    /* ★ v25：自動更新只抓「這個畫面真的會用到的」。
+       正在點班時，冰箱／氧氣的完成度根本沒顯示，卻每 20 秒抓一次；
+       異常明細（rollcall_issue）只有進點班表時要用，改成進表時才抓（icLoad 那種作法）。
+       點班紀錄一律用 lite ＋ 2 天：首頁只看今天與上一班。 */
+    const onRc=(state.screen==='rollcall'||state.screen==='half');
+    const spec=[['rollcall_log',2,null,true],['rollcall_active']]
+      .concat(onRc?[]:[['fridge_temp',1],['o2_check',1]])   // 首頁只看「今天登了沒」
+      .concat([['cart_seal']])
+      .concat(MAINT_ON?[['device_maint',3]]:[]);
+    await loadBundle(spec,{merge:true});   // ★ 合併：只更新這幾天，手上的舊資料不會被縮掉
     SYNC_MS=Date.now()-t0;
   }catch(e){ SYNC_MS=-1; }
   SYNC_AT=Date.now();
   SYNCING=false;
   render();
+  /* 自己剛寫完的那一下，心跳一定會變 —— 先把它對齊，才不會馬上又同步一次 */
+  if(TICK_ON&&API_URL){
+    fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if(j&&j.v!==undefined) TICK_V=String(j.v); }).catch(function(){});
+  }
 }
 // 舊名稱保留：畫面上各處的 ↻ 按鈕都指向這裡
 async function refreshDoneStatus(){ return syncAll(); }
@@ -7674,11 +7703,20 @@ if(state.user){
      owed／item_report／fridge_temp／o2_check／cart_expiry → 首頁只看完成度，可以晚一點到
    第一波只抓「首頁要判斷完成度」的五張，抓完立刻可用；
    其餘在背景補齊，抓好再 render 一次。這樣「可以開始點班」的等待時間大幅縮短。 */
-const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',7],['cart_seal']];
+/* ★ v25：第一波只抓「今天＋昨天」的點班紀錄（首頁完成度、上一班未完成都只看這兩天），
+   而且用 lite（不帶「逐項紀錄」那種長欄位）。其餘 7 天在第二波背景補。
+   開 App 要等的那一下，就是這一波。 */
+const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',2,null,true],['cart_seal']];
 /* 冰箱／氧氣開 App 就抓 30 天 —— 管理分析要看近 14 天登錄率，護理長也常直接翻整個月。
    它在第二波（背景）抓，不擋著開始點班。
    之後每 20 秒的自動更新只抓 3 天，但用「合併」寫回去，所以這 30 天不會被縮掉。 */
-const BOOT_WAVE2=[['owed'],['item_report'],['fridge_temp',30],['o2_check',30],['cart_expiry'],['rollcall_issue',3]]
+/* 第二波（背景，不擋畫面）：把點班紀錄補到 7 天。
+   ★ 冰箱／氧氣只抓 3 天：首頁的「輔助單張」只看今天有沒有登錄。
+     營運分析要的近 14 天，是在打開分析畫面時自己抓 30 天（openAnalytics），
+     不必每個人一開 App 就先扛一份。o2_check 是全院科別 × 每天三班 × 六個評值項目，
+     長得最快，抓 16 天大約 80KB、抓 3 天只要十幾 KB。 */
+const BOOT_WAVE2=[['rollcall_log',7,null,true],['owed'],['item_report'],
+                  ['fridge_temp',3],['o2_check',3],['cart_expiry'],['rollcall_issue',3]]
   .concat(MAINT_ON?[['device_maint',7]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
@@ -7710,16 +7748,56 @@ function ensureLocator(){
   }).catch(function(e){ LOCATOR_LOADING=null; throw e; });
   return LOCATOR_LOADING;
 }
-/* ★ 自動更新完成狀態（20 秒一次）。
+/* ★ 自動更新完成狀態。
    涵蓋首頁／分區／點班表／Leader 頁，且四張表（點班紀錄、進行中、冰箱、氧氣）一起抓。
-   分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。 */
+   分頁切到背景時不跑，省流量；切回來會立刻補抓一次（見下方 visibilitychange）。
+
+   ★ v24/b66：改成「看畫面決定頻率」。
+     正在點班／看分區時，別人有沒有在點、有沒有點完，是當下就要知道的 → 20 秒。
+     停在首頁或 Leader 頁時沒那麼急 → 60 秒。
+     為什麼要改：每一次自動更新就是一次 Apps Script 請求，一個班十幾支手機掛著，
+     等於後端每秒都在被叫；人在寫入時就得跟這些讀取搶同一個執行額度，回寫就變慢。 */
+function syncEveryMs(){
+  return (state.screen==='rollcall'||state.screen==='pick'||state.screen==='half'
+          ||state.screen==='areas') ? 20000 : 60000;
+}
+/* ★★ v26：心跳（tick）—— 讓「別人點完了」在 8 秒內就看得到，又不會把後端叫爆。
+   每 8 秒只問後端一個數字（最後一次寫入的時間戳，幾十個位元組）：
+     沒變 → 什麼都不做（不抓任何資料）
+     變了 → 立刻做一次完整同步
+   為什麼不直接把同步改成 8 秒一次：那是每 8 秒抓 15~20KB，
+   Apps Script 每天的執行時間是有上限的，十幾支手機掛著很快就燒完。
+   ★ 後端還沒更新到 v26（不認得 ?tick=1）時會自動退回原本的 20／60 秒。 */
+/* var 不用 let：syncAll() 在檔案前面就會用到 TICK_ON，用 let 會踩到 TDZ */
+var TICK_V=null, TICK_BAD=0, TICK_ON=true, TICK_AT=0;
+function tickEveryMs(){
+  return (state.screen==='rollcall'||state.screen==='pick'||state.screen==='half'
+          ||state.screen==='areas') ? 8000 : 20000;
+}
+async function tickCheck(){
+  if(!TICK_ON||!API_URL||SYNCING) return;
+  if(Date.now()-TICK_AT<tickEveryMs()-500) return;
+  TICK_AT=Date.now();
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(!j||j.v===undefined){ if(++TICK_BAD>=3) TICK_ON=false; return; }
+    TICK_BAD=0;
+    if(TICK_V===null){ TICK_V=String(j.v); return; }      // 第一次只記起來
+    if(String(j.v)!==TICK_V){ TICK_V=String(j.v); syncAll(); }
+  }catch(e){ if(++TICK_BAD>=3) TICK_ON=false; }
+}
 setInterval(function(){
   if(!state.user||SYNCING)return;
   if(document.hidden)return;
   if(!needsLiveSync())return;
-  if(Date.now()-SYNC_AT<15000)return;         // 剛更新過就跳過
+  tickCheck();                                   // 8 秒問一次「有沒有人動過」
+  /* 保底：就算心跳沒通（舊後端／掉封包），該來的完整同步還是會來。
+     心跳有在運作時就把保底拉長 —— 反正有人寫入時心跳會馬上叫它同步。 */
+  const floor=TICK_ON?(syncEveryMs()*3):syncEveryMs();
+  if(Date.now()-SYNC_AT<floor-2000)return;
   syncAll();
-},20000);
+},4000);
 
 // 切回這個分頁／視窗重新取得焦點 → 立刻補抓一次，不用等 20 秒也不用手動按
 document.addEventListener('visibilitychange',function(){

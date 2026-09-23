@@ -77,7 +77,7 @@
       <input type="month" id="ymSel">
       <input id="empIn" placeholder="刷/輸入員編" inputmode="numeric" style="width:110px">
       <input id="nameIn" placeholder="簽名(自動帶入)" style="width:110px">
-      <button class="btn btn-w" onclick="window.print()">🖨 列印</button>
+      <button class="btn btn-w" onclick="printSheet()">🖨 列印</button>
       <button class="btn btn-w" onclick="exportCSV()">⤓ 匯出CSV</button>
     </div>
   </div>
@@ -97,8 +97,8 @@ const AXISW=64, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;   // 左欄
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-22-b39';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-22-v23';
+const APP_VER='2026-09-23-b42';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-23-v26';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
@@ -107,9 +107,50 @@ let data=startData();
    別台剛登錄的溫度會自己出現，不必手動重整、也不會誤以為沒人登錄。
    還有未上傳的資料時不覆蓋（見 syncFromServer 內的保護）。 */
 let SRV_AT=0;
+/* ★ 整個月的資料「要用到才抓」（列印、或翻到另外半個月）。
+   平常看的是這半個月，先把那一頁畫出來最重要 —— 其餘等候，就是這個意思。 */
+async function frFillFull(){
+  if(Date.now()-FR_FULL_AT<10*60000) return;
+  FR_FULL_AT=Date.now();
+  try{ await syncFromServer(FR_FULL_DAYS); render(); }catch(e){ FR_FULL_AT=0; }
+}
+async function printSheet(){
+  const b=document.getElementById('srvBadge');
+  if(b) b.textContent='⏳ 正在補齊整個月的資料…';
+  try{ await frFillFull(); }catch(e){}
+  srvBadge(); window.print();
+}
+/* ★★ v26 心跳：每 10 秒只問後端一個數字（最後一次寫入的時間戳），
+   沒變就什麼都不抓 —— 這一頁原本每 25 秒要抓 12~50KB，其實九成的時候資料根本沒變。
+   後端還沒更新到 v26（不認得 ?tick=1）就自動退回原本的固定間隔。 */
+var TICK_V=null, TICK_BAD=0, TICK_ON=true;
+async function tickChanged(){
+  if(!TICK_ON||!API_URL) return null;
+  try{
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'});
+    const j=await r.json();
+    if(!j||j.v===undefined){ if(++TICK_BAD>=3) TICK_ON=false; return null; }
+    TICK_BAD=0;
+    const v=String(j.v);
+    if(TICK_V===null){ TICK_V=v; return false; }     // 第一次只記起來
+    if(v===TICK_V) return false;
+    TICK_V=v; return true;
+  }catch(e){ if(++TICK_BAD>=3) TICK_ON=false; return null; }
+}
+function tickAlign(){                                 // 自己寫完之後對齊，免得又同步一次
+  if(!TICK_ON||!API_URL) return;
+  fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if(j&&j.v!==undefined) TICK_V=String(j.v); }).catch(function(){});
+}
 async function autoSync(force){
   if(!API_URL)return;
-  if(!force&&Date.now()-SRV_AT<20000)return;
+  if(!force){
+    if(Date.now()-SRV_AT<9000) return;
+    const ch=await tickChanged();
+    // 心跳有在運作、而且沒人動過 → 不抓；但每 3 分鐘還是保底抓一次
+    if(TICK_ON&&ch===false&&Date.now()-SRV_AT<180000) return;
+  }
   SRV_AT=Date.now();
   await syncFromServer();
   loadSuperv().then(render);
@@ -169,7 +210,7 @@ function initControls(){
   const nm=document.getElementById('nameIn'); nm.value=localStorage.getItem('fridge_lastName')||''; nm.onchange=()=>localStorage.setItem('fridge_lastName',nm.value.trim());
   const emp=document.getElementById('empIn'); emp.oninput=()=>{ const n=empName(emp.value); if(n){ nm.value=n; localStorage.setItem('fridge_lastName',n); } };
 }
-function switchTo(unit,ym){ save(); data=loadFor(unit,ym||data.ym); data.unit=unit; if(ym)data.ym=ym; SV_LOADED=false; render(); syncFromServer(); loadSuperv().then(render); loadAbn().then(render); }
+function switchTo(unit,ym){ save(); data=loadFor(unit,ym||data.ym); data.unit=unit; if(ym)data.ym=ym; SV_LOADED=false; FR_FULL_AT=0; render(); syncFromServer(); loadSuperv().then(function(){render();loadSignNeeded();}); loadAbn().then(render); }
 
 function daysInMonth(ym){ if(!ym)return 31; const [y,m]=ym.split('-').map(Number); return new Date(y,m,0).getDate(); }
 function minguo(ym){ if(!ym)return {y:'',m:''}; const [y,m]=ym.split('-').map(Number); return {y:y-1911,m}; }
@@ -201,10 +242,39 @@ let SIGNIMG={};                     // 員編 → dataURL
    ★ 沒有員編就不讓上傳簽名圖 —— 認不出是誰的圖，存下去也沒意義。 */
 function myEmp(){ return String(P.get('emp')||'').trim(); }
 function signOf(emp){ return SIGNIMG[String(emp||'').trim()]||''; }
-async function loadSignImgs(){
+/* ★ 簽名／印章圖一張就有 30~40KB，一個單位十幾個人就是好幾百 KB。
+   它幾乎不會變 —— 存在本機，12 小時才重新抓一次。 */
+const SIGN_CACHE_KEY='ed_sign_cache', SIGN_TTL=12*3600*1000;
+function signCacheRead(){
+  try{ const o=JSON.parse(localStorage.getItem(SIGN_CACHE_KEY)||'null');
+    if(o&&o.at&&Date.now()-o.at<SIGN_TTL&&o.m) return o.m; }catch(e){}
+  return null;
+}
+/* ★ v25：只抓「這張表上真的會蓋章的那幾個人」。
+   整張 staff_sign 回傳 = 每個人 30~40KB × 全單位，十幾個人就是好幾百 KB，
+   而畫面上通常只會用到護理長自己那一張。 */
+function signNeededEmps(){
+  const set={}; const me=myEmp(); if(me) set[me]=1;
+  (data.superv||[]).forEach(function(s){ const e=String(s.empId||'').trim(); if(e) set[e]=1; });
+  return Object.keys(set);
+}
+async function loadSignNeeded(){
+  const need=signNeededEmps().filter(function(e){ return SIGNIMG[e]===undefined; });
+  if(!need.length) return;
+  await loadSignImgs(false,need);
+  render();
+}
+async function loadSignImgs(force,emps){
   if(!API_URL) return;
+  const c=signCacheRead();
+  if(c&&!force){
+    SIGNIMG=Object.assign({},c,SIGNIMG);
+    // 需要的人都在本機那份裡就不用連後端
+    if(!emps||emps.every(function(e){ return c[e]!==undefined; })) return;
+  }
   try{
-    const r=await fetch(API_URL+'?table=staff_sign');
+    const q=(emps&&emps.length)?('&emp='+encodeURIComponent(emps.join(','))):'';
+    const r=await fetch(API_URL+'?table=staff_sign'+q);
     const a=await r.json();
     if(!Array.isArray(a)) return;
     const m={};
@@ -213,7 +283,10 @@ async function loadSignImgs(){
       const img=String(o['簽名圖']||o.image||'');
       if(e&&img.indexOf('data:image/')===0) m[e]=img;
     });
-    SIGNIMG=m;
+    /* 沒有回傳的員編記成 ''（＝這個人沒有上傳過），才不會每次都再去問一次 */
+    (emps||[]).forEach(function(e){ if(m[e]===undefined) m[e]=''; });
+    SIGNIMG=Object.assign({},SIGNIMG,m);
+    try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
   }catch(e){ console.warn('讀簽名圖失敗（不影響其他功能）',e); }
 }
 /* 直接拍照上傳用：
@@ -305,7 +378,9 @@ async function signUpload(input){
   if(url.length>45000){ alert('壓縮後還是太大。請裁掉空白、只留簽名的部分再試。'); return; }
   const r=await signWrite(emp,url);
   if(!r.ok){ alert('簽名圖沒有存進後端：\n'+(r.error||'連線失敗')); return; }
-  SIGNIMG[emp]=url; render();
+  SIGNIMG[emp]=url;
+  try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
+  render();
   alert('簽名圖已存好，之後主管查核那一格就會印出這張圖。\n\n'
     +'提醒：圖只是印出來好看，真正留證的是你的員編與查核時間。');
 }
@@ -317,7 +392,9 @@ async function signClear(){
   if(!confirm('要移除你的簽名圖嗎？\n之後主管查核那一格會改成印名字。'))return;
   const r=await signWrite(emp,'');
   if(!r.ok){ alert('移除失敗：\n'+(r.error||'連線失敗')); return; }
-  delete SIGNIMG[emp]; render();
+  SIGNIMG[emp]='';
+  try{ localStorage.setItem(SIGN_CACHE_KEY,JSON.stringify({at:Date.now(),m:SIGNIMG})); }catch(e){}
+  render();
 }
 const SV_TYPE='fridge';
 function svUnit(){ return data.unit; }
@@ -337,6 +414,7 @@ function svMyName(){ return String(P.get('name')||'').trim()||(typeof curName===
 async function postTask(task,payload){
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:task,payload:payload})});
+    try{ tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
     if(!j) return {ok:false,error:/^\s*<(!doctype|html)/i.test(t)
       ?'後端回的是 Google 登入網頁 —— 部署時「誰可以存取」要選【任何人】'
@@ -353,7 +431,7 @@ async function postTask(task,payload){
 async function loadSuperv(){
   if(!API_URL||!svYm()) return;
   try{
-    const r=await fetch(API_URL+'?table=supervise_log&_='+Date.now(),{cache:'no-store'});
+    const r=await fetch(API_URL+'?table=supervise_log&days='+daysBackFor(data.ym,45)+'&_='+Date.now(),{cache:'no-store'});
     const a=await r.json(); if(!Array.isArray(a)) return;
     const srv=[];
     a.forEach(function(o){
@@ -485,12 +563,28 @@ function pick0(o,names){
   return '';
 }
 let syncing=false;
-async function syncFromServer(){
+/* ★ v25：一進來先抓「最近 16 天」（＝目前這半個月那一頁），畫面馬上出得來；
+   整個月的另外一半在背景補上去，補完再重畫一次。
+   原本是不分天數整張表抓回來 —— 表越長越慢，而且九成的資料當下根本不會看。 */
+/* ★ 「往回幾天」要看現在在看哪一個月：看的是本月就用 base 天，
+   看更早的月份就要從今天回推到那個月的月初，否則 days 過濾會把整個月濾掉、畫面一片空白。 */
+function daysBackFor(ym, base){
+  var m=/^(\d{4})-(\d{2})$/.exec(String(ym||'')); if(!m) return base;
+  var t=tpeParts();
+  if(+m[1]===t.y && +m[2]===t.m) return base;
+  var start=Date.UTC(+m[1],+m[2]-1,1), now=Date.UTC(t.y,t.m-1,t.d);
+  var d=Math.round((now-start)/86400000)+35;
+  return (d>0&&d<3000)?d:base;
+}
+const FR_FAST_DAYS=16, FR_FULL_DAYS=70;
+let FR_FULL_AT=0;
+async function syncFromServer(days){
   if(!API_URL)return;
   syncing=true; srvBadge();          // ★ 先告訴使用者「正在讀取」，別讓那 1~3 秒看起來像壞掉
   try{
     srvErr='';
-    const r=await fetchT(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp&_='+Date.now());
+    const r=await fetchT(API_URL+(API_URL.includes('?')?'&':'?')+'table=fridge_temp&days='
+      +daysBackFor(data.ym,(days||FR_FAST_DAYS))+'&_='+Date.now());
     const txt=await r.text();
     let a=null; try{ a=JSON.parse(txt); }catch(e){}
     if(!Array.isArray(a)){
@@ -726,6 +820,7 @@ async function pumpWQ(k){
   let ok=false;
   try{
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'fridge_temp',payload:payload})});
+    try{ tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
     ok=!!(j&&j.ok);
   }catch(e){ console.error('冰箱溫度寫回失敗',e); }
@@ -1134,7 +1229,7 @@ async function delAbn(k){
 async function loadAbn(){
   if(!API_URL||!data.ym) return;
   try{
-    const res=await fetch(API_URL+'?table=fridge_abn&_='+Date.now(),{cache:'no-store'});
+    const res=await fetch(API_URL+'?table=fridge_abn&days='+daysBackFor(data.ym,45)+'&_='+Date.now(),{cache:'no-store'});
     const a=await res.json(); if(!Array.isArray(a)) return;
     const seen={};
     a.forEach(function(o){
@@ -1177,10 +1272,9 @@ function boot(){
   srvBadge();                        // 先把徽章放上去，才看得到「正在讀取後端…」
   syncFromServer();
   /* 簽名圖另外抓：抓失敗只會變成「印名字」，不可以拖累溫度同步。 */
-  loadSignImgs().then(function(){ render(); }).catch(function(){});
-  loadSuperv().then(function(){ render(); });
+  loadSuperv().then(function(){ render(); loadSignNeeded(); });
   loadAbn().then(function(){ render(); });
-  setInterval(function(){ if(!document.hidden) autoSync(); },25000);
+  setInterval(function(){ if(!document.hidden) autoSync(); },10000);
   document.addEventListener('visibilitychange',function(){ if(!document.hidden) autoSync(true); });
   window.addEventListener('focus',function(){ autoSync(); });
 }
