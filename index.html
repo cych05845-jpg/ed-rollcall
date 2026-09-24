@@ -879,8 +879,7 @@ const CART_EXPIRY_FALLBACK=[
   ['OBS-CART','N95 口罩','耗材','2','2027-05-03',''],
   ['OBS-CART','隔離衣','耗材','2','2027-07-10',''],
   ['OBS-CART','護目鏡','器械','1','2026-12-31',''],
-  ['OBS-CART','Ambu+蓄氧袋(大)','器械','1','2026-10-31',''],
-  ['OBS-CART','Mask 5號','耗材','1','2027-01-10','']
+  /* ★ Ambu／Mask 不上鎖（2026-09-24 護理長指正），所以不進附件三的期限登錄表 */
 ].map(a=>({cartId:a[0],item:a[1],type:a[2],qty:a[3],exp:a[4],status:a[5],by:'紙本附件三',at:''}));
 // 後端有這台車的資料就用後端；還沒部署就用內建（紙本）值
 function expSrcOf(sheetId){
@@ -1022,7 +1021,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-24-b71';
+const APP_VER='2026-09-24-b73';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -2147,11 +2146,28 @@ const OBS_LOCKED_NAMES=new Set([
   'Pre-mixed Dopamine','Pre-mixed Dopamin 250 ml','Pre-mixed Dopamin',
   'N/S 500 ml','N/S 500ML','D10W 500 ml','D10W 500ML',
   'N95 口罩','防護面罩','全罩面罩','隔離衣','護目鏡',
-  'Ambu + 蓄氧袋(大)','Ambu+蓄氧袋(大)','Mask 5號','Mask 5 號',
-  '氧氣連接管','流量表','D/W 500ML'
+  '流量表','D/W 500ML'
 ].map(normItem));
+/* ★★★ 2026-09-24 護理長指正：Ambu、Mask、蓄氧袋、雙接管（氧氣連接管）
+   這幾項「不需要上鎖」—— 它們是每班都要拿出來看、拿出來用的東西，
+   不在封籤那一段裡面，所以每班還是要逐項打勾，也不進附件三的期限登錄表。
+   （流量表、D/W 500ML 仍然留在上鎖那一段，她沒有提到，不要自作主張一起拿掉。） */
+const OBS_NOT_LOCKED_NAMES=new Set([
+  'Ambu + 蓄氧袋(大)','Ambu+蓄氧袋(大)','Ambu +蓄氧袋(大)','Ambu＋蓄氧袋(大)',
+  'Ambu','Ambu bag','Ambu Bag','甦醒球','蓄氧袋','蓄氧袋(大)',
+  'Mask 5號','Mask 5 號','Mask5號','5號 Mask','5號Mask','Mask',
+  '氧氣連接管','雙接管','氧氣雙接管','雙頭接管','氧氣接管'
+].map(normItem));
+function neverLocked(o){ return OBS_NOT_LOCKED_NAMES.has(normItem(o&&(o.name||o.item||o))); }
 function isLockedItem(o){
+  /* 判斷順序刻意是這樣：
+     ① items 分頁「分工」欄標「鎖」—— Sheet 最大，護理長可以隨時自己加減，不用改程式
+     ② 明列「不上鎖」的那幾項
+     ③ 內建名單（紙本封籤那一段）
+     所以之前被 markObsCartLocked 標過「鎖」的 Ambu／Mask 仍然會是上鎖的，
+     要在後端執行一次 unlockObsCartItems 把那個標記清掉。 */
   if(String(o&&o.assign||'').trim()==='鎖') return true;
+  if(neverLocked(o)) return false;
   return OBS_LOCKED_NAMES.has(normItem(o&&o.name));
 }
 /* ★★ 只有留觀急救車是上鎖的車。
@@ -6957,9 +6973,13 @@ function sealWitnessLookup(){
    後端 cart_expiry 有名冊就以它為準（那才是上鎖的那些東西）；
    還沒建立時退回用點班表的非藥品品項，不讓畫面空白。 */
 function sealExpItems(s){
-  const a=expListOf(s.id);
+  /* ★ 不上鎖的品項不進附件三 —— 那張表的標題就是「急救車上鎖物品有效期限登錄表」。
+     cart_expiry 分頁裡可能還留著舊版 seed 進去的 Ambu／Mask，所以這裡也要濾掉，
+     不然封新籤那一頁還是會叫人登它們的期限。 */
+  const a=expListOf(s.id).filter(x=>!neverLocked(x.item));
   if(a.length) return a.filter(x=>x.type!=='藥品').map(x=>({name:x.item,type:x.type,qty:x.qty}));
-  return itemsAllOf(s.id,null).filter(needExp).map(o=>({name:o.name,type:o.type,qty:o.qty}));
+  return itemsAllOf(s.id,null).filter(o=>needExp(o)&&!neverLocked(o))
+    .map(o=>({name:o.name,type:o.type,qty:o.qty}));
 }
 function renderSealClose(){
   const s=sheetById(state.sheetId);
@@ -7039,7 +7059,7 @@ function renderSealClose(){
       </div>
       <div id="sc_wname" style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">尚未見證</div>
     </div>
-    <button class="btn btn-primary btn-block" style="margin-top:14px" onclick="submitSealClose()">
+    <button id="sealCloseBtn" class="btn btn-primary btn-block" style="margin-top:14px" onclick="submitSealClose()">
       封車完成</button>
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.8">
       封好之後會回到點班表，逐項點班照原本的方式完成就好。</div>
@@ -7110,7 +7130,41 @@ async function scSealPhoto(input){
       +'<br>請改用 📷 掃條碼，或直接手打。',true);
   }
 }
+/* ★★★ b72：會等後端好幾秒的動作，一定要「擋住畫面 ＋ 說在做什麼 ＋ 不准重複按」。
+   2026-09-24 護理長回報：按「封車完成」之後畫面像當掉，以為失靈又按了一次，
+   結果第二次請求卡在後端的互斥鎖後面排隊，等更久。
+   封車一次要寫幾十項有效期限＋一筆新封籤，本來就要好幾秒 ——
+   使用者需要的不是更快的謊言，是看得到進度、而且按不下去第二次。 */
+var BUSY_ON=false;
+function busyOn(title){
+  BUSY_ON=true;
+  let el=document.getElementById('busyMask');
+  if(!el){ el=document.createElement('div'); el.id='busyMask';
+    el.style.cssText='position:fixed;inset:0;background:rgba(15,32,43,.55);z-index:900;'
+      +'display:flex;align-items:center;justify-content:center;padding:24px';
+    document.body.appendChild(el); }
+  el.innerHTML=`<div style="background:var(--card,#fff);color:var(--ink,#16232b);border-radius:16px;
+      max-width:340px;width:100%;padding:22px 20px;text-align:center;box-shadow:0 18px 50px rgba(0,0,0,.3)">
+    <div style="font-size:30px;line-height:1;margin-bottom:10px">⏳</div>
+    <div style="font-weight:800;font-size:16px;margin-bottom:8px">${esc(title||'處理中')}</div>
+    <div id="busyStep" style="font-size:13.5px;color:var(--ink-soft);line-height:1.8;min-height:44px"></div>
+    <div style="height:6px;border-radius:99px;background:rgba(0,0,0,.08);overflow:hidden;margin-top:12px">
+      <div id="busyBar" style="height:100%;width:8%;background:var(--brand);border-radius:99px;
+        transition:width .4s ease"></div></div>
+    <div style="font-size:12px;color:#b35309;margin-top:12px;line-height:1.7">
+      後端一次要寫好幾十列，<b>需要幾秒到十幾秒</b>。<br>請不要重複按、也不要關掉這一頁。</div>
+  </div>`;
+}
+function busyStep(text,pct){
+  const t=document.getElementById('busyStep'); if(t) t.innerHTML=text;
+  const b=document.getElementById('busyBar'); if(b&&pct!=null) b.style.width=Math.max(4,Math.min(100,pct))+'%';
+}
+function busyOff(){ BUSY_ON=false; const el=document.getElementById('busyMask'); if(el) el.remove(); }
+
+var _sealClosing=false;
 async function submitSealClose(){
+  /* ★ 第一道：同一次封車只能有一個在飛。使用者連按三下也只送一次。 */
+  if(_sealClosing){ toast('正在登錄中，請稍候…'); return; }
   const s=sheetById(state.sheetId);
   const seal=((document.getElementById('sc_seal')||{}).value||'').trim();
   if(!seal){ alert('請輸入新封籤號'); return; }
@@ -7139,25 +7193,47 @@ async function submitSealClose(){
     send.push({item:o.name,type:o.type||'',qty:o.qty||'',exp:v,status:st});
   });
   if(miss&&!confirm('還有 '+miss+' 項沒有填有效期限。\n\n確定要送出嗎？（沒填的會保留上次登錄的日期）')) return;
-  toast('封車登錄中…');
-  let r2=null;
+
+  /* ★ 第二道：旗標＋按鈕變成不能按的樣子。
+     只有旗標而按鈕看起來還能按，人還是會一直戳；只改按鈕而沒有旗標，
+     用鍵盤或連點兩下還是會送兩次。兩個都要。 */
+  _sealClosing=true;
+  const btn=document.getElementById('sealCloseBtn');
+  if(btn){ btn.disabled=true; btn.style.opacity='.6'; btn.textContent='登錄中…請不要重複按'; }
+  const t0=Date.now();
+  busyOn('封車登錄中');
+  busyStep(send.length?('① 正在寫入 <b>'+send.length+' 項</b>有效期限…'):'① 沒有要更新的期限，跳過', 12);
+
+  let r2=null, r1=null;
   try{
-    if(send.length) await owedWrite('cart_expiry_set',
-      {cartId:cartIdOf(s.id),empId:state.user.id,name:state.user.name,list:send});
+    if(send.length){
+      r1=await owedWrite('cart_expiry_set',
+        {cartId:cartIdOf(s.id),empId:state.user.id,name:state.user.name,list:send});
+      /* ★ 期限沒寫進去也要講。以前這一支的結果整個沒有檢查，
+         期限失敗但封籤成功時，畫面照樣說「已上新封籤」——人不會知道期限沒存到。 */
+      if(!(r1&&r1.ok===true)) throw new Error('有效期限沒有寫進後端：'
+        +((r1&&r1.error)||'請確認網路，或 GS 是否已部署為新版本'));
+    }
+    busyStep('① 有效期限已寫入 ✓<br>② 正在登錄新封籤…', 55);
     r2=await owedWrite('cart_seal_new',{cartId:cartIdOf(s.id),cartName:s.name,seal:seal,
       date:curRcDate(),shift:effShift(),empId:state.user.id,name:state.user.name,
       witnessId:_sealWitness.id,witness:_sealWitness.name,
       note:(state.sealReason||'')+(state.sealNote?('・'+state.sealNote):'')});
-  }catch(e){ r2={ok:false,error:String(e)}; }
-  if(!(r2&&r2.ok===true)){
-    alert('新封籤沒有存到後端：'+((r2&&r2.error)||'請確認網路，或 GS 是否已「重新部署為新版本」')
-      +'\n\n這一筆還沒完成，請稍後再送出一次。');
+    if(!(r2&&r2.ok===true)) throw new Error('新封籤沒有存到後端：'
+      +((r2&&r2.error)||'請確認網路，或 GS 是否已「重新部署為新版本」'));
+  }catch(e){
+    busyOff(); _sealClosing=false;
+    if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='封車完成'; }
+    alert(String(e&&e.message||e)+'\n\n這一筆還沒完成，請稍後再送出一次。');
     return;
   }
   // 封好之後把號碼帶回點班表，人員不用再抄一次
   state.sealInput=seal; state.sealMismatch=false; state.sealReason=''; state.sealNote=''; _sealWitness=null;
-  await Promise.all([loadCartSeal(),loadCartExpiry()]);
-  toast('已上新封籤 '+seal);
+  busyStep('② 新封籤已登錄 ✓<br>③ 正在讀回最新狀態…', 80);
+  try{ await Promise.all([loadCartSeal(),loadCartExpiry()]); }catch(e){}
+  busyStep('完成 ✓', 100);
+  busyOff(); _sealClosing=false;
+  toast('已上新封籤 '+seal+'（共 '+Math.round((Date.now()-t0)/1000)+' 秒）');
   state.screen='rollcall'; render();
 }
 
