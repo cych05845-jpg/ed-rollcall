@@ -97,8 +97,8 @@ const AXISW=64, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;   // 左欄
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-24-b44';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-24-v27';
+const APP_VER='2026-09-24-b45';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-24-v29';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
@@ -485,12 +485,20 @@ async function addSup(){
 async function delSup(i){
   const s=(data.superv||[])[i]; if(!s) return;
   if(!canSup()){ alert('主管查核限護理長／副護理長。'); return; }
+  /* ★ b40/b45：「只存在這台（_unsync）」的那一筆，任何主管都可以清掉。
+     為什麼要開這個口：這種紀錄後端根本沒有（多半是 v22 以前留在這支手機上的舊查核）。
+     loadSuperv 每次同步都會把它留下來，而舊規則又是「只能撤銷自己的」——
+     別人的名字就永遠卡在這台機器上，刪不掉又一直印在表上。
+     這個動作只動 localStorage，後端不會有任何變化，別人本來就看不到這一筆。 */
+  if(s._unsync){
+    if(!confirm('「'+(s.sign||'(未署名)')+' · '+s.date+'」只存在這台裝置，後端沒有這一筆。\n\n'
+      +'要從這台移除嗎？\n（不會動到後端；別人本來就看不到，列印也不會印出來）')) return;
+    data.superv.splice(i,1); save(); render(); return;
+  }
   if(String(s.empId||'')!==myEmp()){ alert('只能撤銷你自己的查核。'); return; }
   if(!confirm('撤銷 '+s.date+' 的查核？\n（後端會留下撤銷紀錄）')) return;
-  if(!s._unsync){
-    const r=await postTask('superv_del',{type:SV_TYPE,unit:svUnit(),date:s.date,empId:s.empId});
-    if(!r.ok){ alert('撤銷失敗：\n'+r.error); return; }
-  }
+  const r=await postTask('superv_del',{type:SV_TYPE,unit:svUnit(),date:s.date,empId:s.empId});
+  if(!r.ok){ alert('撤銷失敗：\n'+r.error); return; }
   data.superv.splice(i,1); save(); render();
 }
 /* 螢幕上的查核區塊（列印時隱藏）。冰箱、氧氣共用。 */
@@ -498,9 +506,11 @@ function svPanelHtml(){
   const me=myEmp();
   const rows=(data.superv||[]).map(function(s,i){
     const mine=String(s.empId||'')===me;
+    /* ★ 只在這台的那一筆：任何主管都可以按 ✕ 清掉（只動這台，後端不受影響）。
+       而且要講清楚它不會印出來 —— 印出來的表就是正式紀錄，不可以印一筆後端沒有的查核。 */
     return '<span class="sv-chip">'+esc(s.sign||'(未署名)')+' · '+esc(s.date)
-      +(s._unsync?' <b style="color:#c92a2a" title="還沒進後端">⚠ 只在這台</b>':'')
-      +(mine?' <a href="#" onclick="delSup('+i+');return false" style="color:#c92a2a;text-decoration:none" title="撤銷">✕</a>':'')
+      +(s._unsync?' <b style="color:#c92a2a" title="後端沒有這一筆，列印不會印出來">⚠ 只在這台・不會列印</b>':'')
+      +((mine||s._unsync)?' <a href="#" onclick="delSup('+i+');return false" style="color:#c92a2a;text-decoration:none" title="'+(s._unsync?'從這台移除':'撤銷')+'">✕</a>':'')
       +'</span>';
   }).join('');
   const all=(data.superv||[]).slice().sort(function(a,b){ return String(a.date)<String(b.date)?1:-1; });
@@ -988,6 +998,9 @@ function pageSvg(D0,D1){
   {
     const byWeek={};
     (data.superv||[]).forEach(function(sv){
+      /* ★ 只存在這台（_unsync）的不畫進表裡。印出來的表就是正式紀錄，
+         後端沒有的查核不可以印上去 —— 畫面上的區塊會標「只在這台・不會列印」。 */
+      if(sv._unsync) return;
       const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(sv.date||'')); if(!m)return;
       if((m[1]+'-'+m[2])!==data.ym) return;
       const d=+m[3]; if(d<D0||d>D1) return;

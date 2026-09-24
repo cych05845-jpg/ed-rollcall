@@ -112,8 +112,8 @@ const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
 const SHIFT_NAME_O2=['大夜 N（0–8）','白班 D（8–16）','小夜 E（16–24）'];
-const APP_VER='2026-09-24-b39';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-24-v28';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-24-b40';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-24-v29';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
 // （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
@@ -180,7 +180,22 @@ async function o2DelBatch(codes,day,si){
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 }
 function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
+var O2_NOSTATE=false;                 // 後端讀回來的資料裡沒有「狀態」欄
+function stateBanner(){
+  let el=document.getElementById('noStateBar');
+  if(!O2_NOSTATE){ if(el)el.remove(); return; }
+  if(!el){ el=document.createElement('div'); el.id='noStateBar';
+    el.style.cssText='background:#fff4e6;color:#8a4b00;border:1px solid #ffd8a8;border-radius:10px;'
+      +'padding:10px 14px;margin:10px 0;font-size:13px;line-height:1.7';
+    const w=document.querySelector('.wrap'), fm=document.getElementById('form');
+    if(w&&fm)w.insertBefore(el,fm); else if(w)w.appendChild(el); }
+  el.innerHTML='⚠ <b>取消打勾會存進去、但讀不回來</b>：後端 o2_check 分頁的表頭少了「狀態」這一欄，'
+    +'所以已經取消的格子同步回來又會打勾。<br>'
+    +'請把 <b>dianban_api.gs</b> 更新到 <b>'+esc(EXPECT_VER)+'</b> 並「部署為新版本」'
+    +'（v29 起會自動補欄名），或在編輯器執行一次 <b>fixHeads</b>。';
+}
 function syncBanner(){
+  stateBanner();
   const n=unsyncList().length;
   let el=document.getElementById('syncBar');
   if(!n){ if(el)el.remove(); return; }
@@ -513,12 +528,20 @@ async function addSup(){
 async function delSup(i){
   const s=(data.superv||[])[i]; if(!s) return;
   if(!canSup()){ alert('主管查核限護理長／副護理長。'); return; }
+  /* ★ b40/b45：「只存在這台（_unsync）」的那一筆，任何主管都可以清掉。
+     為什麼要開這個口：這種紀錄後端根本沒有（多半是 v22 以前留在這支手機上的舊查核）。
+     loadSuperv 每次同步都會把它留下來，而舊規則又是「只能撤銷自己的」——
+     別人的名字就永遠卡在這台機器上，刪不掉又一直印在表上。
+     這個動作只動 localStorage，後端不會有任何變化，別人本來就看不到這一筆。 */
+  if(s._unsync){
+    if(!confirm('「'+(s.sign||'(未署名)')+' · '+s.date+'」只存在這台裝置，後端沒有這一筆。\n\n'
+      +'要從這台移除嗎？\n（不會動到後端；別人本來就看不到，列印也不會印出來）')) return;
+    data.superv.splice(i,1); save(); render(); return;
+  }
   if(String(s.empId||'')!==myEmp()){ alert('只能撤銷你自己的查核。'); return; }
   if(!confirm('撤銷 '+s.date+' 的查核？\n（後端會留下撤銷紀錄）')) return;
-  if(!s._unsync){
-    const r=await postTask('superv_del',{type:SV_TYPE,unit:svUnit(),date:s.date,empId:s.empId});
-    if(!r.ok){ alert('撤銷失敗：\n'+r.error); return; }
-  }
+  const r=await postTask('superv_del',{type:SV_TYPE,unit:svUnit(),date:s.date,empId:s.empId});
+  if(!r.ok){ alert('撤銷失敗：\n'+r.error); return; }
   data.superv.splice(i,1); save(); render();
 }
 /* 螢幕上的查核區塊（列印時隱藏）。冰箱、氧氣共用。 */
@@ -526,9 +549,11 @@ function svPanelHtml(){
   const me=myEmp();
   const rows=(data.superv||[]).map(function(s,i){
     const mine=String(s.empId||'')===me;
+    /* ★ 只在這台的那一筆：任何主管都可以按 ✕ 清掉（只動這台，後端不受影響）。
+       而且要講清楚它不會印出來 —— 印出來的表就是正式紀錄，不可以印一筆後端沒有的查核。 */
     return '<span class="sv-chip">'+esc(s.sign||'(未署名)')+' · '+esc(s.date)
-      +(s._unsync?' <b style="color:#c92a2a" title="還沒進後端">⚠ 只在這台</b>':'')
-      +(mine?' <a href="#" onclick="delSup('+i+');return false" style="color:#c92a2a;text-decoration:none" title="撤銷">✕</a>':'')
+      +(s._unsync?' <b style="color:#c92a2a" title="後端沒有這一筆，列印不會印出來">⚠ 只在這台・不會列印</b>':'')
+      +((mine||s._unsync)?' <a href="#" onclick="delSup('+i+');return false" style="color:#c92a2a;text-decoration:none" title="'+(s._unsync?'從這台移除':'撤銷')+'">✕</a>':'')
       +'</span>';
   }).join('');
   const all=(data.superv||[]).slice().sort(function(a,b){ return String(a.date)<String(b.date)?1:-1; });
@@ -617,6 +642,11 @@ async function syncFromServer(days){
     const a=await r.json();
     if(!Array.isArray(a)){ serverCount=-1; syncing=false; srvBadge();
       console.error('後端回傳不是陣列',a); return; }
+    /* ★★★ b40：後端的 o2_check 分頁如果表頭少了「狀態」欄，取消打勾就會變成
+       「Sheet 上寫著已刪除、手機上卻一直長回來」（2026-09-24 護理長踩到的）。
+       原因在後端：舊分頁的表頭沒有跟著版本補欄，讀回來的資料裡整個沒有「狀態」。
+       後端 v29 起會自動補；這裡留一道防線 —— 看不到「狀態」就講出來，不要靜靜地錯。 */
+    O2_NOSTATE = a.length>0 && !a.some(function(o){ return Object.prototype.hasOwnProperty.call(o,'狀態'); });
     let n=0;
     a.forEach(function(o){
       const dept=String(o['科別']||o.dept||'');
@@ -635,7 +665,7 @@ async function syncFromServer(days){
       data.marks[k]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };
     });
     serverCount=n; syncing=false;
-    save(); render(); srvBadge();
+    save(); render(); srvBadge(); syncBanner();
   }catch(e){
     console.error('同步後端氧氣紀錄失敗（先用本機資料）',e);
     serverCount=-1; syncing=false; srvBadge();
@@ -737,7 +767,9 @@ function chunkTable(daysArr){
   body+='</tr>';
   /* ★ 主管查核／日期：一頁＝一週，所以這一列是整週合併成一格（跟冰箱表每 7 天一格同一個規則）。
      有本人簽名／印章圖就蓋圖，沒有就印名字；旁邊一定印日期。 */
-  const inWk=(data.superv||[]).filter(s=>{ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date||''));
+  /* ★ 只存在這台（_unsync）的不印。印出來的表就是正式紀錄，
+     後端沒有的查核不可以印上去 —— 畫面上的區塊會標「只在這台・不會列印」。 */
+  const inWk=(data.superv||[]).filter(s=>!s._unsync).filter(s=>{ const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date||''));
     return m && (m[1]+'-'+m[2])===ymOf(data.ym) && daysArr.indexOf(+m[3])>=0; })
     .sort((a,b)=>String(a.date)<String(b.date)?-1:1);
   const stamps=inWk.map(s=>{ const img=signOf(s.empId), d=+String(s.date).slice(8,10), m=+String(s.date).slice(5,7), y=+String(s.date).slice(0,4)-1911;
