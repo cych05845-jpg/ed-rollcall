@@ -44,7 +44,7 @@
   .wknav button{border:1.5px solid var(--line);background:#fff;border-radius:8px;padding:7px 16px;font-family:inherit;font-weight:700;cursor:pointer;font-size:14px}
   .wknav button:disabled{opacity:.4}
   .o2scroll{overflow-x:auto}
-  .screenview table.o2 td.cell{height:36px}
+  .screenview table.o2 td.cell{height:42px;min-width:26px}
   .screenview table.o2 th.sh{width:auto}
   .printview{display:none}
   .weekpage .f-top,.weekpage .f-title,.weekpage .crit{margin-top:0}
@@ -64,6 +64,14 @@
   .superv .btn-w{background:#fff;color:var(--ink);border:1.5px solid #c9d3da}
   .superv .btn-g{background:#fff;color:#c92a2a;border:1.5px solid #e0b4b4}
   .sv-chip{border:1px solid #c9d3da;border-radius:8px;padding:4px 10px;background:#fff}
+  /* 一個班一個視窗：按鈕要大，手指點得到 */
+  .sh-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;margin:6px 0;padding:12px 12px;
+    border:1.5px solid #c9d3da;border-radius:12px;background:#fff;font-family:inherit;font-size:14.5px;cursor:pointer}
+  .sh-item.on{border-color:var(--brand);background:rgba(15,122,134,.10);font-weight:700}
+  .sh-mk{flex:0 0 26px;height:26px;border-radius:8px;border:1.5px solid #c9d3da;display:flex;align-items:center;
+    justify-content:center;color:var(--brand);font-weight:800;font-size:16px;background:#fff}
+  .sh-item.on .sh-mk{border-color:var(--brand)}
+  .sh-tx{flex:1;line-height:1.45}
   table.o2 td.supcell{height:40px;text-align:left;padding:2px 6px}
   /* 簽名直書 2～3 個字，30px 高會溢到下一列（備註）去，印出來字被切一半 */
   table.o2 td.sigcell{height:46px}
@@ -103,8 +111,9 @@ const SHIFTS=["N","D","E"];
 const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746":"蔡佳娟","03838":"林素娥","05049":"康家瑜","05223":"楊嘉彤","11230":"李雅筑","11231":"蔡孟容","11304":"林昱庭","11562":"江沛鄉","11779":"董素惠","11849":"許佩珊","11872":"劉逸靚","11921":"畢宥頣","11957":"張舜硯","12049":"王孝彰","12243":"吳鈺珊","12346":"蔡婷瑋","12375":"王鈺茵","12524":"松韻嬋","12814":"吳秉訓","13109":"楊琇涵","13235":"吳家儀","13237":"郭馥瑄","13610":"蔡依伶","13712":"蘇佩如","13959":"洪詣婷","13965":"張祺勝","13969":"陳曉君","13974":"熊宜珊","14042":"林伯雄","14071":"謝琪文","14124":"何妍芝","14376":"曾鈺涵","14385":"黃堯","14403":"蕭筑云","14870":"李宜靜","15087":"林培琪","15260":"劉彩晶","15421":"張婉慈","15453":"王品琁","15569":"吳詠蓁","15594":"丁子傑","15682":"張荃茵","15727":"高若堇","15774":"陳永軒","15801":"洪芯綺","16063":"陳奕伶","16083":"黃書瑋","16098":"陳志凱","16104":"林乃嘉","16124":"賴郁佳","16125":"陳明君","16174":"蔡佩蓉","16199":"林以馨","16264":"劉玥澤","16267":"郭建良","16298":"蕭旆塏","16365":"何孟婷","16433":"楊子謙","16480":"黃晟凱","16493":"葉孟勳","16497":"凃維禎","16533":"洪莉婷","16538":"吳薏昕","16543":"王鈺鴻","16592":"林雅筑","16686":"黃冠菱","16536":"沈欣禹","16537":"邱琬心","16552":"吳槿葳","15757":"謝環憶","15829":"黃銘偉","15842":"蔡旻芳","16097":"葉俊德","16613":"蕭琇皣","16720":"羅勤祐","02907":"張秀月","12706":"陳盈利","15896":"龔鈺雯"};
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
-const APP_VER='2026-09-23-b36';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-23-v26';   // 後端應有的版本（?diag=1 可查）
+const SHIFT_NAME_O2=['大夜 N（0–8）','白班 D（8–16）','小夜 E（16–24）'];
+const APP_VER='2026-09-24-b38';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-24-v28';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
 // （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
@@ -156,6 +165,19 @@ async function pumpWQ(g,day,si){
   }
   save(); syncBanner(); render();
   if(ok&&WQ.pending[g]) pumpWQ(g,day,si);
+}
+/* ★ 取消打勾也要送後端（不然同步回來又長回去） */
+async function o2DelBatch(codes,day,si){
+  if(!API_URL||!codes.length) return {ok:false};
+  const payload={dept:data.dept,ym:data.ym,day:day,shift:SHIFTS[si],qty:data.qty||'',
+                 by:curName(),at:new Date().toISOString(),items:codes.slice()};
+  try{
+    const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check_del',payload:payload})});
+    try{ if(typeof tickAlign==='function') tickAlign(); }catch(e){}
+    const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
+    if(j&&j.ok) return j;
+    return {ok:false,error:(j&&j.error)||'後端沒有回 ok（GS 可能還不是 v28）'};
+  }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 }
 function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
 function syncBanner(){
@@ -415,6 +437,10 @@ function myEmp(){ return String(P.get('emp')||'').trim(); }
 let SV_LOADED=false;
 function svToday(){ const t=tpeParts(); return t.y+'-'+String(t.m).padStart(2,'0')+'-'+String(t.d).padStart(2,'0'); }
 function svMyName(){ return String(P.get('name')||'').trim()||(typeof curName==='function'?curName():''); }
+/* ★ 主管查核只有主管能按（護理長／副護理長，或護理長在「權限設定」授權的代理人）。
+   資格由點班系統開這一頁時用 &sup=1 帶進來；後端 v27 也會再擋一次 ——
+   畫面只是不顯示按鈕，會改網址的人還是送得進來，而這一格是評鑑在看的。 */
+function canSup(){ return String(P.get('sup')||'')==='1'; }
 /* 所有寫後端的動作共用：把「為什麼失敗」翻成人看得懂的話。
    上次簽名圖「上傳失敗」卻看不出原因，就是因為這裡只會說「連線失敗」。 */
 async function postTask(task,payload){
@@ -475,6 +501,7 @@ async function svPush(rec,quiet){
 async function addSup(){
   const emp=myEmp();
   if(!emp){ alert('看不到你的員編，無法記錄是誰查核的。\n請從點班系統裡的入口進來（網址會帶員編）。'); return; }
+  if(!canSup()){ alert('主管查核限護理長／副護理長。\n需要代理時請護理長到「權限設定」勾選「主管查核」。'); return; }
   const el=document.getElementById('supDate');
   const d=(el&&el.value)||svToday();
   if(d.slice(0,7)!==svYm()){ alert('查核日期要在本月（'+svYm()+'）之內。'); return; }
@@ -485,6 +512,7 @@ async function addSup(){
 }
 async function delSup(i){
   const s=(data.superv||[])[i]; if(!s) return;
+  if(!canSup()){ alert('主管查核限護理長／副護理長。'); return; }
   if(String(s.empId||'')!==myEmp()){ alert('只能撤銷你自己的查核。'); return; }
   if(!confirm('撤銷 '+s.date+' 的查核？\n（後端會留下撤銷紀錄）')) return;
   if(!s._unsync){
@@ -517,12 +545,18 @@ function svPanelHtml(){
     + (SV_LOADED?'':' <span style="color:#8894a0;font-size:12px">（讀取後端中…）</span>')+'</div>'
     + (rows||'<span style="color:#8894a0">本月尚無</span>')
     + (me
-      ? '<span style="font-size:13px">以 <b>'+esc(svMyName()||me)+'</b>（'+esc(me)+'）查核</span>'
-        + '<input id="supDate" type="date" value="'+svToday()+'" style="width:150px">'
-        + '<button class="btn btn-p" onclick="addSup()">＋ 查核</button>'
+      ? (canSup()
+          ? '<span style="font-size:13px">以 <b>'+esc(svMyName()||me)+'</b>（'+esc(me)+'）查核</span>'
+            + '<input id="supDate" type="date" value="'+svToday()+'" style="width:150px">'
+            + '<button class="btn btn-p" onclick="addSup()">＋ 查核</button>'
+          : '<span style="font-size:12.5px;color:#8894a0">主管查核限護理長／副護理長。'
+            + '需要代理時，請護理長到點班系統「權限設定」勾選「主管查核」。</span>')
       : '<span style="font-size:12.5px;color:#c92a2a">要從點班系統的入口進來才能查核（需要員編）</span>')
     + '<span style="width:100%;height:1px"></span>'
-    + '<div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f4f7f9;border-radius:9px;padding:8px 10px">'
+    /* ★ 簽名／印章圖只有主管用得到（只有主管查核那一格會蓋圖），
+       一般人員看得到查核紀錄，但不顯示上傳區，免得以為自己要傳。 */
+    + (!canSup() ? '<div style="width:100%;font-size:12px;color:#8894a0">以上為主管查核紀錄（唯讀）。溫度／評值的登錄不受影響，照常填。</div>' :
+      '<div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f4f7f9;border-radius:9px;padding:8px 10px">'
     +   '<b style="font-size:12.5px">我的簽名／印章圖</b>'
     +   (mySign?'<img src="'+mySign+'" alt="簽名" style="height:30px;background:#fff;border:1px solid #c9d3da;border-radius:6px;padding:2px">'
                :'<span style="font-size:12.5px;color:#8894a0">尚未上傳（會改印名字）</span>')
@@ -532,7 +566,8 @@ function svPanelHtml(){
     +   '<span style="font-size:11.5px;color:#8894a0;flex:1;min-width:220px">'
     +     '白紙上簽名或蓋章拍一張就好，會自動裁邊。冰箱表與氧氣表共用同一張圖。'
     +     '圖只是列印呈現，留證的是員編與查核時間。</span>'
-    + '</div></div>';
+    + '</div>')
+    + '</div>';
 }
 
 function ck(crit,day,si){return crit+'_'+day+'_'+SHIFTS[si];}
@@ -594,6 +629,9 @@ async function syncFromServer(days){
       n++;
       const local=data.marks[k];
       if(local&&(local._sending||local._unsync))return;      // 還沒上傳完的不要被後端蓋掉
+      /* ★ v28：狀態「已刪除」＝有人取消過這一格，要當成沒打勾。
+         以前後端沒有取消的機制，在手機上取消完，下一次同步又長回來 —— 使用者看到的就是「改不掉」。 */
+      if(String(o['狀態']||'')==='已刪除'){ delete data.marks[k]; return; }
       data.marks[k]={ by:String(o['簽名']||o.by||''), at:String(o['寫入時間']||o.at||'') };
     });
     serverCount=n; syncing=false;
@@ -686,10 +724,13 @@ function chunkTable(daysArr){
   let body='';
   CRIT.forEach(([code])=>{ body+=`<tr><th class="rowh">${code}</th>`;
     daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const m=data.marks[ck(code,d,si)];
-      body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="toggle('${code}',${d},${si})">${m?'✓':''}</td>`; } });
+      /* ★ 格子只負責「打開那一班的視窗」，不再一點就改資料 ——
+         這些格子在手機上只有十幾 px 寬，點錯的機率比點對還高。 */
+      body+=`<td class="cell ${m?'mk':''}" title="${m?esc(m.by||'')+' '+esc(m.at||''):''}" onclick="openShift(${d},${si})">${m?'✓':''}</td>`; } });
     body+='</tr>'; });
   body+='<tr><th class="rowh">簽名</th>';
-  daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const by=o2SignOf(d,si); body+=`<td class="sigcell" title="${esc(by)}">${Array.from(String(by).slice(0,3)).map(esc).join('<br>')}</td>`; } });
+  daysArr.forEach(d=>{ for(let si=0;si<3;si++){ const by=o2SignOf(d,si);
+    body+=`<td class="sigcell" title="${esc(by)}" onclick="openShift(${d},${si})">${Array.from(String(by).slice(0,3)).map(esc).join('<br>')}</td>`; } });
   body+='</tr>';
   body+='<tr><th class="rowh">備註</th>';
   daysArr.forEach(d=>{ const n=data.notes[d]||''; body+=`<td class="note" colspan="3" title="${esc(n)}" onclick="editNote(${d})">${esc(n)}</td>`; });
@@ -747,13 +788,79 @@ function render(){
     <div class="printview">${printAll}</div>`;
   save();
 }
-function toggle(code,day,si){
+/* ===================== 一個班一個視窗 =====================
+   ★ 為什麼要有這個視窗：表格一格只有十幾 px 寬，手指點下去很容易點到隔壁那一班、
+     或隔壁那一項；而且以前「點一下就直接改資料」，點錯當下就寫進去了。
+   現在：點格子 → 打開這一班的視窗（大按鈕）→ 看清楚再按「儲存」。
+   沒有按儲存就什麼都不會變。 */
+const CRIT_LABEL={
+  '1a':'1a 懸掛氧氣流量使用參考表',
+  '1b':'1b 有懸掛「滿」或「空」掛牌',
+  '2a':'2a 打開時流量表有浮動、無破損、無漏氣',
+  '2b':'2b 關閉時桶壓與流量歸零',
+  '2c':'2c 壓力表 500psi(35kg/cm²) 以上',
+  '3' :'3  固定存放位置'
+};
+let _SHIFT={day:0,si:0,pick:{}};
+function openShift(day,si){
   if(!data.ym){alert('請先選擇年月');return;}
-  const k=ck(code,day,si);
-  if(data.marks[k]) delete data.marks[k];
-  else { const nm=curName(); if(nm)localStorage.setItem('o2_lastName',nm); data.marks[k]={by:nm,at:stamp()};
-         o2WriteBatch([code],day,si); }    // ★ 走佇列，立刻顯示、背景上傳
-  save(); render();
+  _SHIFT={day:day,si:si,pick:{}};
+  CRIT.forEach(function(c){ _SHIFT.pick[c[0]]=!!data.marks[ck(c[0],day,si)]; });
+  shiftRender();
+}
+function shiftToggle(code){ _SHIFT.pick[code]=!_SHIFT.pick[code]; shiftRender(); }
+function shiftAll(v){ CRIT.forEach(function(c){ _SHIFT.pick[c[0]]=!!v; }); shiftRender(); }
+function shiftRender(){
+  const day=_SHIFT.day, si=_SHIFT.si;
+  const nm=(()=>{ for(let i=0;i<CRIT.length;i++){ const m=data.marks[ck(CRIT[i][0],day,si)]; if(m&&m.by) return m.by; } return curName(); })();
+  const rows=CRIT.map(function(c){
+    const code=c[0], on=!!_SHIFT.pick[code];
+    return `<button class="sh-item ${on?'on':''}" onclick="shiftToggle('${code}')">
+      <span class="sh-mk">${on?'✓':''}</span><span class="sh-tx">${esc(CRIT_LABEL[code]||code)}</span></button>`;
+  }).join('');
+  const nOn=CRIT.filter(function(c){ return _SHIFT.pick[c[0]]; }).length;
+  document.getElementById('modalHost').innerHTML=`<div style="position:fixed;inset:0;background:rgba(15,32,43,.45);
+      display:flex;align-items:flex-end;justify-content:center;z-index:50" onclick="if(event.target===this)closeShift()">
+    <div style="background:#fff;border-radius:16px 16px 0 0;max-width:520px;width:100%;padding:16px 16px 20px;max-height:92vh;overflow:auto">
+      <h3 style="margin:0 0 2px;font-size:18px">${day} 日 · ${esc(SHIFT_NAME_O2[si])}</h3>
+      <div style="font-size:12.5px;color:var(--soft);margin-bottom:10px">
+        ${esc(data.dept||'')}　應有 ${esc(data.qty||'')} 支　已勾 ${nOn}/${CRIT.length}
+        <span style="color:#8a4b00">　※ 按「儲存」才會寫入</span></div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn" style="flex:1;background:#eef6f7;border:1.5px solid #bfe0e3" onclick="shiftAll(1)">全部正常</button>
+        <button class="btn" style="flex:1;background:#fff;border:1.5px solid #e0b4b4;color:#c92a2a" onclick="shiftAll(0)">全部取消</button>
+      </div>
+      ${rows}
+      <label style="display:block;margin:10px 0 0;font-size:13px">簽名
+        <input id="sh_sign" value="${esc(nm)}" style="width:100%;padding:11px 12px;border:1.5px solid #c9d3da;border-radius:10px;font-size:16px;font-family:inherit;margin-top:4px"></label>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn" style="flex:1;background:#fff;border:1.5px solid #c9d3da" onclick="closeShift()">取消</button>
+        <button class="btn" style="flex:2;background:var(--brand);color:#fff" onclick="shiftSave()">儲存</button>
+      </div>
+    </div></div>`;
+}
+function closeShift(){ document.getElementById('modalHost').innerHTML=''; }
+async function shiftSave(){
+  const day=_SHIFT.day, si=_SHIFT.si;
+  const el=document.getElementById('sh_sign');
+  const nm=(el&&el.value.trim())||curName();
+  if(nm) localStorage.setItem('o2_lastName',nm);
+  const add=[], del=[];
+  CRIT.forEach(function(c){
+    const code=c[0], k=ck(code,day,si), had=!!data.marks[k], want=!!_SHIFT.pick[code];
+    if(want&&!had){ data.marks[k]={by:nm,at:stamp()}; add.push(code); }
+    else if(!want&&had){ delete data.marks[k]; del.push(code); }
+    else if(want&&had&&nm&&data.marks[k].by!==nm){ data.marks[k].by=nm; add.push(code); }  // 改簽名
+  });
+  closeShift(); save(); render();
+  if(add.length) o2WriteBatch(add,day,si);
+  if(del.length){
+    const r=await o2DelBatch(del,day,si);
+    if(!r.ok){
+      alert('取消沒有存到後端，下次同步可能又會出現：\n'+(r.error||'連線失敗')
+        +'\n（GS 需要更新到 v28 並「部署為新版本」）');
+    }
+  }
 }
 function stamp(){const t=tpeParts();return t.m+'/'+t.d+' '+String(t.h).padStart(2,'0')+':'+String(t.mi).padStart(2,'0');}
 function editNote(day){
