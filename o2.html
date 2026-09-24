@@ -112,7 +112,7 @@ const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
 const SHIFT_NAME_O2=['大夜 N（0–8）','白班 D（8–16）','小夜 E（16–24）'];
-const APP_VER='2026-09-24-b38';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-09-24-b39';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-24-v28';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 
@@ -801,31 +801,99 @@ const CRIT_LABEL={
   '2c':'2c 壓力表 500psi(35kg/cm²) 以上',
   '3' :'3  固定存放位置'
 };
-let _SHIFT={day:0,si:0,pick:{}};
+let _SHIFT={day:0,si:0,pick:{},sign:null};
+// 這一格原本存的是什麼（用來判斷「有沒有還沒存的更動」）
+function shiftStored(day,si){
+  const o={}; CRIT.forEach(function(c){ o[c[0]]=!!data.marks[ck(c[0],day,si)]; }); return o;
+}
+function shiftDirty(){
+  const was=shiftStored(_SHIFT.day,_SHIFT.si);
+  return CRIT.some(function(c){ return !!was[c[0]]!==!!_SHIFT.pick[c[0]]; });
+}
+function shiftNameOf(day,si){
+  for(let i=0;i<CRIT.length;i++){ const m=data.marks[ck(CRIT[i][0],day,si)]; if(m&&m.by) return m.by; }
+  return '';
+}
 function openShift(day,si){
   if(!data.ym){alert('請先選擇年月');return;}
-  _SHIFT={day:day,si:si,pick:{}};
-  CRIT.forEach(function(c){ _SHIFT.pick[c[0]]=!!data.marks[ck(c[0],day,si)]; });
+  _SHIFT={day:day,si:si,pick:shiftStored(day,si),sign:null};
   shiftRender();
 }
-function shiftToggle(code){ _SHIFT.pick[code]=!_SHIFT.pick[code]; shiftRender(); }
-function shiftAll(v){ CRIT.forEach(function(c){ _SHIFT.pick[c[0]]=!!v; }); shiftRender(); }
+/* ★ 日期與班別可以在視窗裡改（跟冰箱那一頁一樣）。
+   氧氣表一格很小，交班前後最容易點到隔壁那一班；原本點錯只能關掉重點一次。
+
+   ★ 換格子的時候，已經勾的要不要跟著過去？問人，不要替人決定：
+     - 還沒動過任何勾選 → 直接讀那一格已經有的紀錄，不囉唆。
+     - 已經勾了但還沒存 → 問一次。要「帶過去」是因為常見情境就是
+       「我勾好了才發現點錯格」；不帶就是單純看錯、想去看別格。
+   不管哪一種，都還是要按「儲存」才會寫入。 */
+function shiftGo(day,si){
+  /* ★ 不可以寫 parseInt(day)||_SHIFT.day —— 打 0 的時候 0 是 falsy，會被吃掉。
+     空白才回到原本那一天，打 0 或 99 是打錯，拉回 1～當月天數。 */
+  var dn=parseInt(day,10);
+  day=Math.max(1,Math.min(daysInMonth(data.ym), isNaN(dn)?_SHIFT.day:dn));
+  si=Math.max(0,Math.min(2,si));
+  if(day===_SHIFT.day&&si===_SHIFT.si){ shiftRender(); return; }
+  let carry=false;
+  if(shiftDirty()){
+    carry=confirm('這一班已經勾了，但還沒儲存。\n\n'
+      +'要把這些勾選帶到「'+day+' 日 · '+SHIFT_NAME_O2[si]+'」嗎？\n\n'
+      +'確定＝帶過去（點錯格子時用這個）\n'
+      +'取消＝不帶，改看那一格原本的紀錄');
+  }
+  const sign=(document.getElementById('sh_sign')||{}).value;
+  _SHIFT={day:day,si:si,pick:carry?_SHIFT.pick:shiftStored(day,si),
+          sign:carry?(sign!==undefined?sign:_SHIFT.sign):null};
+  shiftRender();
+}
+function shiftSetDay(v){ shiftGo(v,_SHIFT.si); }
+function shiftSetShift(si){ shiftGo(_SHIFT.day,si); }
+// 重畫之前先把簽名欄收起來，否則勾一項就把人家打好的簽名洗掉
+function shiftKeepSign(){ const el=document.getElementById('sh_sign'); if(el) _SHIFT.sign=el.value; }
+function shiftToggle(code){ shiftKeepSign(); _SHIFT.pick[code]=!_SHIFT.pick[code]; shiftRender(); }
+function shiftAll(v){ shiftKeepSign(); CRIT.forEach(function(c){ _SHIFT.pick[c[0]]=!!v; }); shiftRender(); }
 function shiftRender(){
   const day=_SHIFT.day, si=_SHIFT.si;
-  const nm=(()=>{ for(let i=0;i<CRIT.length;i++){ const m=data.marks[ck(CRIT[i][0],day,si)]; if(m&&m.by) return m.by; } return curName(); })();
+  const nm=(_SHIFT.sign!==null&&_SHIFT.sign!==undefined)?_SHIFT.sign:(shiftNameOf(day,si)||curName());
   const rows=CRIT.map(function(c){
     const code=c[0], on=!!_SHIFT.pick[code];
     return `<button class="sh-item ${on?'on':''}" onclick="shiftToggle('${code}')">
       <span class="sh-mk">${on?'✓':''}</span><span class="sh-tx">${esc(CRIT_LABEL[code]||code)}</span></button>`;
   }).join('');
   const nOn=CRIT.filter(function(c){ return _SHIFT.pick[c[0]]; }).length;
+  const chips=SHIFT_NAME_O2.map(function(t,i){
+    const on=(i===si);
+    return '<button type="button" onclick="shiftSetShift('+i+')" style="flex:1;min-width:0;padding:10px 6px;'
+      +'font-size:13px;font-family:inherit;border-radius:9px;cursor:pointer;'
+      +(on?'border:2px solid #0f7a86;background:#e3f0f1;color:#0b5a63;font-weight:700'
+          :'border:1px solid #d7e2e1;background:transparent;color:inherit')+'">'+esc(t)+'</button>';
+  }).join('');
+  // 換過去的那一格已經有人點過的話要講一聲，免得蓋掉別人的
+  const had=CRIT.filter(function(c){ return data.marks[ck(c[0],day,si)]; }).length;
+  const who=shiftNameOf(day,si);
+  const hadMsg=had?`<div style="font-size:12px;color:#8a4b00;margin-top:6px">
+      這一格已經有紀錄：${who?esc(who)+'　':''}已勾 ${had}/${CRIT.length}　（按「儲存」會以目前畫面為準）</div>`:'';
   document.getElementById('modalHost').innerHTML=`<div style="position:fixed;inset:0;background:rgba(15,32,43,.45);
       display:flex;align-items:flex-end;justify-content:center;z-index:50" onclick="if(event.target===this)closeShift()">
     <div style="background:#fff;border-radius:16px 16px 0 0;max-width:520px;width:100%;padding:16px 16px 20px;max-height:92vh;overflow:auto">
-      <h3 style="margin:0 0 2px;font-size:18px">${day} 日 · ${esc(SHIFT_NAME_O2[si])}</h3>
+      <h3 style="margin:0 0 2px;font-size:18px">氧氣桶審核　<span style="font-weight:400;font-size:14px;color:var(--soft)">${esc(data.dept||'')}</span></h3>
       <div style="font-size:12.5px;color:var(--soft);margin-bottom:10px">
-        ${esc(data.dept||'')}　應有 ${esc(data.qty||'')} 支　已勾 ${nOn}/${CRIT.length}
+        應有 ${esc(data.qty||'')} 支　已勾 ${nOn}/${CRIT.length}
         <span style="color:#8a4b00">　※ 按「儲存」才會寫入</span></div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:13px;color:var(--soft);margin-bottom:6px">日期與班別（點錯格子可以在這裡改）</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <input id="sh_day" type="number" min="1" max="${daysInMonth(data.ym)}" value="${day}"
+              onchange="shiftSetDay(this.value)"
+              style="width:70px;text-align:center;padding:10px;border:1.5px solid #c9d3da;border-radius:10px;
+                     font-size:16px;font-family:inherit"><span style="font-size:14px">日</span>
+          </div>
+          <div style="font-size:12px;color:var(--soft)">${esc(String(data.ym||''))}</div>
+        </div>
+        <div style="display:flex;gap:6px">${chips}</div>
+        ${hadMsg}
+      </div>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <button class="btn" style="flex:1;background:#eef6f7;border:1.5px solid #bfe0e3" onclick="shiftAll(1)">全部正常</button>
         <button class="btn" style="flex:1;background:#fff;border:1.5px solid #e0b4b4;color:#c92a2a" onclick="shiftAll(0)">全部取消</button>

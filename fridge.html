@@ -97,8 +97,8 @@ const AXISW=64, COLW=22, ROWH=24, PADTOP=14, PLOTH=(TMAX-TMIN)*ROWH;   // 左欄
 // 點班系統同一後端（拍照判讀 + 溫度寫回）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-23-b42';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-23-v26';
+const APP_VER='2026-09-24-b44';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-24-v27';
 
 const P=new URLSearchParams(location.search);
 let data=startData();
@@ -409,6 +409,10 @@ function svYm(){ return ymOf(data.ym); }
 let SV_LOADED=false;
 function svToday(){ const t=tpeParts(); return t.y+'-'+String(t.m).padStart(2,'0')+'-'+String(t.d).padStart(2,'0'); }
 function svMyName(){ return String(P.get('name')||'').trim()||(typeof curName==='function'?curName():''); }
+/* ★ 主管查核只有主管能按（護理長／副護理長，或護理長在「權限設定」授權的代理人）。
+   資格由點班系統開這一頁時用 &sup=1 帶進來；後端 v27 也會再擋一次 ——
+   畫面只是不顯示按鈕，會改網址的人還是送得進來，而這一格是評鑑在看的。 */
+function canSup(){ return String(P.get('sup')||'')==='1'; }
 /* 所有寫後端的動作共用：把「為什麼失敗」翻成人看得懂的話。
    上次簽名圖「上傳失敗」卻看不出原因，就是因為這裡只會說「連線失敗」。 */
 async function postTask(task,payload){
@@ -469,6 +473,7 @@ async function svPush(rec,quiet){
 async function addSup(){
   const emp=myEmp();
   if(!emp){ alert('看不到你的員編，無法記錄是誰查核的。\n請從點班系統裡的入口進來（網址會帶員編）。'); return; }
+  if(!canSup()){ alert('主管查核限護理長／副護理長。\n需要代理時請護理長到「權限設定」勾選「主管查核」。'); return; }
   const el=document.getElementById('supDate');
   const d=(el&&el.value)||svToday();
   if(d.slice(0,7)!==svYm()){ alert('查核日期要在本月（'+svYm()+'）之內。'); return; }
@@ -479,6 +484,7 @@ async function addSup(){
 }
 async function delSup(i){
   const s=(data.superv||[])[i]; if(!s) return;
+  if(!canSup()){ alert('主管查核限護理長／副護理長。'); return; }
   if(String(s.empId||'')!==myEmp()){ alert('只能撤銷你自己的查核。'); return; }
   if(!confirm('撤銷 '+s.date+' 的查核？\n（後端會留下撤銷紀錄）')) return;
   if(!s._unsync){
@@ -511,12 +517,18 @@ function svPanelHtml(){
     + (SV_LOADED?'':' <span style="color:#8894a0;font-size:12px">（讀取後端中…）</span>')+'</div>'
     + (rows||'<span style="color:#8894a0">本月尚無</span>')
     + (me
-      ? '<span style="font-size:13px">以 <b>'+esc(svMyName()||me)+'</b>（'+esc(me)+'）查核</span>'
-        + '<input id="supDate" type="date" value="'+svToday()+'" style="width:150px">'
-        + '<button class="btn btn-p" onclick="addSup()">＋ 查核</button>'
+      ? (canSup()
+          ? '<span style="font-size:13px">以 <b>'+esc(svMyName()||me)+'</b>（'+esc(me)+'）查核</span>'
+            + '<input id="supDate" type="date" value="'+svToday()+'" style="width:150px">'
+            + '<button class="btn btn-p" onclick="addSup()">＋ 查核</button>'
+          : '<span style="font-size:12.5px;color:#8894a0">主管查核限護理長／副護理長。'
+            + '需要代理時，請護理長到點班系統「權限設定」勾選「主管查核」。</span>')
       : '<span style="font-size:12.5px;color:#c92a2a">要從點班系統的入口進來才能查核（需要員編）</span>')
     + '<span style="width:100%;height:1px"></span>'
-    + '<div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f4f7f9;border-radius:9px;padding:8px 10px">'
+    /* ★ 簽名／印章圖只有主管用得到（只有主管查核那一格會蓋圖），
+       一般人員看得到查核紀錄，但不顯示上傳區，免得以為自己要傳。 */
+    + (!canSup() ? '<div style="width:100%;font-size:12px;color:#8894a0">以上為主管查核紀錄（唯讀）。溫度／評值的登錄不受影響，照常填。</div>' :
+      '<div style="width:100%;display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#f4f7f9;border-radius:9px;padding:8px 10px">'
     +   '<b style="font-size:12.5px">我的簽名／印章圖</b>'
     +   (mySign?'<img src="'+mySign+'" alt="簽名" style="height:30px;background:#fff;border:1px solid #c9d3da;border-radius:6px;padding:2px">'
                :'<span style="font-size:12.5px;color:#8894a0">尚未上傳（會改印名字）</span>')
@@ -526,7 +538,8 @@ function svPanelHtml(){
     +   '<span style="font-size:11.5px;color:#8894a0;flex:1;min-width:220px">'
     +     '白紙上簽名或蓋章拍一張就好，會自動裁邊。冰箱表與氧氣表共用同一張圖。'
     +     '圖只是列印呈現，留證的是員編與查核時間。</span>'
-    + '</div></div>';
+    + '</div>')
+    + '</div>';
 }
 
 // 單位名稱正規化：全形括號、空白差異不該影響比對
@@ -1067,7 +1080,10 @@ function entrySetShift(si){
   openEntry(_ENTRY.day,si,v);
 }
 function entrySetDay(v){
-  const d=Math.max(1,Math.min(31,parseInt(v,10)||_ENTRY.day));
+  /* ★ 不可以寫 parseInt(v)||_ENTRY.day —— 打 0 的時候 0 是 falsy，會被吃掉。
+     上限也要照當月天數，2 月沒有 30 日。 */
+  const dn=parseInt(v,10);
+  const d=Math.max(1,Math.min(daysInMonth(data.ym), isNaN(dn)?_ENTRY.day:dn));
   const vv=entryVals(); _ENTRY.day=d; openEntry(d,_ENTRY.si,vv);
 }
 function openEntry(day,si,keep){
@@ -1088,7 +1104,7 @@ function openEntry(day,si,keep){
       <label>日期與班別（點錯格子可以在這裡改）</label>
       <div class="row2" style="align-items:center;margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:6px">
-          <input id="e_day" type="number" min="1" max="31" value="${day}" onchange="entrySetDay(this.value)"
+          <input id="e_day" type="number" min="1" max="${daysInMonth(data.ym)}" value="${day}" onchange="entrySetDay(this.value)"
             style="width:70px;text-align:center"><span style="font-size:14px">日</span>
         </div>
         <div style="font-size:12px;color:var(--soft)">${esc(String(data.ym||''))}</div>
