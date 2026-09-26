@@ -446,7 +446,17 @@
 .nd-d{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.55;
   white-space:pre-wrap;word-break:break-all;margin:0;color:var(--ink-soft)}
 .nd-h{margin-top:5px;font-size:12.5px;font-weight:600;color:var(--bad);line-height:1.6}
+/* ===== v32 主管名單（未完成點班／存檔失敗）===== */
+.mr-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.mr-tbl th{text-align:left;font-size:12px;color:var(--ink-soft);font-weight:700;padding:7px 6px;border-bottom:1px solid var(--line)}
+.mr-tbl td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.mr-tbl tr:last-child td{border-bottom:0}
+.sv-chip{display:inline-block;padding:3px 9px;margin:2px 4px 2px 0;border-radius:99px;border:1px solid var(--line);font-size:12px}
+.print-only{display:none}
 @media print{
+  .print-only{display:block!important}
+  .mr .card{break-inside:avoid;box-shadow:none!important;border:1px solid #ccc}
+  .mr-tbl tr{page-break-inside:avoid}
   .noprint,.topbar{display:none!important}
   body{background:#fff!important}
   .screen{padding:0!important;max-width:none!important}
@@ -1021,7 +1031,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-24-b73';
+const APP_VER='2026-09-26-b77';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1055,7 +1065,9 @@ async function loadPerms(pre){
         caishi: yes(fld(o,['財管負責人','負責人','管理者','欠物本管理者','財管','caishi'])),
         witness:yes(fld(o,['見證資格','見證','覆核者','可覆核','監督者','witness'])),
         /* ★ 冰箱／氧氣的主管查核（每 7 天那一格）。沒設定過的人 → 看職稱（護理長／副護理長）*/
-        superv: yes(fld(o,['主管查核','查核','簽核','主管簽核','superv']))
+        superv: yes(fld(o,['主管查核','查核','簽核','主管簽核','superv'])),
+        /* ★ v33 點班本負責人：可以看「點班未完成名單（考核用）」 */
+        rcbook: yes(fld(o,['點班本負責人','點班本','rcbook']))
       };
     });
     PERMS=m;
@@ -1089,6 +1101,10 @@ function isCaishiLead(u){ u=u||state.user; if(!u)return false;
   if(CAISHI_LEAD_IDS.some(x=>idKey(x)===idKey(u.id)))return true;
   const a=acctOf(u); return !!(a&&(a.caishiLead||(a.note&&String(a.note).includes('財管組長'))));
 }
+/* ★ v33 點班本負責人（權限設定指派）。只影響「點班未完成名單」看不看得到。 */
+function isRcBook(u){ u=u||state.user; if(!u)return false; const p=permOf(u.id); return !!(p&&p.rcbook); }
+/* 點班未完成名單（考核用）：護理長／副護理長／財管負責人（含財管組長）／點班本負責人 */
+function canMissReport(u){ u=u||state.user; if(!u)return false; return isBoss(u)||isCaishi(u)||isRcBook(u); }
 function isCaishi(u){ u=u||state.user; if(!u)return false;
   if(isCaishiLead(u))return true;
   const p=permOf(u.id); if(p)return !!p.caishi;
@@ -1156,6 +1172,73 @@ const SHEETS=[
 ];
 // ===================== 後端(Google Sheet + AI,單一來源) =====================
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';   // 點班清單來源 + AI 後端;留空=用內建清單、AI停用
+const FAIL_PAGE='index';
+function failCtx(p){ p=p||{}; return { unit:p.unit||p.sheetId||p.zone||p.cartId||p.sheet||'',
+  empId:(state&&state.user&&state.user.id)||p.empId||'', name:(state&&state.user&&state.user.name)||p.name||'' }; }
+/* ===================== v32 存檔失敗補報（index／fridge／o2 三頁同一段）=====================
+   只記「送不出去」的那幾次：連不上、Google 回錯誤頁、回應不是 JSON。
+   後端自己回 ok:false 的（權限不足、忙碌…），後端已經寫進 api_log，這裡不重複記。
+   先存在這支手機，下一次任何一筆寫入成功時一起補報（client_fail_push）。
+   ★ 任務名稱刻意以 _push 結尾：舊版 GS 不認得時回 unknown_task，
+     不會掉進 AI 分支白燒額度；手機這邊也會把紀錄留著，等後端更新後再補。
+   ★「瀏覽器」「LINE」是為了回答：存不進去的是不是都從 LINE 內建瀏覽器開的。 */
+const FAILQ_KEY='ed_failq', FAILQ_MAX=40;
+function failDev(){ try{ let d=localStorage.getItem('ed_dev');
+  if(!d){ d='d'+Math.random().toString(36).slice(2,10); localStorage.setItem('ed_dev',d); } return d; }catch(e){ return ''; } }
+function isLineUA(ua){ return /\bLine\//i.test(ua==null?(navigator.userAgent||''):ua); }
+function uaShort(ua){
+  const u=ua==null?(navigator.userAgent||''):ua, m=[];
+  if(/\bLine\//i.test(u)) m.push('LINE內建 '+((u.match(/Line\/([\d.]+)/i)||[])[1]||''));
+  else if(/FBAN|FBAV|Instagram/i.test(u)) m.push('FB/IG內建');
+  else if(/Edg\//.test(u)) m.push('Edge');
+  else if(/CriOS|Chrome\//.test(u)) m.push('Chrome');
+  else if(/Safari\//.test(u)) m.push('Safari');
+  else m.push('其他');
+  if(/iPhone|iPad|iPod/.test(u)) m.push('iOS'); else if(/Android/.test(u)) m.push('Android');
+  else if(/Windows/.test(u)) m.push('Windows'); else if(/Mac OS/.test(u)) m.push('Mac');
+  return m.join(' / ');
+}
+const FAIL_SKIP=['rollcall_progress','rtls_push','client_fail_push','vision'];
+function failNote(task,err,ctx){
+  if(FAIL_SKIP.indexOf(String(task))>=0) return;
+  try{
+    ctx=ctx||{};
+    const q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]');
+    q.push({ fid:Date.now().toString(36)+Math.random().toString(36).slice(2,7), task:String(task||''),
+      page:FAIL_PAGE, unit:String(ctx.unit||''), empId:String(ctx.empId||''), name:String(ctx.name||''),
+      error:String(err||'').slice(0,300), ua:uaShort(), line:isLineUA(),
+      at:new Date().toISOString(), dev:failDev() });
+    while(q.length>FAILQ_MAX) q.shift();
+    localStorage.setItem(FAILQ_KEY,JSON.stringify(q));
+  }catch(e){}
+}
+function failCount(){ try{ return JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]').length; }catch(e){ return 0; } }
+let FAIL_FLUSHING=false;
+async function failFlush(){
+  if(FAIL_FLUSHING||!API_URL) return;
+  let q=[]; try{ q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]'); }catch(e){}
+  if(!q.length) return;
+  FAIL_FLUSHING=true;
+  try{
+    const batch=q.slice(0,20);
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'client_fail_push',payload:{items:batch}})});
+    let j=null; try{ j=JSON.parse(await r.text()); }catch(_){}
+    if(j&&j.ok===true){
+      const ids={}; batch.forEach(function(x){ ids[x.fid]=1; });
+      let rest=[]; try{ rest=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]'); }catch(_){}
+      localStorage.setItem(FAILQ_KEY,JSON.stringify(rest.filter(function(x){ return !ids[x.fid]; })));
+    }
+  }catch(e){}
+  FAIL_FLUSHING=false;
+}
+/* 回應看不懂時的說法（HTML＝多半是 Google 那一端擋下來的錯誤頁） */
+function failWhy(t,status){
+  return /^\s*<(!doctype|html)/i.test(String(t||''))
+    ? '回的是網頁不是資料（HTTP '+status+'，多半是 Google 那一端擋下來：同時執行太多或暫時故障）'
+    : '回應看不懂（HTTP '+status+'）';
+}
+setTimeout(function(){ try{ failFlush(); }catch(e){} },6000);   // 開頁 6 秒後把上次沒補報的送出去
+/* ===================== /v32 存檔失敗補報 ===================== */
 async function loadItems(pre){
   if(!API_URL&&!pre)return;
   try{
@@ -1178,11 +1261,7 @@ async function loadItemReports(pre){
     })).filter(o=>o.status!=='已處理');
   }catch(e){console.error('讀項目回報失敗',e);}
 }
-async function itemsWrite(task,payload){
-  if(!API_URL){alert('尚未設定後端 API_URL');return {ok:false};}
-  try{const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});return await r.json();}
-  catch(e){return {ok:false,error:String(e)};}
-}
+async function itemsWrite(task,payload){ return owedWrite(task,payload); }   // ★ v32：共用同一支（含失敗補報）
 function isoWeek(d){d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()+3-((d.getDay()+6)%7));const w1=new Date(d.getFullYear(),0,4);return d.getFullYear()+'-W'+String(1+Math.round(((d-w1)/86400000-3+((w1.getDay()+6)%7))/7)).padStart(2,'0');}
 /* ★ 逐項紀錄（存，不印）。
    後端本來只存「完成幾項」，答不出「是哪一項沒點」；評鑑若哪天要求逐項表，
@@ -1486,7 +1565,8 @@ function o2DoneToday(dept){
   const t=rcYMD();
   try{
     const r=latestOf(O2LOG,function(x){
-      return normUnit(x['科別']||x.dept||'')===normUnit(dept)
+      return o2Live(x)                                  // ★ 取消掉的不算今天登錄過
+          && normUnit(x['科別']||x.dept||'')===normUnit(dept)
           && ymOf(x['年月']||x.ym||'')===t.ym
           && String(+(x['日']||x.day||0))===t.day;
     });
@@ -2245,8 +2325,31 @@ const store={
     if(state.shiftManualDate && state.shiftManualDate!==todayISO()){
       delete state.shiftManual; delete state.shiftManualDate;
     }
+    normalizeState();                    // ★ b75：最後一定要補齊形狀，見下面
   }
 };
+/* ★★★ b75：本機暫存的「形狀」一定要補齊。
+   2026-09-25 護理長的電腦整頁空白，Console：
+     Uncaught TypeError: Cannot read properties of undefined (reading 'obs-cart|305')
+       at renderRollcall → render → 啟動那一行
+   renderRollcall 第一件事就是 state.checks[keyOf(o)]；
+   localStorage 裡那包 state 少了 checks 這個物件，於是直接炸在啟動那一行 ——
+   整頁停在空白。而且 screen 也是存起來的，每次重開都停在同一張點班表、炸在同一個地方，
+   等於那台電腦永遠打不開；手機是另一份 state，所以完全沒事。
+
+   ★ 原本只有「換版本」那條路才會補 checks／reason／note／part，
+     版本沒變就整包照用 —— 這是漏洞。改成每次讀完都補。 */
+const STATE_SHAPE={screen:'login',user:null,areaId:null,sheetId:null,half:null,
+                   checks:{},reason:{},note:{},part:{}};
+function normalizeState(){
+  if(!state||typeof state!=='object') state={};
+  Object.keys(STATE_SHAPE).forEach(function(k){
+    const want=STATE_SHAPE[k];
+    if(want&&typeof want==='object'){
+      if(!state[k]||typeof state[k]!=='object') state[k]={};      // 少了或型別不對 → 補一個空物件
+    }else if(state[k]===undefined){ state[k]=want; }
+  });
+}
 
 /* ★ 班別的唯一計算入口。優先順序：
    ① 你自己手動選的（只在同一個點班日期內有效）
@@ -2311,7 +2414,8 @@ function render(){
     adminHub:renderAdminHub,analytics:renderAnalytics,
     seal:renderSeal,sealOpen:renderSealOpen,sealClose:renderSealClose,printWeek:renderPrintWeek,
     itemCheck:renderItemCheck,netDiag:renderNetDiag,cartAudit:renderCartAudit,
-    sealExpiry:renderSealExpiry,maint:renderMaint,maintHub:renderMaintHub}[state.screen]||renderLogin)();
+    sealExpiry:renderSealExpiry,maint:renderMaint,maintHub:renderMaintHub,
+    missReport:renderMissReport,failLog:renderFailLog}[state.screen]||renderLogin)();
   /* ★ 畫面切換到「會顯示完成度」的頁面 → 立刻同步一次（見 syncNow 的說明）。
      放在畫面畫完之後：先讓人看到東西，再去抓最新的，抓完會自己再 render 一次。 */
   /* ★ 包 try/catch：這個掛勾在 render() 裡，而 render() 是全站每一個動作都會呼叫的。
@@ -2430,7 +2534,7 @@ function renderHome(){
      但原本的條件是 isLeader||items.edit||perm.manage —— 這三個她都沒有，
      於是首頁看不到「管理中心」，永遠進不去「欠物本 · 每月清點統計」。
      把 owed.monthly 加進來。 */
-  const hasAdmin=isLeader||can('items.edit')||can('perm.manage')||can('owed.monthly');
+  const hasAdmin=isLeader||can('items.edit')||can('perm.manage')||can('owed.monthly')||canMissReport();
   const pend=ITEM_REPORTS.length;
   const reviewBtn=hasAdmin?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
      onclick="openAdminHub()">⚙ 管理中心${pend?(' · '+pend+' 則待處理'):''}</button>`:'';
@@ -2926,8 +3030,15 @@ async function loadOwed(pre){
 // 寫回後端(新增/結案);不帶 Content-Type 以避免跨網域預檢
 async function owedWrite(task,payload){
   if(!API_URL){alert('尚未設定後端 API_URL');return {ok:false};}
-  try{const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});return await r.json();}
-  catch(e){return {ok:false,error:String(e)};}
+  /* ★ v32：分清楚三種結果 —— 送不出去（記下來等補報）／後端說不行（後端已記）／成功（順便補報） */
+  let r;
+  try{ r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})}); }
+  catch(e){ const why='連不上後端：'+String(e&&e.message||e); failNote(task,why,failCtx(payload)); return {ok:false,error:why}; }
+  let t=''; try{ t=await r.text(); }catch(e){}
+  let j=null; try{ j=JSON.parse(t); }catch(_){}
+  if(!j){ const why=failWhy(t,r.status); failNote(task,why,failCtx(payload)); return {ok:false,error:why}; }
+  if(j.ok===true) failFlush();
+  return j;
 }
 // 結案權限（改走統一權限模型）：護理長/副護理長 或 財管組負責人/組長
 function canCloseOwed(){ return can('owed.close'); }
@@ -3331,6 +3442,282 @@ function exportOwedCSV(ym){
   a.download='欠物本_'+ym+'.csv';a.click();
 }
 
+/* ==================== v32 主管用：點班未完成名單（考核用）＆ 存檔失敗紀錄 ====================
+   兩份都只給護理長／副護理長看（isBoss）。
+
+   ■ 點班未完成名單 —— 規則（2026-09-26 護理長定案）
+     ① 範圍：選定月份裡「已經結束」的每一天、每一班、每一張有品項的點班表
+     ② 算誰的：依排班系統，那一天那一班「科別排到該區」的人。
+        一區多張表（留觀、急救室、兒童）＝排在該區的人共同負責那幾張。
+        排班系統沒人排到的「區×班」不列（那一班那一區沒開，不該算缺）。
+     ③ 補點：7 天內補完 → 不列；超過 7 天才補 → 列「逾期補點」；到今天都沒補 → 列「未補」
+        還在 7 天內、還沒補 → 另外列「待補」，當提醒用，不算考核。
+     ④ 兩人表（治療二、三）A、B 半各自判斷；排班只分得出 R2／R3 在這一區，分不出誰做 A 誰做 B，
+        所以兩個人都列上，由主管判斷。
+     ⑤ 大夜的日期：跟點班系統綁班表時同一個規則 —— 班表第 d 天的 N ＝ 點班日期 d 的大夜（0–8）。
+
+   ★ 為什麼名單是「每一格」而不是「每一個人扣幾分」：
+     同一區同一班可能排了兩三個人，系統無法知道那天實際是誰負責點；
+     名單列出事實（哪天、哪班、哪張、點到幾項、排了誰），扣分由主管決定。 */
+const MISS_GRACE=7;
+let MISS={ym:'',loading:false,err:'',rows:null,sched:null,at:0};
+function tpeDateOfStamp(s){
+  const t=String(s||'').trim(); if(!t) return '';
+  if(/^\d{4}-\d{2}-\d{2}[ ]\d/.test(t)||/^\d{4}-\d{2}-\d{2}$/.test(t)) return t.slice(0,10);     // 後端寫的台北字串
+  const d=new Date(t); if(isNaN(d.getTime())) return '';
+  try{ return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(d); }
+  catch(e){ return fmtISO(d); }
+}
+function daysBetween(a,b){ const x=parseISO(a), y=parseISO(b); return Math.round((y-x)/86400000); }
+function daysInYM(ym){ const p=String(ym).split('-'); return new Date(+p[0],+p[1],0).getDate(); }
+function sheetsOfTarget(t){
+  if(!t) return [];
+  if(t.type==='sheet') return [t.sheetId];
+  if(t.type==='area') return SHEETS.filter(function(s){ return s.area===t.areaId; }).map(function(s){ return s.id; });
+  if(t.type==='multi') return [].concat.apply([],(t.options||[]).map(sheetsOfTarget));
+  return [];
+}
+/* 排班 → { 'yyyy-mm-dd|D|sheetId': [姓名…] } */
+async function missSched(ym){
+  const out={ok:false,map:{},note:[]};
+  for(const base of ['schedules','aide-schedules']){
+    const root=await fetchMonth(base,ym);
+    if(!root){ continue; }
+    if(!root.meta||root.meta.status!=='published'){ out.note.push((base==='schedules'?'護理師':'助理員')+'班表未公告'); continue; }
+    const data=root.data||{};
+    const staff=Array.isArray(data.staff)?data.staff:Object.values(data.staff||{});
+    const nd=daysInYM(ym);
+    staff.forEach(function(st){
+      if(!st||!st.id||!st.name) return;
+      for(let d=1;d<=nd;d++){
+        const code=String(shiftOf(data.schedule&&data.schedule[st.id],d)||'').trim().toUpperCase();
+        if(!code||REST_SHIFT.test(code)) continue;
+        const sh=code.charAt(0); if('DEN'.indexOf(sh)<0) continue;
+        const f=data.flags&&data.flags[st.id]?data.flags[st.id][String(d)]:null;
+        const dept=f&&f.dept; if(!dept) continue;
+        sheetsOfTarget(deptToTarget(dept)).forEach(function(sid){
+          const k=ym+'-'+String(d).padStart(2,'0')+'|'+sh+'|'+sid;
+          const a=out.map[k]||(out.map[k]=[]); if(a.indexOf(st.name)<0) a.push(st.name);
+        });
+      }
+    });
+    out.ok=true;
+  }
+  return out;
+}
+/* 核心：純計算，方便測試。rows＝rollcall_log，sched＝missSched 的結果，today＝台北今天 */
+function missCompute(ym,rows,sched,today,endedFn){
+  endedFn=endedFn||shiftEnded;
+  const out=[];
+  const nd=daysInYM(ym);
+  const byKey={};
+  (rows||[]).forEach(function(r){
+    const d=dateOfLog(r); if(!d||d.slice(0,7)!==ym) return;
+    const sid=sheetIdOf(r); if(!sid) return;
+    const k=d+'|'+sid; (byKey[k]=byKey[k]||[]).push(r);
+  });
+  const sheets=SHEETS.filter(function(s){ return itemsAllOf(s.id,null).length>0; });
+  for(let d=1;d<=nd;d++){
+    const date=ym+'-'+String(d).padStart(2,'0');
+    if(date>today) break;
+    ['N','D','E'].forEach(function(sh){
+      if(!endedFn(date,sh)) return;
+      sheets.forEach(function(s){
+        let names=null;
+        if(sched&&sched.ok){
+          names=sched.map[date+'|'+sh+'|'+s.id]||null;
+          if(!names||!names.length) return;                 // 那一班那一區沒排人 → 不列
+        }
+        const halves=String(s.ops)==='2'?['A','B']:[null];
+        halves.forEach(function(half){
+          const recs=(byKey[date+'|'+s.id]||[]).filter(function(r){
+            const rs=logShiftOf(r); if(rs&&rs!==sh) return false;
+            if(half){ const a=assignOf(r); if(a&&a!==half) return false; }
+            return true;
+          });
+          const fin=recs.filter(isDoneRec_);
+          let late=null;
+          if(fin.length){
+            late=Math.min.apply(null,fin.map(function(r){
+              const sd=tpeDateOfStamp(fld(r,['簽核時間','submittedAt']))||date;
+              return Math.max(0,daysBetween(date,sd)); }));
+            if(late<=MISS_GRACE) return;                     // 準時或 7 天內補完 → 不列
+          }
+          const age=daysBetween(date,today);
+          const kind=fin.length?'逾期補點':(age>MISS_GRACE?'未補':'待補');
+          const last=recs[recs.length-1];
+          const num=function(a,b){ const v=Number(fld(last||{},[a,b])); return isNaN(v)?0:v; };
+          out.push({ date:date, sh:sh, sheetId:s.id, sheet:s.name+(half?(' '+half+'半'):''), area:s.area,
+            kind:kind, late:late, age:age,
+            partial:last?('點到 '+num('done','完成項數')+'/'+num('total','總項數')+(nameOf(last)?('（'+nameOf(last)+'）'):'')):'沒有人點',
+            names:names||[] });
+        });
+      });
+    });
+  }
+  return out;
+}
+function missPeopleStats(list){
+  const m={};
+  list.filter(function(x){ return x.kind!=='待補'; }).forEach(function(x){
+    (x.names.length?x.names:['（查不到班表）']).forEach(function(n){
+      const o=m[n]||(m[n]={name:n,miss:0,late:0,slots:[]});
+      if(x.kind==='未補') o.miss++; else o.late++;
+      o.slots.push(x);
+    });
+  });
+  return Object.values(m).sort(function(a,b){ return (b.miss*2+b.late)-(a.miss*2+a.late)||a.name.localeCompare(b.name); });
+}
+async function openMissReport(ym){
+  if(!canMissReport()){ alert('點班未完成名單只開放護理長／副護理長／財管負責人／點班本負責人。\n需要的話請護理長到「權限設定」勾「點班本負責人」。'); return; }
+  MISS.ym=ym||MISS.ym||todayISO().slice(0,7);
+  state.screen='missReport'; MISS.loading=true; MISS.err=''; render();
+  try{
+    const today=todayISO();
+    const first=MISS.ym+'-01';
+    const back=Math.max(2,daysBetween(first,today)+2);
+    const spec='rollcall_log:'+back+(back>85?':arch':'')+':lite';
+    const [j,sc]=await Promise.all([getJSON('tables='+encodeURIComponent(spec)),missSched(MISS.ym)]);
+    MISS.rows=(j&&Array.isArray(j.rollcall_log))?j.rollcall_log:(Array.isArray(j)?j:[]);
+    MISS.sched=sc; MISS.at=Date.now();
+  }catch(e){ MISS.err=String(e&&e.message||e); }
+  MISS.loading=false;
+  if(state.screen==='missReport') render();
+}
+function missRowsHtml(list,showLate){
+  if(!list.length) return '<div style="padding:10px 4px;color:var(--ink-soft);font-size:13px">（沒有）</div>';
+  return `<div style="overflow-x:auto"><table class="mr-tbl"><thead><tr>
+    <th>日期</th><th>班</th><th>點班表</th><th>狀況</th><th>當班排在該區</th></tr></thead><tbody>
+    ${list.map(function(x){
+      const tag=x.kind==='未補'?'<b style="color:#c92a2a">未補</b>'
+             :x.kind==='逾期補點'?'<b style="color:#b35309">晚 '+x.late+' 天補</b>'
+             :'<span style="color:#1864ab">還有 '+Math.max(0,MISS_GRACE-x.age)+' 天可補</span>';
+      return `<tr><td style="white-space:nowrap">${esc(x.date.slice(5).replace('-','/'))}</td>
+        <td style="white-space:nowrap">${esc(SHIFT_NAME[x.sh]||x.sh)}</td>
+        <td><span class="area-dot" style="background:${areaColor(x.area)}"></span>${esc(x.sheet)}</td>
+        <td>${tag}<div style="font-size:11.5px;color:var(--ink-soft)">${esc(x.partial)}</div></td>
+        <td>${x.names.length?esc(x.names.join('、')):'<span style="color:var(--ink-soft)">（查不到班表）</span>'}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+function renderMissReport(){
+  const ym=MISS.ym||todayISO().slice(0,7);
+  const head=`<div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">📋 點班未完成名單</div><div class="sub">7 天未補・考核與提醒用・主管／財管負責人／點班本負責人</div></div>
+    <button class="back noprint" onclick="state.screen='adminHub';render()">返回</button></div></div>`;
+  const pick=`<div class="card noprint" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <label style="font-size:13px">月份 <input type="month" value="${esc(ym)}" max="${todayISO().slice(0,7)}"
+      onchange="openMissReport(this.value)" style="padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-family:inherit"></label>
+    <button class="btn btn-ghost" onclick="openMissReport(MISS.ym)">↻ 重新計算</button>
+    <button class="btn btn-ghost" onclick="window.print()">🖨 列印</button>
+    <button class="btn btn-ghost" onclick="exportMissCSV()">⤓ 匯出 CSV</button></div>`;
+  if(MISS.loading){ $app.innerHTML=head+`<div class="screen">${pick}<div class="card">讀取點班紀錄與排班中…（整個月的資料，需要幾秒）</div></div>`; return; }
+  if(MISS.err){ $app.innerHTML=head+`<div class="screen">${pick}<div class="card" style="color:#c92a2a">讀取失敗：${esc(MISS.err)}</div></div>`; return; }
+  const list=missCompute(ym,MISS.rows||[],MISS.sched,todayISO());
+  const miss=list.filter(x=>x.kind==='未補'), late=list.filter(x=>x.kind==='逾期補點'), wait=list.filter(x=>x.kind==='待補');
+  const ppl=missPeopleStats(list);
+  const sc=MISS.sched||{};
+  const warn=!sc.ok?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;font-size:13px;line-height:1.8">
+      ⚠ 讀不到 ${esc(ym)} 的排班（${esc((sc.note||[]).join('、')||'排班系統沒有這個月，或連不上')}）。
+      下面改成「每一班每一張表都算」，而且<b>無法指名</b>，只能當參考，不建議直接拿來考核。</div>`
+      :((sc.note||[]).length?`<div class="card" style="font-size:12.5px;color:var(--ink-soft)">註：${esc(sc.note.join('、'))}，那一部分的人不會出現在名單上。</div>`:'');
+  const tile=(n,label,color)=>`<div style="flex:1;min-width:92px;padding:10px 12px;border-radius:12px;background:${color}14;border:1px solid ${color}40">
+    <div style="font-size:24px;font-weight:800;color:${color}">${n}</div><div style="font-size:12px;color:var(--ink-soft)">${label}</div></div>`;
+  $app.innerHTML=head+`<div class="screen mr">
+    ${pick}${warn}
+    <div class="print-only" style="font-weight:800;font-size:16px;margin-bottom:6px">急診點班未完成名單　${esc(ym)}　（列印：${esc(todayISO())}）</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${tile(miss.length,'未補（超過 7 天）','#c92a2a')}${tile(late.length,'逾期補點（晚於 7 天）','#b35309')}${tile(wait.length,'待補（7 天內・提醒）','#1864ab')}</div>
+    <div class="section-h">依人員（考核用）</div>
+    <div class="card" style="padding:8px 12px">${ppl.length?`<table class="mr-tbl"><thead><tr><th>姓名</th><th>未補</th><th>逾期補點</th><th>班別</th></tr></thead><tbody>
+      ${ppl.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td style="color:#c92a2a;font-weight:800">${p.miss||''}</td>
+        <td style="color:#b35309;font-weight:800">${p.late||''}</td>
+        <td style="font-size:12px;color:var(--ink-soft)">${esc(p.slots.map(x=>x.date.slice(5).replace('-','/')+(SHIFT_NAME[x.sh]||x.sh).slice(0,1)+' '+x.sheet).join('、'))}</td></tr>`).join('')}
+      </tbody></table>`:'<div style="padding:8px 2px;color:var(--ink-soft);font-size:13px">這個月沒有人需要列入考核 👍</div>'}</div>
+    <div class="section-h">未補</div><div class="card" style="padding:6px 10px">${missRowsHtml(miss)}</div>
+    <div class="section-h">逾期補點</div><div class="card" style="padding:6px 10px">${missRowsHtml(late)}</div>
+    <div class="section-h noprint">待補（還在 7 天內，可以提醒）</div><div class="card noprint" style="padding:6px 10px">${missRowsHtml(wait)}</div>
+    <div class="card" style="font-size:12px;color:var(--ink-soft);line-height:1.9">
+      ＊規則：只算已經結束的班。7 天內補完不列；超過 7 天才補列「逾期補點」；到今天都沒補列「未補」。<br>
+      ＊「當班排在該區」取自排班系統：那天那班科別排到該區的人。一區多張表（留觀、急救室、兒童）由排在該區的人共同負責；
+        治療二、三的 A／B 半排班分不出誰做哪一半，兩人都列。<br>
+      ＊同一格排了好幾個人時，系統無法知道那天實際由誰點 —— 名單列的是事實，怎麼計分由主管判斷。<br>
+      ＊那一班那一區排班上沒有人，就不算缺（例如那一班沒開的診間）。</div>
+  </div>`;
+}
+function exportMissCSV(){
+  const ym=MISS.ym||todayISO().slice(0,7);
+  const list=missCompute(ym,MISS.rows||[],MISS.sched,todayISO());
+  const head=['日期','班別','點班表','狀況','晚幾天補','點到','當班排在該區'];
+  const body=list.map(x=>[x.date,SHIFT_NAME[x.sh]||x.sh,x.sheet,x.kind,x.late==null?'':x.late,x.partial,x.names.join('、')]);
+  const csv=[head].concat(body).map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download='點班未完成名單_'+ym+'.csv'; a.click();
+}
+
+/* ■ 存檔失敗紀錄（讀 api_log） */
+const TASK_LABEL={fridge_temp:'冰箱溫度',o2_check_batch:'氧氣打勾',o2_check_del:'氧氣取消',o2_check:'氧氣打勾',
+  rollcall_submit:'點班提交',rollcall_signoff:'主管簽核',cart_seal_check:'核籤',cart_seal_new:'封新籤',
+  cart_seal_open:'開封',cart_seal_undo:'誤報復原',cart_expiry_set:'登有效期限',cart_audit_set:'雙月盤點',
+  cart_audit_confirm:'盤點主管確認',superv_add:'主管查核',superv_del:'撤銷查核',owed_add:'登記欠物',
+  owed_close:'欠物結案',owed_edit:'修改欠物',item_report:'項目回報',item_upsert:'點班項目管理',
+  perm_set:'權限設定',maint_set:'保養卡',maint_mark:'保養卡轉入',sign_set:'簽名圖',fridge_abn_set:'冰箱異常處理'};
+let FLOG={days:14,loading:false,err:'',rows:null};
+async function openFailLog(days){
+  if(!isBoss()){ alert('存檔失敗紀錄只開放護理長／副護理長。'); return; }
+  FLOG.days=days||FLOG.days||14; state.screen='failLog'; FLOG.loading=true; FLOG.err=''; render();
+  try{
+    const a=await getJSON('table=api_log&days='+FLOG.days);
+    FLOG.rows=Array.isArray(a)?a:[];
+    if(!Array.isArray(a)) FLOG.err='後端回傳不是清單'+(a&&a.error?('：'+a.error):'');
+  }catch(e){ FLOG.err=String(e&&e.message||e); }
+  FLOG.loading=false;
+  if(state.screen==='failLog') render();
+}
+function renderFailLog(){
+  const head=`<div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="title">⚠ 存檔失敗紀錄</div><div class="sub">誰、哪一頁、為什麼沒存進去・護理長／副護理長</div></div>
+    <button class="back" onclick="state.screen='adminHub';render()">返回</button></div></div>`;
+  const pick=`<div class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    ${[7,14,30].map(n=>`<button class="btn ${FLOG.days===n?'btn-primary':'btn-ghost'}" onclick="openFailLog(${n})">近 ${n} 天</button>`).join('')}
+    <button class="btn btn-ghost" onclick="openFailLog(FLOG.days)">↻</button></div>`;
+  if(FLOG.loading){ $app.innerHTML=head+`<div class="screen">${pick}<div class="card">讀取中…</div></div>`; return; }
+  const oldBack=API_VER_SEEN&&API_VER_SEEN<'2026-09-26-v32';
+  const rows=(FLOG.rows||[]).slice().sort((a,b)=>String(b['時間']||'').localeCompare(String(a['時間']||'')));
+  const isLine=r=>String(r['LINE']||'')==='是'||/LINE/i.test(String(r['瀏覽器']||''));
+  const nLine=rows.filter(isLine).length, nPhone=rows.filter(r=>r['來源']==='手機').length;
+  const cnt=(key)=>{ const m={}; rows.forEach(r=>{ const k=key(r)||'（空白）'; m[k]=(m[k]||0)+1; });
+    return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,6); };
+  const chip=(k,n)=>`<span class="sv-chip">${esc(k)} · <b>${n}</b></span>`;
+  $app.innerHTML=head+`<div class="screen">
+    ${pick}
+    ${oldBack?`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;font-size:13px">
+      ⚠ 後端目前是 ${esc(API_VER_SEEN)}，要部署到 v32 以上才會開始記錄。</div>`:''}
+    ${FLOG.err?`<div class="card" style="color:#c92a2a;font-size:13px">讀取失敗：${esc(FLOG.err)}</div>`:''}
+    <div class="card" style="font-size:13.5px;line-height:1.9">
+      近 ${FLOG.days} 天共 <b>${rows.length}</b> 筆失敗；其中手機補報 <b>${nPhone}</b> 筆（請求沒送到後端）。
+      ${rows.length?`<br>從 <b>LINE 內建瀏覽器</b>發生的：<b style="color:${nLine?'#c92a2a':'inherit'}">${nLine}</b> 筆
+        （${Math.round(nLine*100/rows.length)}%）`:''}
+      ${rows.length?`<div style="margin-top:8px">原因：${cnt(r=>String(r['錯誤']||'').slice(0,26)).map(e=>chip(e[0],e[1])).join('')}</div>
+      <div style="margin-top:6px">人員：${cnt(r=>r['姓名']||r['員編']).map(e=>chip(e[0],e[1])).join('')}</div>
+      <div style="margin-top:6px">功能：${cnt(r=>TASK_LABEL[r['任務']]||r['任務']).map(e=>chip(e[0],e[1])).join('')}</div>`:''}
+    </div>
+    ${rows.length?`<div class="card" style="padding:6px 10px;overflow-x:auto"><table class="mr-tbl"><thead><tr>
+      <th>時間</th><th>來源</th><th>人員</th><th>功能</th><th>單位</th><th>原因</th><th>瀏覽器</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td style="white-space:nowrap">${esc(String(r['時間']||'').slice(5,16))}</td>
+        <td>${esc(r['來源']||'')}</td><td>${esc(r['姓名']||'')}<div style="font-size:11px;color:var(--ink-soft)">${esc(r['員編']||'')}</div></td>
+        <td>${esc(TASK_LABEL[r['任務']]||r['任務']||'')}</td><td>${esc(r['單位']||'')}</td>
+        <td style="font-size:12.5px">${esc(r['錯誤']||'')}</td>
+        <td style="font-size:12px">${isLine(r)?'<b style="color:#c92a2a">LINE</b> ':''}${esc(r['瀏覽器']||'')}</td></tr>`).join('')}
+      </tbody></table></div>`:`<div class="card" style="color:var(--ink-soft);font-size:13px">這段期間沒有存檔失敗的紀錄。</div>`}
+    <div class="card" style="font-size:12px;color:var(--ink-soft);line-height:1.9">
+      ＊來源＝後端：後端收到了但沒有存（權限不足、後端忙碌、欄位不齊…）。<br>
+      ＊來源＝手機：請求根本沒送到後端（網路斷、被 Google 擋掉）。手機會先記著，下一次連上時補報，所以時間可能晚一點才出現。<br>
+      ＊LINE 內建瀏覽器關掉時常會清掉手機暫存，那種情況連補報都可能遺失 —— 實際次數只會比這裡多。<br>
+      ＊原始資料在 Sheet 的 <b>api_log</b> 分頁。</div>
+  </div>`;
+}
+
 /* ==================== 管理中心 ====================
    把主管用的查詢、統計、設定全部收在這裡，首頁只留「這一班要做的事」。 */
 let ISSUES=[];
@@ -3363,6 +3750,13 @@ function renderAdminHub(){
     b('🗄 封存說明（每 3 個月歸檔，查得到）','archHelp()'),
     b('🧹 清除本機暫存（畫面怪怪的時候用）','clearLocalCache()'),
     b('歷史點班紀錄',"state.histBack='adminHub';openHistory()")]));
+  /* ★ 考核與稽核
+     點班未完成名單：護理長／副護理長／財管負責人（含組長）／點班本負責人（v33）
+     存檔失敗紀錄：只給護理長／副護理長 */
+  { const ka=[];
+    if(canMissReport()) ka.push(b('📋 點班未完成名單（7 天未補・考核與提醒）','openMissReport()'));
+    if(isBoss())        ka.push(b('⚠ 存檔失敗紀錄（誰、哪一頁、為什麼沒存進去）','openFailLog()'));
+    if(ka.length) secs.push(g('📑 考核與稽核',ka)); }
   secs.push(g('📊 分析',[ b('營運分析 · AI 解讀','openAnalytics()') ]));
   const mg=[];
   if(can('items.edit'))mg.push(b('點班項目管理','openItemsAdmin()',ITEM_REPORTS.length?ITEM_REPORTS.length+' 則待處理':''));
@@ -4892,11 +5286,23 @@ function fridgeSlotBy(unit,ymd,slot){
   });
   return r?String(r['簽名']||r.sign||'已登錄'):'';
 }
-// 某科別在某日某班的氧氣登錄者
+/* ★★★ b74：「已刪除」的氧氣紀錄不算數。
+   2026-09-24 護理長回報：輔助單張上「治療二、三」三個班都寫她的名字，
+   但氧氣表上明明是吳家儀／王品璇／曾鈺涵。
+
+   原因：她之前取消過那幾格。後端取消是把同一列的「狀態」改成『已刪除』，
+   並把「簽名」寫成**按取消的人**（也就是她自己）。
+   氧氣表那一頁（o2.html）v28 起會濾掉『已刪除』，但首頁這張輔助單張沒有濾 ——
+   latestOf 抓到的是最新那一列，正好就是那筆已刪除的，於是印出她的名字。
+
+   ★ 要看得到「狀態」，後端必須是 v29 以上（v29 才會自動補上舊分頁缺的欄名）。 */
+function o2Live(x){ return String(x&&(x['狀態']||x.status)||'')!=='已刪除'; }
+// 某科別在某日某班的氧氣登錄者（只算還有效的那幾筆）
 function o2ShiftBy(dept,ymd,sh){
   const ym=ymd.slice(0,7), day=String(+ymd.slice(8,10));
   const r=latestOf(O2LOG,function(x){
-    return normUnit(x['科別']||x.dept||'')===normUnit(dept)
+    return o2Live(x)
+        && normUnit(x['科別']||x.dept||'')===normUnit(dept)
         && ymOf(x['年月']||x.ym||'')===ym
         && String(+(pick0(x,['日','day'])||0))===day
         && pick0(x,['時段','shift'])===String(sh);
@@ -5110,7 +5516,8 @@ function effPerm(a){
     lead:    p?!!p.lead    : CAISHI_LEAD_IDS.some(x=>idKey(x)===idKey(a.id)),
     caishi:  p?!!p.caishi  : CAISHI_IDS.some(x=>idKey(x)===idKey(a.id)),
     witness: p&&p.witness  ? true : (WITNESS_TITLES.indexOf(String(a.title||''))>=0),
-    superv:  p&&p.superv   ? true : (SUPERV_TITLES.indexOf(String(a.title||''))>=0)
+    superv:  p&&p.superv   ? true : (SUPERV_TITLES.indexOf(String(a.title||''))>=0),
+    rcbook:  !!(p&&p.rcbook)
   };
 }
 /* ★ 搜尋不再重畫整個畫面。原本每打一個字就重建 innerHTML，輸入框被銷毀重建，
@@ -5144,7 +5551,8 @@ function permRowsHtml(){
             : chip(p.witness,'見證',`togglePerm('${a.id}','witness')`))
           /* ★ 冰箱／氧氣的主管查核：平常只有護理長／副護理長，
              休假時可以在這裡臨時授權代理人 */
-          +chip(p.superv,'主管查核（冰箱/氧氣）',`togglePerm('${a.id}','superv')`)}
+          +chip(p.superv,'主管查核（冰箱/氧氣）',`togglePerm('${a.id}','superv')`)
+          +chip(p.rcbook,'點班本負責人',`togglePerm('${a.id}','rcbook')`)}
       </div></div>`;
   }).join('');
   return rows||'<div style="padding:12px;color:var(--ink-soft);font-size:13px">查無符合人員</div>';
@@ -5166,7 +5574,9 @@ function permSummaryHtml(){
     return p&&p.witness&&WITNESS_TITLES.indexOf(String(a.title||''))<0;}).map(a=>a.name);
   const nWitTitle=ACCOUNTS.filter(a=>a.active!==false
     &&WITNESS_TITLES.indexOf(String(a.title||''))>=0).length;
-  return `目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
+  const nRb=ACCOUNTS.filter(a=>{const p=permOf(a.id);return p&&p.rcbook;}).map(a=>a.name);
+  return `目前點班本負責人：<b>${nRb.length?esc(nRb.join('、')):'未指派'}</b><br>
+          目前財管組長：<b>${nLead.length?esc(nLead.join('、')):'未指派'}</b><br>
           目前財管負責人：<b>${nCai.length?esc(nCai.join('、')):'未指派'}</b><br>
           額外見證資格：<b>${nWitAdd.length?esc(nWitAdd.join('、')):'未指派'}</b>
           <span style="opacity:.8">（另有 ${nWitTitle} 位因職稱自帶）</span>`;
@@ -5181,7 +5591,8 @@ function renderPermAdmin(){
     <div class="card" style="padding:12px 14px;margin-bottom:12px">
       <div style="font-size:13px;line-height:1.9">
         <b>財管組長</b>：管點班項目、欠物結案、月結統計<br>
-        <b>財管負責人</b>：欠物結案、月結統計（每月清點）<br>
+        <b>財管負責人</b>：欠物結案、月結統計（每月清點）、看點班未完成名單<br>
+        <b>點班本負責人</b>：看「點班未完成名單（7 天未補・考核用）」<br>
         <b>見證</b>：可蓋回結案，也可當歸還見證人（小組長以上預設就有，這裡可額外授予）<br>
         <span style="color:var(--ink-soft);font-size:12px">＊結案時的見證人必須是另一個人，不能刷自己的員編</span>
       </div>
@@ -5254,13 +5665,13 @@ async function permSeed(){
 async function togglePerm(id,field){
   const a=ACCOUNTS.find(x=>x.id===id); if(!a)return;
   const cur=effPerm(a);
-  const next={lead:cur.lead,caishi:cur.caishi,witness:cur.witness,superv:cur.superv};
+  const next={lead:cur.lead,caishi:cur.caishi,witness:cur.witness,superv:cur.superv,rcbook:cur.rcbook};
   next[field]=!next[field];
   if(field==='lead'&&next.lead)next.caishi=true;        // 組長本來就含負責人權限
   if(field==='caishi'&&!next.caishi)next.lead=false;    // 取消負責人 → 組長也一併取消
   const prev=PERMS[id]?Object.assign({},PERMS[id]):null;
   PERMS[id]=next; permRefreshRows(state.permQ||'');
-  const r=await itemsWrite('perm_set',{id:id,name:a.name,lead:next.lead,caishi:next.caishi,witness:next.witness,superv:next.superv,
+  const r=await itemsWrite('perm_set',{id:id,name:a.name,lead:next.lead,caishi:next.caishi,witness:next.witness,superv:next.superv,rcbook:next.rcbook,
     editor:state.user.name,at:new Date().toISOString()});
   if(!(r&&r.ok)){
     // ★ 寫入失敗就還原畫面，不要讓人以為設定成功（之前就是這樣「設好又消失」）
@@ -6241,7 +6652,9 @@ async function openLeader(){ state.screen='leader'; render();
 function inSignWeek_(ym,day){ if(!ym||!day)return false; const p=String(ym).split('-'); const d=new Date(+p[0],(+p[1]||1)-1,+day); return isoWeek(d)===state.signWeek; }
 function extraHas_(kind,re){
   const log=kind==='fridge'?FRIDGELOG:O2LOG;
-  return (log||[]).some(r=>{ const ym=r['年月']||r.ym||''; const day=r['日']||r.day||''; if(!inSignWeek_(ym,day))return false;
+  return (log||[]).some(r=>{
+    if(kind!=='fridge'&&!o2Live(r)) return false;      // ★ 取消掉的不算「本週已登錄」
+    const ym=r['年月']||r.ym||''; const day=r['日']||r.day||''; if(!inSignWeek_(ym,day))return false;
     const key=kind==='fridge'?(r['單位']||r.unit||''):(r['科別']||r.dept||''); return re.test(String(key)); });
 }
 function extraRow_(label,done,onclick){
@@ -7890,11 +8303,62 @@ function renderMaint(){
   </div>`;
 }
 
+/* ★★★ b75：啟動的 render 一定要包起來。
+   補齊形狀（normalizeState）擋掉的是「已知的那一種壞法」；
+   但只要啟動那一行 render() 丟出任何例外，畫面就是一片白、而且每次重開都一樣白 ——
+   使用者只會說「打不開」，看不到任何線索，也沒有任何自救的辦法。
+   所以：
+     ① 先退回首頁再試一次（多半是某一張表的暫存壞了，首頁畫得出來）
+     ② 首頁也畫不出來 → 給一個救援畫面，附「清掉暫存並重新載入」的按鈕
+   一定不可以留一片白。 */
+function bootRender(){
+  try{ render(); return; }
+  catch(e){ console.error('啟動畫面畫不出來，退回首頁再試一次',e);
+    try{
+      state.screen=state.user?'home':'login'; state.sheetId=null; state.half=null;
+      render();
+      try{ toast('剛剛那一頁畫不出來，已回到首頁'); }catch(_){}
+      return;
+    }catch(e2){ console.error('首頁也畫不出來，改用救援畫面',e2); showRescue(e2); }
+  }
+}
+function showRescue(err){
+  let p=null;
+  try{ p=JSON.parse(localStorage.getItem('ed_rc2')||'{}').rcPending||null; }catch(e){}
+  const host=document.getElementById('app'); if(!host) return;
+  host.innerHTML=
+   '<div style="max-width:520px;margin:36px auto;padding:0 20px;line-height:1.9;color:#16232b">'
+   +'<div style="font-size:34px">🩹</div>'
+   +'<h2 style="margin:6px 0;font-size:19px">程式打不開，但你的資料都還在</h2>'
+   +'<div style="font-size:13.5px;color:#5a666e">這台裝置存的暫存壞掉了，清掉就會恢復。'
+   +'<b>後端 Sheet 的資料完全不受影響</b>，其他人也不受影響。</div>'
+   +(p?'<div style="margin-top:12px;padding:10px 12px;border-radius:9px;background:#fff4e6;'
+      +'border:1px solid #ffd8a8;color:#b35309;font-size:13px">⚠ 這台還有<b>一筆點班紀錄沒送到後端</b>。'
+      +'按下面的按鈕會先把它另存成備份再清暫存，不會直接弄丟。</div>':'')
+   +'<button onclick="rescueReset()" style="width:100%;margin-top:16px;padding:14px;font-size:16px;'
+   +'font-weight:800;border:none;border-radius:11px;background:#0f7a86;color:#fff;'
+   +'font-family:inherit;cursor:pointer">清掉暫存並重新載入</button>'
+   +'<details style="margin-top:16px;font-size:12px;color:#7a828b"><summary>錯誤訊息（回報用）</summary>'
+   +'<pre style="white-space:pre-wrap;word-break:break-all">'+esc(String(err&&(err.stack||err.message||err)))+'</pre></details>'
+   +'</div>';
+}
+function rescueReset(){
+  try{ const s=localStorage.getItem('ed_rc2');
+       const p=s?JSON.parse(s).rcPending:null;
+       if(p) localStorage.setItem('ed_rc2_backup',JSON.stringify({at:new Date().toISOString(),rcPending:p}));
+  }catch(e){}
+  try{ localStorage.removeItem('ed_rc2'); }catch(e){}
+  try{ if(navigator.serviceWorker&&navigator.serviceWorker.getRegistrations)
+         navigator.serviceWorker.getRegistrations().then(function(r){ r.forEach(function(x){ x.unregister(); }); });
+  }catch(e){}
+  setTimeout(function(){ location.reload(); },300);
+}
+
 // ---------- start ----------
 applyTheme();
 store.load();
 if(!state.user)state.screen='login';
-render();
+bootRender();
 if(state.user){
   /* 開 App 時：沒手動挑過就用系統判斷（含 23:30 之後算隔天）；
      手動挑過而且還是同一個日曆日，就尊重他的選擇。 */

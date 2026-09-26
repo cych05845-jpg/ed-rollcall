@@ -112,9 +112,76 @@ const ROSTER={"05845":"翁秀霞","06843":"方宏榮","03451":"陳子瑄","03746
 function empName(v){return ROSTER[String(v||'').trim()]||'';}
 const CRIT=[["1a"],["1b"],["2a"],["2b"],["2c"],["3"]];
 const SHIFT_NAME_O2=['大夜 N（0–8）','白班 D（8–16）','小夜 E（16–24）'];
-const APP_VER='2026-09-24-b40';   // 前端版本印記（畫面右下角會顯示）
-const EXPECT_VER='2026-09-24-v29';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-09-26-b41';   // 前端版本印記（畫面右下角會顯示）
+const EXPECT_VER='2026-09-26-v33';   // 後端應有的版本（?diag=1 可查）
 const API_URL='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
+const FAIL_PAGE='o2';
+function failCtx(){ let nm=''; try{ nm=(typeof curName==='function'&&curName())||''; }catch(e){}
+  return { unit:(typeof data!=='undefined'&&data&&data.dept)||'', empId:String(P.get('emp')||''), name:nm||String(P.get('name')||'') }; }
+/* ===================== v32 存檔失敗補報（index／fridge／o2 三頁同一段）=====================
+   只記「送不出去」的那幾次：連不上、Google 回錯誤頁、回應不是 JSON。
+   後端自己回 ok:false 的（權限不足、忙碌…），後端已經寫進 api_log，這裡不重複記。
+   先存在這支手機，下一次任何一筆寫入成功時一起補報（client_fail_push）。
+   ★ 任務名稱刻意以 _push 結尾：舊版 GS 不認得時回 unknown_task，
+     不會掉進 AI 分支白燒額度；手機這邊也會把紀錄留著，等後端更新後再補。
+   ★「瀏覽器」「LINE」是為了回答：存不進去的是不是都從 LINE 內建瀏覽器開的。 */
+const FAILQ_KEY='ed_failq', FAILQ_MAX=40;
+function failDev(){ try{ let d=localStorage.getItem('ed_dev');
+  if(!d){ d='d'+Math.random().toString(36).slice(2,10); localStorage.setItem('ed_dev',d); } return d; }catch(e){ return ''; } }
+function isLineUA(ua){ return /\bLine\//i.test(ua==null?(navigator.userAgent||''):ua); }
+function uaShort(ua){
+  const u=ua==null?(navigator.userAgent||''):ua, m=[];
+  if(/\bLine\//i.test(u)) m.push('LINE內建 '+((u.match(/Line\/([\d.]+)/i)||[])[1]||''));
+  else if(/FBAN|FBAV|Instagram/i.test(u)) m.push('FB/IG內建');
+  else if(/Edg\//.test(u)) m.push('Edge');
+  else if(/CriOS|Chrome\//.test(u)) m.push('Chrome');
+  else if(/Safari\//.test(u)) m.push('Safari');
+  else m.push('其他');
+  if(/iPhone|iPad|iPod/.test(u)) m.push('iOS'); else if(/Android/.test(u)) m.push('Android');
+  else if(/Windows/.test(u)) m.push('Windows'); else if(/Mac OS/.test(u)) m.push('Mac');
+  return m.join(' / ');
+}
+const FAIL_SKIP=['rollcall_progress','rtls_push','client_fail_push','vision'];
+function failNote(task,err,ctx){
+  if(FAIL_SKIP.indexOf(String(task))>=0) return;
+  try{
+    ctx=ctx||{};
+    const q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]');
+    q.push({ fid:Date.now().toString(36)+Math.random().toString(36).slice(2,7), task:String(task||''),
+      page:FAIL_PAGE, unit:String(ctx.unit||''), empId:String(ctx.empId||''), name:String(ctx.name||''),
+      error:String(err||'').slice(0,300), ua:uaShort(), line:isLineUA(),
+      at:new Date().toISOString(), dev:failDev() });
+    while(q.length>FAILQ_MAX) q.shift();
+    localStorage.setItem(FAILQ_KEY,JSON.stringify(q));
+  }catch(e){}
+}
+function failCount(){ try{ return JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]').length; }catch(e){ return 0; } }
+let FAIL_FLUSHING=false;
+async function failFlush(){
+  if(FAIL_FLUSHING||!API_URL) return;
+  let q=[]; try{ q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]'); }catch(e){}
+  if(!q.length) return;
+  FAIL_FLUSHING=true;
+  try{
+    const batch=q.slice(0,20);
+    const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'client_fail_push',payload:{items:batch}})});
+    let j=null; try{ j=JSON.parse(await r.text()); }catch(_){}
+    if(j&&j.ok===true){
+      const ids={}; batch.forEach(function(x){ ids[x.fid]=1; });
+      let rest=[]; try{ rest=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]'); }catch(_){}
+      localStorage.setItem(FAILQ_KEY,JSON.stringify(rest.filter(function(x){ return !ids[x.fid]; })));
+    }
+  }catch(e){}
+  FAIL_FLUSHING=false;
+}
+/* 回應看不懂時的說法（HTML＝多半是 Google 那一端擋下來的錯誤頁） */
+function failWhy(t,status){
+  return /^\s*<(!doctype|html)/i.test(String(t||''))
+    ? '回的是網頁不是資料（HTTP '+status+'，多半是 Google 那一端擋下來：同時執行太多或暫時故障）'
+    : '回應看不懂（HTTP '+status+'）';
+}
+setTimeout(function(){ try{ failFlush(); }catch(e){} },6000);   // 開頁 6 秒後把上次沒補報的送出去
+/* ===================== /v32 存檔失敗補報 ===================== */
 
 // （單筆寫入已併入下方的 o2WriteBatch 佇列，避免每勾一項就送一支請求）
 /* ★ 一次寫多筆：原本「一鍵完成」會同時送出 6 支 POST，
@@ -151,7 +218,11 @@ async function pumpWQ(g,day,si){
     try{ if(typeof tickAlign==='function') tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{j=JSON.parse(t);}catch(_){}
     ok=!!(j&&j.ok);
-  }catch(e){ console.error('氧氣批次寫回失敗',e); }
+    /* ★ v32：只記「這一波失敗的第一次」—— 自動重試每幾秒一次，全記會把紀錄灌爆 */
+    if(!j&&!WQ.backoff[g]) failNote('o2_check_batch',failWhy(t,res.status),failCtx());
+    if(ok) failFlush();
+  }catch(e){ console.error('氧氣批次寫回失敗',e);
+    if(!WQ.backoff[g]) failNote('o2_check_batch','連不上後端：'+String(e&&e.message||e),failCtx()); }
   WQ.inflight[g]=false;
   mark(!ok);
   if(ok){ WQ.backoff[g]=0; }
@@ -175,9 +246,11 @@ async function o2DelBatch(codes,day,si){
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:'o2_check_del',payload:payload})});
     try{ if(typeof tickAlign==='function') tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
-    if(j&&j.ok) return j;
+    if(j&&j.ok){ failFlush(); return j; }
+    if(!j) failNote('o2_check_del',failWhy(t,res.status),failCtx());
     return {ok:false,error:(j&&j.error)||'後端沒有回 ok（GS 可能還不是 v28）'};
-  }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
+  }catch(e){ failNote('o2_check_del','連不上後端：'+String(e&&e.message||e),failCtx());
+    return {ok:false,error:String(e&&e.message||e)}; }
 }
 function unsyncList(){ const a=[]; for(const k in (data.marks||{})) if(data.marks[k]._unsync) a.push(k); return a; }
 var O2_NOSTATE=false;                 // 後端讀回來的資料裡沒有「狀態」欄
@@ -463,17 +536,18 @@ async function postTask(task,payload){
     const res=await fetch(API_URL,{method:'POST',body:JSON.stringify({task:task,payload:payload})});
     try{ tickAlign(); }catch(e){}
     const t=await res.text(); let j=null; try{ j=JSON.parse(t); }catch(_){}
-    if(!j) return {ok:false,error:/^\s*<(!doctype|html)/i.test(t)
+    if(!j){ failNote(task,failWhy(t,res.status),failCtx());          // ★ v32：送不出去要記
+      return {ok:false,error:/^\s*<(!doctype|html)/i.test(t)
       ?'後端回的是 Google 登入網頁 —— 部署時「誰可以存取」要選【任何人】'
-      :'後端回傳看不懂（HTTP '+res.status+'）'};
-    if(j.ok===true) return j;
+      :'後端回傳看不懂（HTTP '+res.status+'）'}; }
+    if(j.ok===true){ failFlush(); return j; }
     if(j.code==='unknown_task') return {ok:false,old:true,error:j.error};
     /* 舊版 GS 不認得的任務會掉進 AI 分支：回 {text:…} 或「尚未設定 GEMINI_KEY／額度用完」，沒有 ok */
     if(j.ok===undefined && (j.text!==undefined || /GEMINI|AI 額度/.test(String(j.error||''))))
       return {ok:false,old:true,error:'後端（GS）還是舊版，不認得「'+task+'」。\n'
         +'請把新的 dianban_api.gs 貼上 → 部署 → 管理部署 → ✏️ 編輯 → 版本選「新版本」→ 部署。'};
     return {ok:false,error:String(j.error||'後端沒有回 ok')};
-  }catch(e){ return {ok:false,error:'連不上後端：'+String(e&&e.message||e)}; }
+  }catch(e){ const why='連不上後端：'+String(e&&e.message||e); failNote(task,why,failCtx()); return {ok:false,error:why}; }
 }
 async function loadSuperv(){
   if(!API_URL||!svYm()) return;
