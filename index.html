@@ -907,6 +907,18 @@ function expListOf(sheetId){
 }
 function expSoonOf(sheetId,d){ d=(d==null?EXP_WARN_DAYS:d);
   return expListOf(sheetId).filter(x=>x.days!=null&&x.days<=d); }
+/* ★ b81（2026-10-10 護理長：「我之前已經取消 Ambu／Mask 上鎖了，怎麼還是一直顯示車內到期？」）
+   b73 把 Ambu／Mask／蓄氧袋／雙接管 設成不上鎖，但當時只在「登期限並封新籤」
+   那一頁濾掉（sealExpItems），首頁待辦與封籤頁用的是沒濾過的 expListOf ——
+   所以那幾項照樣會跳「上鎖物品 n 項 60 天內到期」。同一份名單用在兩個地方，只改了一個。
+
+   ★ 刻意只濾「上鎖物品」那幾個畫面：
+     雙月效期盤核（附件一）查的是整台車的效期，Ambu 不上鎖但它還在車上、還是會過期，
+     那張表要是也濾掉，就等於把一個真實的到期日藏起來。 */
+function expLockedListOf(sheetId){ return expListOf(sheetId).filter(x=>!neverLocked(x.item)); }
+function expLockedSoonOf(sheetId,d){ d=(d==null?EXP_WARN_DAYS:d);
+  return expLockedListOf(sheetId).filter(x=>x.days!=null&&x.days<=d); }
+function expLockedUnsureOf(sheetId){ return expLockedListOf(sheetId).filter(x=>x.status==='待確認'); }
 // 期限要不要登：藥品比照紙本附件三不登（藥局管控），其餘器材與耗材都要
 function needExp(o){ return String(o&&o.type||'')!=='藥品'; }
 function expClass(days){ return days==null?'':days<0?'bad':days<=30?'warn':days<=EXP_WARN_DAYS?'soon':''; }
@@ -1030,8 +1042,8 @@ async function loadBundle(spec,opts){
   }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
 }
 
-const EXPECT_API_VER='2026-09-17-v20';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-09-26-b77';
+const EXPECT_API_VER='2026-10-10-v36';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-10-10-b81';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1214,8 +1226,31 @@ function failNote(task,err,ctx){
 }
 function failCount(){ try{ return JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]').length; }catch(e){ return 0; } }
 let FAIL_FLUSHING=false;
-async function failFlush(){
+/* ★★ b81：交班節點的前後 20 分鐘是「尖峰」。
+   2026-10 的 api_log 顯示失敗幾乎全部落在 15:4x–16:0x、23:4x–00:0x、07:4x–07:5x，
+   也就是 D／E／N 三個交班時間的前半小時 —— 14 本點班表、冰箱、氧氣、封籤
+   全部擠在同一段時間寫入，而 Apps Script 同時只能跑 30 個執行緒。
+
+   補報（client_fail_push）最糟的地方是：它偏偏都在那個時候送 ——
+   人在交班時開 App，開頁 6 秒後就把上次失敗的那一包補出去，
+   等於在最塞的時候自己再加一筆車流。改成尖峰時段先不補，過了再補。 */
+function inRushWindow(d){
+  d=d||new Date();
+  let hh=d.getHours(), mm=d.getMinutes();
+  try{ const p=tpeParts(d); if(p){ hh=p.h; mm=p.mi; } }catch(e){}
+  const t=hh*60+mm;
+  // 交班：08:00、16:00、00:00（大夜 23:30 換日，所以夜間那一段放寬到 23:30）
+  const rush=[[7*60+40,8*60+20],[15*60+40,16*60+20],[23*60+30,24*60+20]];
+  for(let i=0;i<rush.length;i++){
+    let a=rush[i][0],b=rush[i][1];
+    if(b>1440){ if(t>=a||t<=b-1440) return true; }
+    else if(t>=a&&t<=b) return true;
+  }
+  return false;
+}
+async function failFlush(force){
   if(FAIL_FLUSHING||!API_URL) return;
+  if(!force&&inRushWindow()) return;      // ★ 尖峰不補報，等過了再說
   let q=[]; try{ q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]'); }catch(e){}
   if(!q.length) return;
   FAIL_FLUSHING=true;
@@ -1237,7 +1272,11 @@ function failWhy(t,status){
     ? '回的是網頁不是資料（HTTP '+status+'，多半是 Google 那一端擋下來：同時執行太多或暫時故障）'
     : '回應看不懂（HTTP '+status+'）';
 }
-setTimeout(function(){ try{ failFlush(); }catch(e){} },6000);   // 開頁 6 秒後把上次沒補報的送出去
+/* ★ b81：開頁後延遲 20~80 秒隨機再補報。
+   原本固定 6 秒 —— 交班時十幾個人幾乎同時開 App，就會在同一秒一起送，
+   自己製造一個小尖峰。加亂數是為了把它攤開。 */
+setTimeout(function(){ try{ failFlush(); }catch(e){} }, 20000+Math.floor(Math.random()*60000));
+setInterval(function(){ try{ failFlush(); }catch(e){} }, 300000);   // 之後每 5 分鐘看一次（尖峰會自己跳過）
 /* ===================== /v32 存檔失敗補報 ===================== */
 async function loadItems(pre){
   if(!API_URL&&!pre)return;
@@ -1280,18 +1319,40 @@ function itemLogOf(list){
   return seg.join('｜');
 }
 // 點班提交 → 寫回後端完成紀錄(週五簽核/找未完成的地基)
+let _rcSubmitting=false;
 async function submitRollcall(){
+  /* ★ b81 防連按：按下去之後按鈕立刻失效。
+     交班尖峰最大的放大器就是「卡住 → 再按一次」—— 每按一次就多佔一個
+     Apps Script 執行緒（同時上限 30），第 31 個請求 Google 直接回錯誤頁。
+     後端另外有 reqId 冪等當第二道，但第一道就是不要讓它送出去。 */
+  if(_rcSubmitting) return;
   const s=sheetById(state.sheetId), list=rcListOf(s.id,state.half);
-  // ★ 封籤式急救車：沒登錄封籤號就不算點完（上鎖物品是靠封籤保證的）
-  if(sealSealed(s.id)&&!String(state.sealInput||'').trim()){
-    alert('這台車是上鎖的。\n\n請先回點班表最上方，登錄你在車上看到的封籤號。');
-    state.screen='rollcall'; render(); return;
-  }
-  /* 只打一兩碼就送出等於沒核 —— 隨便兩碼很容易剛好對上。至少要末 4 碼。 */
+  /* ★★ b81（2026-10-10 護理長定案「從寬處理」）：封籤不再擋在提交前面。
+
+     為什麼要改：舊版這兩道是硬擋 —— 看起來很安全，實際上有一個洞。
+     兩道的條件都是 sealSealed(s.id)，而那是讀前端已經載入的 CART_SEAL；
+     資料還沒到、或剛好在提交當下才到，條件就是 false，兩道直接跳過，
+     接著 sealAfterSubmit 又把空字串當成「不符」送上去 ——
+     2026-10-01 與 10-09 兩次「空白核籤把整台車鎖住四天」就是這樣來的。
+
+     現在的做法：
+       ① 人先把項目點完，提交永遠不會被封籤擋住（急診忙的時候不卡人）。
+       ② 沒填就在這裡「提醒一次」，可以選現在填，也可以選先完成等一下補。
+       ③ 真的沒填就不送核籤（後端 v36 也會擋空白），車況完全不動。
+       ④ 完成畫面會一直留著補填卡，直到補完為止。 */
   if(sealSealed(s.id)&&sealNeedMore(state.sealInput)){
-    alert('封籤號還沒打完。\n\n看著車上的封籤，至少打最後 '+SEAL_TAIL+' 碼（或用 🤖 拍照辨識帶入完整號碼）。');
-    state.screen='rollcall'; render(); return;
-  }
+    const _half=!!String(state.sealInput||'').trim();
+    if(confirm('最後一步：封籤還沒核。\n\n'
+      +(_half?('目前只打了 '+sealNorm(state.sealInput).length+' 碼，至少要 '+SEAL_TAIL+' 碼。\n\n')
+             :'請看一下急救車上封籤的最後 '+SEAL_TAIL+' 碼。\n\n')
+      +'要現在回去填嗎？\n（按取消＝先完成點班，等一下在完成畫面補填）')){
+      state.screen='rollcall'; render();
+      setTimeout(function(){ const el=document.getElementById('sealIn');
+        if(el){ el.scrollIntoView({block:'center'}); el.focus(); } },120);
+      return;
+    }
+    state.sealSkipped=true;              // 完成畫面要留補填卡
+  } else { state.sealSkipped=false; }
   /* ★ 選了「其他」就一定要寫備註，否則異常紀錄等於空的，事後查不出是什麼事 */
   const noNote=list.filter(o=>{const k=keyOf(o);
     return state.checks[k]==='bad'&&reasonNeedsNote(state.reason[k])&&!String(state.note[k]||'').trim();});
@@ -1323,9 +1384,15 @@ async function submitRollcall(){
   if(sealSealed(s.id)){
     const _c=sealOf(s.id)||{};
     sealSeen=String(state.sealInput||'').trim();
-    sealBad=!sealMatch(sealSeen,_c.seal);
-    sealTag='封籤'+(sealBad?'✗ 不符':'✓ 相符');
-    if(sealBad) bad++;
+    /* ★ b81：沒填＝「未核」，不是「不符」。
+       這兩件事以前被混在一起，空白會被記成封籤✗ 並且讓異常數 +1，
+       等於一個忘記填的人被記成「車出事了」。 */
+    if(sealNeedMore(sealSeen)){ sealTag='封籤・未核'; }
+    else{
+      sealBad=!sealMatch(sealSeen,_c.seal);
+      sealTag='封籤'+(sealBad?'✗ 不符':'✓ 相符');
+      if(sealBad) bad++;
+    }
   }
   const rcDate=curRcDate();
   state.rcTiming=state.rcTiming||{}; const tk=timingKey(); const tm=state.rcTiming[tk]||{};
@@ -1346,10 +1413,15 @@ async function submitRollcall(){
       return { item:o.name, type:o.type||'', reason:state.reason[k]||'未註記', note:noteFull(k) };
     }).concat(sealBad?[{ item:'上鎖物品封籤', type:'器械', reason:'封籤不符',
       note:'人員在車上看到 '+sealSeen+'，與系統紀錄不一致' }]:[])};
+  _rcSubmitting=true;
+  const _sb=document.getElementById('rcSubmitBtn');
+  if(_sb){ _sb.disabled=true; _sb.textContent='提交中…請不要重複按'; }
   state.screen='done'; state.rcPending=payload; state.rcSaved=null; render();  // 先進完成畫面(體感快)
   postProgress({clear:true,force:true});          // 清掉「進行中」標記
-  await pushRollcall(payload);
-  if(sealSealed(s.id)) await sealAfterSubmit(s); // ★ 另外寫一筆封籤核對紀錄
+  try{ await pushRollcall(payload); } finally{ _rcSubmitting=false; }
+  /* ★ b81：只有「真的填了而且夠長」才送核籤。空白一律不送 ——
+     送空白上去就是 10/01、10/09 那兩次把車鎖住的那一發。 */
+  if(sealSealed(s.id)&&!sealNeedMore(state.sealInput)) await sealAfterSubmit(s);
   await autoMaintFromRollcall(s,list);           // ★ 保養卡跟著點班一起記
 }
 
@@ -2321,6 +2393,7 @@ const store={
     /* ★ 封籤號絕對不能沾黏。存在 localStorage 裡的話，下一班一開 App
        輸入框就已經填著上一班打的號碼，按下去就過了 —— 等於沒有核籤。 */
     delete state.sealInput; delete state.sealMismatch; delete state.sealPeek;
+    delete state.sealDone; delete state.sealSkipped;   // ★ b81：核籤狀態同樣不可以跨開啟沾黏
     delete state.caForm;                 // 盤點表單是暫時的，不跨開啟保留
     if(state.shiftManualDate && state.shiftManualDate!==todayISO()){
       delete state.shiftManual; delete state.shiftManualDate;
@@ -2687,7 +2760,8 @@ function openSheet(id){
   /* ★ 封籤式（留觀急救車）：逐項點班照舊——人員本來就在點這些東西。
      多的是一道「封籤號核對」，取代「去開鎖、把上鎖物品也點一遍」。
      上鎖物品只登有效期限（紙本附件三），開封時才重登。 */
-  if(s.mode==='seal'){ state.sealPeek=false; state.sealInput=''; state.sealMismatch=false; }
+  if(s.mode==='seal'){ state.sealPeek=false; state.sealInput=''; state.sealMismatch=false;
+    state.sealDone=false; state.sealSkipped=false; SEAL_TRY=0; }
   if(String(s.ops)==='2'){state.screen='half';render()}
   else{state.half=null;state.screen='rollcall';render();postProgress({force:true});}
 }
@@ -3028,11 +3102,32 @@ async function loadOwed(pre){
   }catch(e){console.error('讀欠物本失敗,改用內建',e);}
 }
 // 寫回後端(新增/結案);不帶 Content-Type 以避免跨網域預檢
+/* ★★ b81 冪等鍵：每一筆寫入帶一個 reqId，重送時沿用同一個。
+
+   為什麼要有：交班時畫面一卡，人就會一直按。api_log 上看得很清楚 ——
+   林培琪 10/10 九秒內送了 8 次、黃堯 10/08 七秒內 4 次。
+   Apps Script 同時只能跑 30 個執行緒，每按一次就多佔一個，
+   撞到上限 Google 就回一頁 HTML，也就是大家看到的「回的是網頁不是資料」。
+
+   帶了 reqId 之後，後端 10 分鐘內看到同一個就直接回上次的結果：
+   不排隊、不重複寫，所以「多按幾次」最多只是多幾個沒作用的請求，
+   不會再把別人的提交一起拖垮，也不會在 Sheet 上長出重複的列。
+
+   ★ 關鍵是 reqId 要「黏在這一筆資料上」：寫進 payload 本身，
+     重送、補報、下一次開 App 再送，用的都還是同一個。 */
+function reqIdOf(payload){
+  if(payload&&typeof payload==='object'){
+    if(!payload.reqId) payload.reqId='rq'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+    return payload.reqId;
+  }
+  return 'rq'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+}
 async function owedWrite(task,payload){
   if(!API_URL){alert('尚未設定後端 API_URL');return {ok:false};}
   /* ★ v32：分清楚三種結果 —— 送不出去（記下來等補報）／後端說不行（後端已記）／成功（順便補報） */
   let r;
-  try{ r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})}); }
+  const reqId=reqIdOf(payload);
+  try{ r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload,reqId})}); }
   catch(e){ const why='連不上後端：'+String(e&&e.message||e); failNote(task,why,failCtx(payload)); return {ok:false,error:why}; }
   let t=''; try{ t=await r.text(); }catch(e){}
   let j=null; try{ j=JSON.parse(t); }catch(_){}
@@ -6787,7 +6882,7 @@ function renderAI(){
      ・上鎖的那一格（紙本「附件三 急救車上鎖物品」）不必每班開鎖清點，
        改成每班核對「一次性數字封籤號」。封籤沒斷＝那一格沒被動過。
      ・上鎖物品只登有效期限，開封時才重登；藥品比照紙本不登（藥局管控）。
-     ・封新籤要兩人：封車人＋見證人刷員編，見證人不可以是自己。
+     ・封新籤要兩人：封車人＋第二人刷員編（任何一位同仁都可以），第二人不可以是自己。
    畫面：
      點班表最上方的封籤卡（sealBar）  每班核籤
      sealOpen    要開封 → 選原因 → 記錄
@@ -6844,7 +6939,7 @@ function expRowHtml(x){
 function sealBar(s){
   const c=sealOf(s.id);
   const sealed=sealSealed(s.id);   // 狀態欄留空也算封存中（只填號碼那一格就好）
-  const soon=expSoonOf(s.id);
+  const soon=expLockedSoonOf(s.id);   // ★ b81：不上鎖的品項不算
   const v=String(state.sealInput||'');
   /* ★ 系統紀錄的號碼預設遮起來。
      整個機制的意義是「人員看車上的號碼、系統比對」；
@@ -6875,7 +6970,7 @@ function sealBar(s){
           border-radius:6px;cursor:pointer;margin-left:4px">${state.sealPeek?'隱藏':'查看'}</button></span>
     </div>
     <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;margin:6px 0 8px">
-      看著車上那條封籤，<b>打最後 ${SEAL_TAIL} 碼就好</b>（或用下面的拍照辨識）。
+      看著車上那條封籤，<b>打最後 ${SEAL_TAIL} 碼就好</b>。
       系統不會把號碼顯示出來 —— 打得出來就代表你人在車旁邊、封籤是完整的。
       這一格就代表下面 <b>${lockedItemsOf(s.id).length}</b> 項上鎖物品
       （＝紙本那一段一格一個字寫封籤號的列），不必逐項打勾。
@@ -6890,20 +6985,15 @@ function sealBar(s){
         background:#fff4e6;border:1px solid #ffd8a8;border-radius:8px;padding:8px 10px;margin-bottom:8px">
       ⚠ 沒有比對到任何上鎖物品，所以下面還是全部品項都要打勾。<br>
       請在後端跑一次 <b>markObsCartLocked</b>，或在 items 分頁把上鎖那些列的「分工」填 <b>鎖</b>。</div>`:''}
-    <button type="button" onclick="document.getElementById('sealPhoto').click()"
-      style="width:100%;padding:12px;font-size:15px;font-weight:700;border:1px solid var(--brand);
-        border-radius:10px;background:var(--brand-soft,rgba(15,122,134,.1));color:var(--brand);
-        font-family:inherit;cursor:pointer;margin-bottom:9px">🤖 拍照辨識封籤號</button>
+    <!-- ★ b81（2026-10-10 護理長：「不需要拍照了，我看拍照大家都不會用，鎖車在拍照」）
+         每班核籤只打 4 碼，拍照反而比較慢，整個拿掉。
+         鎖車（上新封籤）那一頁的拍照保留 —— 那一串會變成系統的正本，拍照才有價值。
+         封籤標籤是純數字沒有條碼，掃碼也一起拿掉（識別證的掃碼不受影響）。 -->
     <div style="display:flex;gap:8px;align-items:center">
-      <button type="button" onclick="scanSeal('sealIn')" title="掃描封籤條碼（有條碼時最準）"
-        style="flex:0 0 auto;padding:10px 12px;font-size:19px;line-height:1;border:1px solid var(--line);
-          border-radius:10px;background:transparent;color:inherit;
-          font-family:inherit;cursor:pointer">📷</button>
-      <input id="sealPhoto" type="file" accept="image/*" capture="environment"
-        style="display:none" onchange="sealPhotoRead(this)">
-      <input id="sealIn" autocomplete="off" inputmode="latin" placeholder="末 ${SEAL_TAIL} 碼" value="${esc(v)}"
-        oninput="sealLive()" style="flex:1;min-width:0;padding:11px;font-size:18px;text-align:center;
-          letter-spacing:2px;border:1px solid var(--line);border-radius:10px;background:transparent;
+      <input id="sealIn" autocomplete="off" inputmode="numeric" maxlength="12"
+        placeholder="車上封籤最後 ${SEAL_TAIL} 碼" value="${esc(v)}"
+        oninput="sealLive()" style="flex:1;min-width:0;padding:13px;font-size:22px;font-weight:800;text-align:center;
+          letter-spacing:4px;border:2px solid var(--brand);border-radius:10px;background:transparent;
           color:inherit;font-family:inherit">
       <span id="sealMsg" style="font-size:12.5px;font-weight:700;white-space:nowrap;min-width:64px;
         color:var(--ink-soft)">${v?(sealNeedMore(v)?('還要 '+sealNeedMore(v)+' 碼'):(sealMatch(v,c.seal)?'✓ 相符':'✗ 不相符')):'待輸入'}</span>
@@ -6911,9 +7001,9 @@ function sealBar(s){
     <div id="sealAi" style="display:none;margin-top:8px;padding:8px 11px;border-radius:9px;
       font-size:12.5px;line-height:1.75"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-      <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 封籤不符／要開封${sealWriteOK()?'':'（需後端 v12）'}</span>
-      <span class="tool-pill ${soon.length||expUnsureOf(s.id).length?'':'done'}" onclick="state.screen='seal';render()">
-        📅 上鎖物品期限${soon.length?('・'+soon.length+' 項快到期'):''}${expUnsureOf(s.id).length?('・'+expUnsureOf(s.id).length+' 項待確認'):''}${(!soon.length&&!expUnsureOf(s.id).length)?'・正常':''}</span>
+      <span class="tool-pill" onclick="state.screen='sealOpen';render()">⚠️ 要開封急救車${sealWriteOK()?'':'（需後端 v12）'}</span>
+      <span class="tool-pill ${soon.length||expLockedUnsureOf(s.id).length?'':'done'}" onclick="state.screen='seal';render()">
+        📅 上鎖物品期限${soon.length?('・'+soon.length+' 項快到期'):''}${expLockedUnsureOf(s.id).length?('・'+expLockedUnsureOf(s.id).length+' 項待確認'):''}${(!soon.length&&!expLockedUnsureOf(s.id).length)?'・正常':''}</span>
     </div>
     ${c.by?`<div style="font-size:11.5px;color:var(--ink-soft);margin-top:8px">
       上次封車：${esc(c.by)}${c.witness?('・'+esc(c.witness)+' 見證'):''}${c.at?('・'+esc(c.at)):''}</div>`:''}
@@ -7074,12 +7164,11 @@ function sealUndoCard(s){
 function sealSummaryBlock(s){
   const c=sealOf(s.id)||{};
   const v=String(state.sealInput||'').trim();
-  if(!v) return `<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
+  /* ★ b81：這裡只提醒，不嚇人 —— 沒填不會擋提交，也不會把車鎖住。 */
+  if(sealNeedMore(v)) return `<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
       font-size:13px;line-height:1.8;margin-bottom:10px">
-    <b>還沒登錄封籤號</b><br>這台車是上鎖的，請回點班表最上方輸入車上的封籤號再提交。</div>`;
-  if(sealNeedMore(v)) return `<div class="card" style="background:#fbe8e8;border:1px solid #f0c0c0;color:#b02a2a;
-      font-size:13px;line-height:1.8;margin-bottom:10px">
-    <b>封籤號還沒打完</b><br>至少要 ${SEAL_TAIL} 碼（末 ${SEAL_TAIL} 碼就可以），請回點班表最上方補齊。</div>`;
+    <b>⏰ 封籤還沒核</b><br>看一下車上封籤的最後 ${SEAL_TAIL} 碼${v?('（目前只打了 '+sealNorm(v).length+' 碼）'):''}。
+    現在填或提交完再補都可以，不會擋住點班。</div>`;
   const same=sealMatch(v,c.seal);
   return same
     ? `<div class="card" style="background:var(--ok-soft,#e6f4f1);border:1px solid var(--ok,#0f7a86);
@@ -7087,14 +7176,32 @@ function sealSummaryBlock(s){
        🔒 封籤號 ${esc(v)} 與系統紀錄相符</div>`
     : `<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
         font-size:13px;line-height:1.8;margin-bottom:10px">
-       <b>⚠️ 封籤號 ${esc(v)} 與系統紀錄不一致</b><br>
-       提交後系統會把這台車標成「待清點」，並帶你去登期限、上新封籤。</div>`;
+       <b>⚠️ 封籤號 ${esc(v)} 與系統紀錄對不起來</b><br>
+       <b>車況不會自動改變。</b>提交後系統會問你一句「車上那條封籤是不是完整的」——
+       只是看錯或打錯就再看一次，確定被剪斷了才會進開封流程。</div>`;
 }
-/* 提交點班後補寫一筆封籤核對。
-   不符 → 後端把車標成「待清點」，首頁會亮紅燈，並當場問要不要現在封新籤。 */
+/* ===================== 提交後補寫一筆封籤核對（b81 改寫）=====================
+
+   ★ 2026-10-10 護理長定案「從寬處理」，她自己寫的規則第 6 條
+     （號碼對不上就視為已開封、不要讓人再看一次）作廢：
+     「急診人特性大多是，真的要打開才會特別去解封，否則都是默認仍封車，
+       我比較傾向提醒她核對是否真的要解封。」
+
+   所以不符時 **系統不自己判定**，改成問人，由人決定：
+     ① 「我看錯／打錯了」→ 只留一筆紀錄，車況完全不動，可以重打（不限次數）
+     ② 「封籤被剪斷了，車真的開過」→ 才帶 confirmOpen 讓後端標待清點
+
+   ★ 但有一條不能破：確認視窗 **絕對不顯示系統存的號碼**。
+     一顯示，那顆按鈕就變成 YES 鍵，整套封籤機制當場失效 ——
+     所以問的是「實體」（封籤完不完整、有沒有被剪過），不是「號碼對不對」。
+
+   ★ 人從寬、紀錄從嚴：每一次重打都帶 tryNo 送上去，寫進 cart_seal_log。
+     現場不卡人，但「每次都要重打好幾遍才過」在紀錄上看得見。 */
+let SEAL_TRY=0;                       // 這一班重打到第幾次（只在記憶體，換班自然歸零）
 async function sealAfterSubmit(s){
   const c=sealOf(s.id)||{};
   const v=String(state.sealInput||'').trim();
+  if(sealNeedMore(v)) return;         // ★ b81：空白／太短一律不送（後端也會擋）
   const same=sealMatch(v,c.seal);
   state.sealMismatch=!same;
   /* ★ 後端還沒到 v12 就「不要送」。
@@ -7107,19 +7214,93 @@ async function sealAfterSubmit(s){
     if(state.screen==='done') render();
     return;
   }
+  SEAL_TRY++;
+  let r=null;
+  try{
+    r=await owedWrite('cart_seal_check',{cartId:cartIdOf(s.id),cartName:s.name,
+      date:curRcDate(),shift:effShift(),seal:v,result:same?'相符':'不符',
+      tryNo:SEAL_TRY,
+      empId:state.user.id,name:state.user.name,
+      note:(state.sealPeek?'（曾查看系統號碼）':'')});
+  }catch(e){ console.error('封籤核對紀錄寫入失敗',e); }
+  /* 後端擋下來（空白、太短、讀不到車上號碼）→ 照實說，不要假裝核過了 */
+  if(r&&r.ok===false){
+    state.sealDone=false; state.sealSkipped=true;
+    alert('封籤沒有核成功：\n\n'+String(r.error||'不明原因')
+      +'\n\n點班紀錄已經存好了，封籤可以在這一頁補核。');
+    if(state.screen==='done') render();
+    return;
+  }
+  await loadCartSeal();
+  if(same){
+    state.sealDone=true; SEAL_TRY=0;
+    if(state.screen==='done') render();
+    return;
+  }
+  /* ★ 不符 —— 系統不判定，問她。問的是實體，不是號碼。 */
+  state.sealDone=false;
+  const cut=confirm('你打的末 '+SEAL_TAIL+' 碼跟系統紀錄對不起來。\n\n'
+    +'先別急著當成出事 —— 請看一下車上那條封籤本身：\n\n'
+    +'　【確定】封籤真的被剪斷／被換過，車確實打開過\n'
+    +'　【取消】封籤是完整的，我可能看錯或打錯了，我要再看一次\n\n'
+    +'（這一次已經記錄下來了，選取消不會有任何處分，車也不會被鎖）');
+  if(!cut){
+    toast('車況沒有變動。請再看一次封籤末 '+SEAL_TAIL+' 碼，直接在這一頁重打就好。',6000);
+    state.sealSkipped=true;
+    if(state.screen==='done') render();
+    return;
+  }
+  /* 她確認封籤真的斷了 → 這才是真的開封 */
   try{
     await owedWrite('cart_seal_check',{cartId:cartIdOf(s.id),cartName:s.name,
-      date:curRcDate(),shift:effShift(),seal:v,result:same?'相符':'不符',
+      date:curRcDate(),shift:effShift(),seal:v,result:'不符',
+      tryNo:SEAL_TRY, confirmOpen:true,
+      openWhy:'核籤不符・人員確認封籤已被剪斷',
       empId:state.user.id,name:state.user.name,
-      note:(same?'':'車上封籤與系統紀錄不一致')+(state.sealPeek?'（曾查看系統號碼）':'')});
-  }catch(e){ console.error('封籤核對紀錄寫入失敗',e); }
+      note:'人員確認封籤已被剪斷'+(state.sealPeek?'（曾查看系統號碼）':'')});
+  }catch(e){ console.error('確認開封寫入失敗',e); }
   await loadCartSeal();
-  if(!same){
-    if(confirm('封籤號「'+v+'」與系統紀錄不一致，已經記錄下來。\n\n'
-      +'這台車需要清點上鎖物品並上新封籤（要另一位人員見證）。\n\n現在就處理嗎？')){
-      state.screen='sealClose'; render(); return;
-    }
+  SEAL_TRY=0;
+  if(confirm('已記錄為「封籤被剪斷」。\n\n'
+    +'這台車需要清點上鎖物品並上新封籤（要第二位同仁一起核對）。\n\n現在就處理嗎？')){
+    state.screen='sealClose'; render(); return;
   }
+  if(state.screen==='done') render();
+}
+
+/* 完成畫面上的「補核封籤」卡 —— 先完成、最後提醒，就靠這一塊。
+   ★ 這裡不顯示系統存的號碼，只有一格輸入。 */
+function sealDoneCardHtml(s){
+  if(!s||!sealSealed(s.id)) return '';
+  if(state.sealDone) return `<div class="card" style="max-width:360px;margin:0 auto 16px;
+      background:var(--ok-soft,#e6f4f1);border:1px solid var(--ok,#0f7a86);color:var(--ok,#0f7a86);
+      font-size:13.5px;font-weight:700">🔒 封籤已核對・相符</div>`;
+  const v=String(state.sealInput||'');
+  return `<div class="card" style="max-width:360px;margin:0 auto 16px;text-align:left;
+      background:#fff4e6;border:1px solid #ffd8a8;color:#b35309">
+    <div style="font-weight:800;font-size:14.5px;margin-bottom:4px">⏰ 還差一步：核一下急救車封籤</div>
+    <div style="font-size:12.5px;line-height:1.75;margin-bottom:9px">
+      點班紀錄已經存好了。走到車旁邊，看封籤上的<b>最後 ${SEAL_TAIL} 碼</b>打進來就完成。</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="sealDoneIn" autocomplete="off" inputmode="numeric" maxlength="12"
+        placeholder="末 ${SEAL_TAIL} 碼" value="${esc(v)}"
+        style="flex:1;min-width:0;padding:12px;font-size:21px;font-weight:800;text-align:center;
+          letter-spacing:4px;border:2px solid #b35309;border-radius:10px;background:#fff;
+          color:#b35309;font-family:inherit">
+      <button class="btn btn-primary" style="margin:0;flex:0 0 auto" onclick="sealDoneSubmit()">送出</button>
+    </div>
+    <div style="font-size:11.5px;line-height:1.7;margin-top:8px">
+      ＊對不起來也沒關係，系統會先問你封籤是不是完整的，不會直接把車鎖住。</div>
+  </div>`;
+}
+async function sealDoneSubmit(){
+  const el=document.getElementById('sealDoneIn'); if(!el)return;
+  const v=String(el.value||'').trim();
+  if(sealNeedMore(v)){ alert('至少要打最後 '+SEAL_TAIL+' 碼。'); el.focus(); return; }
+  state.sealInput=v;
+  const s=sheetById(state.sheetId);
+  el.disabled=true;
+  await sealAfterSubmit(s);
   if(state.screen==='done') render();
 }
 
@@ -7143,7 +7324,7 @@ function scanOverlayHtml(){
         display:flex;justify-content:space-between;align-items:center;gap:12px;
         background:rgba(0,0,0,.75);color:#fff;font-family:inherit">
       <div style="min-width:0">
-        <div style="font-weight:700;font-size:15px">掃描封籤條碼</div>
+        <div style="font-weight:700;font-size:15px">掃描識別證條碼</div>
         <div id="scanHint" style="font-size:12px;opacity:.8;margin-top:2px">
           把條碼放進框內，會自動讀取${scanSupportNote()?'（'+scanSupportNote()+'）':''}</div>
       </div>
@@ -7323,7 +7504,12 @@ function renderSealOpen(){
       逐項點班不受影響，照原本的方式點完提交即可。</div>
   </div>`;
 }
+let _sealOpenBusy=false;
 async function startSealOpen(){
+  /* ★ b81 防連按：2026-09-30 同一次開封在 cart_seal_log 寫成三列，
+     間隔只有 15 毫秒和 225 毫秒 —— 那是按鈕被連按／頁面重送，不是三次開封。
+     後端 v36 也有 20 秒去重，這裡擋的是「按鈕在等後端時還能再按」。 */
+  if(_sealOpenBusy) return;
   const s=sheetById(state.sheetId);
   const r=document.querySelector('input[name="sealwhy"]:checked');
   if(!r){ alert('請先選一個開封原因'); return; }
@@ -7356,6 +7542,9 @@ async function startSealOpen(){
       +'（護理長：把 dianban_api.gs 貼上並「重新部署為新版本」後，這一段就能在 App 裡完成。）');
     return;
   }
+  _sealOpenBusy=true;
+  const _btn=document.querySelector('button[onclick="startSealOpen()"]');
+  if(_btn){ _btn.disabled=true; _btn.textContent='記錄開封中…請不要重複按'; }
   toast('記錄開封中…');
   try{
     await owedWrite('cart_seal_open',{cartId:cartIdOf(s.id),cartName:s.name,
@@ -7363,6 +7552,7 @@ async function startSealOpen(){
       reason:r.value+(v?('（車上為 '+v+'）'):''), note:note,
       empId:state.user.id,name:state.user.name});
   }catch(e){ console.error('開封紀錄寫入失敗',e); }
+  finally{ _sealOpenBusy=false; }
   await loadCartSeal();
   state.sealReason=r.value; state.sealNote=note;
   state.screen='sealClose'; render();
@@ -7374,13 +7564,16 @@ function sealWitnessLookup(){
   const v=(document.getElementById('sc_wid').value||'').trim();
   const el=document.getElementById('sc_wname');
   const a=ACCOUNTS.find(x=>x.id===v)||(v?ACCOUNTS.find(x=>idKey(x.id)===idKey(v)):null);
-  if(!a){_sealWitness=null;el.textContent=v?'查無此員編':'尚未見證';el.style.color='var(--ink-soft)';return;}
-  if(!isWitnessRank(a)){_sealWitness=null;
-    el.textContent=`${a.name}（${a.title}）— 非小組長以上，不可見證`;el.style.color='var(--bad,#E03131)';return;}
+  if(!a){_sealWitness=null;el.textContent=v?'查無此員編':'等第二人刷員編';el.style.color='var(--ink-soft)';return;}
+  /* ★ b81：不再限定小組長以上。
+     2026-09-27 護理長：「人員反映封車時要找小組長核對很困難，改成兩人一起 double check」。
+     後端本來就沒有職稱檢查，這道是前端自己加的。
+     現在只剩一條：第二人不可以是封車本人。
+     （欠物結案的見證規則沒有動，那邊還是小組長以上。） */
   if(idKey(a.id)===idKey(state.user&&state.user.id)){_sealWitness=null;
-    el.textContent=`${a.name} — 見證人不可以是自己，請由另一位人員刷員編`;
+    el.textContent=`${a.name} — 第二人不可以是自己，請另一位同仁刷員編`;
     el.style.color='var(--bad,#E03131)';return;}
-  _sealWitness=a;el.textContent=`✓ 見證人：${a.name}（${a.title}）`;el.style.color='var(--ok,#0f7a86)';
+  _sealWitness=a;el.textContent=`✓ 第二人：${a.name}（${a.title||'同仁'}）`;el.style.color='var(--ok,#0f7a86)';
 }
 /* 要登有效期限的品項＝紙本「附件三 急救車上鎖物品」。
    後端 cart_expiry 有名冊就以它為準（那才是上鎖的那些東西）；
@@ -7447,19 +7640,16 @@ function renderSealClose(){
           font-family:inherit;cursor:pointer;margin-bottom:9px">🤖 拍照辨識新封籤號</button>
       <input id="sc_sealPhoto" type="file" accept="image/*" capture="environment"
         style="display:none" onchange="scSealPhoto(this)">
-      <div style="display:flex;gap:8px;align-items:center">
-        <button type="button" onclick="scanSeal('sc_seal')" title="掃描新封籤條碼（有條碼時最準）"
-          style="flex:0 0 auto;padding:12px 14px;font-size:20px;line-height:1;border:1px solid var(--line);
-            border-radius:10px;background:transparent;color:inherit;
-            font-family:inherit;cursor:pointer">📷</button>
-        <input id="sc_seal" autocomplete="off" placeholder="掃描或輸入新封籤號" oninput="scSealTyped()"
-          style="flex:1;min-width:0;padding:13px;font-size:20px;text-align:center;letter-spacing:2px;
-                 border:1px solid var(--line);border-radius:10px;background:transparent;color:inherit;font-family:inherit">
-      </div>
+      <!-- ★ b81：封籤標籤是純數字、沒有條碼，掃碼按了也不會有反應 —— 整個拿掉。
+           拍照辨識保留：這一串會變成系統的正本，往後每一班核的就是它。
+           （識別證的掃碼不受影響，那個真的有條碼。） -->
+      <input id="sc_seal" autocomplete="off" placeholder="輸入新封籤號（完整號碼）" oninput="scSealTyped()"
+        style="width:100%;box-sizing:border-box;padding:13px;font-size:20px;text-align:center;letter-spacing:2px;
+               border:2px solid var(--brand);border-radius:10px;background:transparent;color:inherit;font-family:inherit">
       <div id="sc_sealAi" style="display:none;margin-top:8px;padding:9px 11px;border-radius:9px;
         font-size:12.5px;line-height:1.75"></div>
       <div style="font-size:13px;color:var(--ink-soft);margin:12px 0 6px">
-        見證人刷員編（小組長以上或有見證資格，<b>不可以是自己</b>）</div>
+        第二人刷員編（<b>任何一位同仁</b>都可以，兩人一起核對・不可以是自己）</div>
       <div style="display:flex;gap:8px;align-items:center">
         <button type="button" onclick="scanSeal('sc_wid','emp')" title="掃描識別證條碼"
           style="flex:0 0 auto;padding:10px 13px;font-size:19px;line-height:1;border:1px solid var(--line);
@@ -7470,7 +7660,7 @@ function renderSealClose(){
           style="flex:1;min-width:0;padding:11px;font-size:16px;border:1px solid var(--line);
                  border-radius:10px;background:transparent;color:inherit;font-family:inherit">
       </div>
-      <div id="sc_wname" style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">尚未見證</div>
+      <div id="sc_wname" style="font-size:12.5px;color:var(--ink-soft);margin-top:6px">等第二人刷員編</div>
     </div>
     <button id="sealCloseBtn" class="btn btn-primary btn-block" style="margin-top:14px" onclick="submitSealClose()">
       封車完成</button>
@@ -7590,7 +7780,24 @@ async function submitSealClose(){
     const c=document.getElementById('sc_aiok'); if(c&&c.scrollIntoView) c.scrollIntoView({block:'center'});
     return;
   }
-  if(!_sealWitness){ alert('請由另一位小組長以上（或有見證資格）人員刷員編見證，不能是自己'); return; }
+  if(!_sealWitness){ alert('封車要兩個人一起核對。\n\n請另一位同仁刷員編（任何一位都可以，不能是自己）'); return; }
+  /* ★★ b81：新號碼的「前段」跟上一條不一樣時要問一聲。
+
+     2026-09-30 實際發生過：上一條是 METRO0301438，新的被打成 MRTRO0300243 ——
+     M‑R‑T‑R‑O，中間兩個字母顛倒了。核籤只比末 4 碼，所以一路都顯示相符，
+     沒有人發現。但「誤報復原」比的是完整號碼：
+     那四天裡只要有人要復原，打正確的 METRO… 就會被系統擋下來，等於把自己鎖在外面。
+
+     所以這裡只問一聲，不擋 —— 換一包新標籤時前段本來就會變。 */
+  const _preOf=x=>String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'').replace(/\d{4}$/,'');
+  const _preOld=_preOf((sealOf(s.id)||{}).seal), _preNew=_preOf(seal);
+  if(_preOld&&_preNew&&_preOld!==_preNew){
+    if(!confirm('新封籤號的前段跟上一條不一樣，確認一下：\n\n'
+      +'　這一條：'+_preNew+'■■■■\n　上一條：'+_preOld+'■■■■\n\n'
+      +'換了新的一包標籤的話這是正常的，按確定繼續。\n\n'
+      +'如果不是換包，請再看一次號碼 —— 前段打錯不會影響每班核對（只比末 4 碼），\n'
+      +'但之後要「誤報復原」時會打不出正確號碼，救不回來。')) return;
+  }
   if(!sealWriteOK()){
     alert('後端還沒更新到 v12（目前 '+(API_VER_SEEN||'未知')+'），新封籤與期限存不下來。\n\n'
       +'請先把 dianban_api.gs 貼上並「重新部署為新版本」，再回來封車。');
@@ -7656,7 +7863,7 @@ function renderSeal(){
   const c=sealOf(s.id);
   const sealed=sealSealed(s.id);   // 狀態欄留空也算封存中（只填號碼那一格就好）
   const age=c?sealAgeDays(c.at):null;
-  const soon=expSoonOf(s.id), expAll=expListOf(s.id);
+  const soon=expLockedSoonOf(s.id), expAll=expLockedListOf(s.id);   // ★ b81
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,${area.color},${area.color}cc)">
     <div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
@@ -7701,13 +7908,13 @@ function renderSeal(){
 }
 function renderSealExpiry(){
   const s=sheetById(state.sheetId);
-  const a=expListOf(s.id);
+  const a=expLockedListOf(s.id);        // ★ b81：這張就是紙本附件三「上鎖物品」有效期限登錄表
   const over=a.filter(x=>x.days!=null&&x.days<0).length;
   const soon=a.filter(x=>x.days!=null&&x.days>=0&&x.days<=EXP_WARN_DAYS).length;
   $app.innerHTML=`
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="title">有效期限 · ${esc(s.name)}</div>
-      <div class="sub">共 ${a.length} 項 · 已過期 ${over} · ${EXP_WARN_DAYS} 天內到期 ${soon}${expUnsureOf(s.id).length?(' · 待確認 '+expUnsureOf(s.id).length):''}</div></div>
+      <div class="sub">共 ${a.length} 項 · 已過期 ${over} · ${EXP_WARN_DAYS} 天內到期 ${soon}${expLockedUnsureOf(s.id).length?(' · 待確認 '+expLockedUnsureOf(s.id).length):''}</div></div>
     <button class="back" onclick="state.screen='seal';render()">返回</button></div></div>
   <div class="screen narrow">
     <div class="card">${a.length?a.map(expRowHtml).join('')
@@ -7770,7 +7977,7 @@ function sealCard(){
   });
   SEAL_SHEETS().forEach(s=>{
     if(!canSeeSealInfo(s))return;
-    const soon=expSoonOf(s.id); if(!soon.length)return;
+    const soon=expLockedSoonOf(s.id); if(!soon.length)return;   // ★ b81：不上鎖的品項不算
     const over=soon.filter(x=>x.days<0).length;
     out.push(`<div class="card" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
         cursor:pointer;margin-bottom:10px" onclick="state.sheetId='${s.id}';state.screen='sealExpiry';render()"
@@ -7806,7 +8013,7 @@ function renderSummary(){
     <button class="btn btn-block" style="margin-bottom:10px" onclick="aiHandover()">✨ 產生 AI 交班摘要</button>
     <div id="aiBox" class="card" style="display:none;white-space:pre-wrap;line-height:1.7;margin-bottom:10px"></div>
     ${sealSealed(state.sheetId)?sealSummaryBlock(sheetById(state.sheetId)):''}
-    <button class="btn btn-primary btn-block" onclick="submitRollcall()">提交並簽核</button>
+    <button id="rcSubmitBtn" class="btn btn-primary btn-block" onclick="submitRollcall()">提交並簽核</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="openItemReport(state.sheetId,'')">🚩 回報項目有誤（送財管組長）</button>
   </div>`;
 }
@@ -7838,6 +8045,7 @@ function renderDone(){
     <p style="color:var(--ink-soft);margin:0 0 20px">${esc(s.name)}${state.half?(' '+state.half+'半'):''}<br>
       ${esc(state.user.name)}（${esc(state.user.title)}）· ${tpeHM()} 簽核</p>
     ${timingHtml}
+    ${sealDoneCardHtml(s)}
     ${hasDefib(s.id)?`<div style="max-width:360px;margin:0 auto 16px;text-align:left">${maintBadHtml(s.id)}</div>`:''}
     <button class="btn btn-primary btn-block" onclick="state.screen='pick';render();refreshDoneStatus()">回點班表清單</button>
     <button class="btn btn-ghost btn-block" style="margin-top:10px" onclick="state.screen='home';render()">回首頁</button>
@@ -8438,23 +8646,48 @@ function syncEveryMs(){
    Apps Script 每天的執行時間是有上限的，十幾支手機掛著很快就燒完。
    ★ 後端還沒更新到 v26（不認得 ?tick=1）時會自動退回原本的 20／60 秒。 */
 /* var 不用 let：syncAll() 在檔案前面就會用到 TICK_ON，用 let 會踩到 TDZ */
-var TICK_V=null, TICK_BAD=0, TICK_ON=true, TICK_AT=0;
+var TICK_V=null, TICK_BAD=0, TICK_ON=true, TICK_AT=0, TICK_OFF_AT=0, SYNC_QUEUED=false;
 function tickEveryMs(){
-  return (state.screen==='rollcall'||state.screen==='pick'||state.screen==='half'
+  const base=(state.screen==='rollcall'||state.screen==='pick'||state.screen==='half'
           ||state.screen==='areas') ? 8000 : 20000;
+  /* ★ b81：交班尖峰時把心跳放慢一倍。
+     那半小時後端本來就在滿載（14 本點班表＋冰箱＋氧氣＋封籤一起寫），
+     讀取跟寫入搶的是同一個「同時執行 30 個」的額度 ——
+     這時候每 8 秒問一次，等於自己跟自己的存檔搶資源。 */
+  return inRushWindow()?base*2:base;
+}
+/* ★★ b81：心跳一變就全部人同時重抓 —— 這是「重整要等很久」的主因。
+   一個人提交 → 後端時間戳變了 → 當下開著 App 的十幾支手機在同一秒
+   各自發一包完整讀取（十幾張表）。交班時幾秒就有人提交一次，
+   於是每幾秒就來一波十幾個同時讀取，直接把執行額度吃掉，
+   然後連「↻ 立即更新」都轉不出來。
+   解法是把這一波攤開：每一支手機各自亂數延遲再抓，尖峰時攤得更開。 */
+function syncSoon(){
+  if(SYNC_QUEUED) return;
+  SYNC_QUEUED=true;
+  const jitter=inRushWindow()? (500+Math.random()*9000) : (200+Math.random()*2500);
+  setTimeout(function(){ SYNC_QUEUED=false;
+    if(document.hidden||!state.user||SYNCING) return;
+    if(!needsLiveSync()) return;
+    syncAll();
+  }, jitter);
 }
 async function tickCheck(){
+  /* ★ b81：心跳連錯 3 次會關掉，但以前是「關掉就關到重新整理為止」——
+     交班塞車時很容易連錯 3 次，結果那支手機接下來一整天都只靠 20/60 秒的保底同步，
+     這就是「等到下午都無法重整」。改成 5 分鐘後自動再試。 */
+  if(!TICK_ON&&TICK_OFF_AT&&Date.now()-TICK_OFF_AT>300000){ TICK_ON=true; TICK_BAD=0; }
   if(!TICK_ON||!API_URL||SYNCING) return;
   if(Date.now()-TICK_AT<tickEveryMs()-500) return;
   TICK_AT=Date.now();
   try{
     const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'});
     const j=await r.json();
-    if(!j||j.v===undefined){ if(++TICK_BAD>=3) TICK_ON=false; return; }
+    if(!j||j.v===undefined){ if(++TICK_BAD>=3){ TICK_ON=false; TICK_OFF_AT=Date.now(); } return; }
     TICK_BAD=0;
     if(TICK_V===null){ TICK_V=String(j.v); return; }      // 第一次只記起來
-    if(String(j.v)!==TICK_V){ TICK_V=String(j.v); syncAll(); }
-  }catch(e){ if(++TICK_BAD>=3) TICK_ON=false; }
+    if(String(j.v)!==TICK_V){ TICK_V=String(j.v); syncSoon(); }   // ★ b81：攤開，不要全部人同一秒
+  }catch(e){ if(++TICK_BAD>=3){ TICK_ON=false; TICK_OFF_AT=Date.now(); } }
 }
 setInterval(function(){
   if(!state.user||SYNCING)return;
