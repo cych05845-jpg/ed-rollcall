@@ -944,12 +944,17 @@ function expUnsureOf(sheetId){ return expListOf(sheetId).filter(x=>x.status==='�
    ・超過 7 天的快取不用（寧可等，也不要給明顯過期的東西）
    ・存不下就放棄，不影響任何功能 */
 const CACHE_KEY='ed_bundle1';
+/* ★★ b87：手機裡的資料不再跟著「網頁版本」作廢。
+   以前快取綁 APP_VER —— 每次一更新網頁，所有人自動重新整理時快取全部作廢，
+   十幾支手機同時「空手」去跟後端要整份資料，後端一塞，畫面就是一片「未完成・尚未開始」。
+   資料的形狀是後端決定的，跟網頁版本無關；真的要作廢時才改 CACHE_SCHEMA。 */
+const CACHE_SCHEMA='c1';
 let CACHE_AT=0, SHOW_CACHE=false;
 function cacheMerge(map){
   try{
     let o=null;
     try{ o=JSON.parse(localStorage.getItem(CACHE_KEY)||'null'); }catch(e){}
-    if(!o||o.v!==APP_VER) o={v:APP_VER,at:0,d:{}};
+    if(!o||o.v!==CACHE_SCHEMA) o={v:CACHE_SCHEMA,at:0,d:{}};
     Object.keys(map||{}).forEach(k=>{ if(Array.isArray(map[k])) o.d[k]=map[k]; });
     o.at=Date.now();
     let str=JSON.stringify(o);
@@ -962,7 +967,8 @@ function cacheMerge(map){
 function cacheRead(){
   try{
     const o=JSON.parse(localStorage.getItem(CACHE_KEY)||'null');
-    if(!o||o.v!==APP_VER||!o.d) return null;
+    if(!o||!o.d) return null;
+    if(o.v!==CACHE_SCHEMA&&!/^20\d\d-/.test(String(o.v||''))) return null;   // 舊版存的是 APP_VER，也照用
     if(Date.now()-(o.at||0)>7*86400000) return null;
     return o;
   }catch(e){ return null; }
@@ -1056,7 +1062,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-10-10-v37';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-10-11-b86';
+const APP_VER='2026-10-11-b87';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1806,12 +1812,11 @@ function curRcDateObj(){return parseISO(curRcDate());}
    原因：為了讓同步快，App 平常只帶最近幾天 —— 點班紀錄 7 天、冰箱／氧氣 3 天（開 App 那一次），
    之後每次自動更新只補 1～2 天。日期往回選到 4 天前，手機裡根本沒有那天的冰箱／氧氣，
    畫面卻把「沒資料」當成「沒人做」，算成 0%。
-   改成：
-     ① 記下每張紀錄表「手上的資料從哪一天開始」（COVER，只有讀成功才算）。
-     ② 選了比較早的日期 → 同步時把那幾天一起補抓一次（b86：抓到就不再重抓、交班尖峰不抓）。
-     ③ 補抓回來之前，畫面寫「讀取 10/07 的資料中」，不顯示 0%、不列成未完成。
-   今天／昨天不受影響（開 App 的兩波讀取本來就有）。 */
-var COVER={}, COVER_PAST_AT=0, COVER_PAST_DATE='', COVER_KICK='';
+   ★★ b87（護理長：「不行，變慢了…還不如保有上一版的速度，因為一周才有人查核一次」）
+   讀取一律回到 b84：自動更新只抓 1～2 天，不會因為選了舊日期就自己多抓。
+   只保留「講實話」：手機裡沒有那天的資料 → 不顯示 0%、不列未完成，
+   改成一顆「📥 讀這天的資料」按鈕，要看的人自己按、只讀一次。 */
+var COVER={};
 const COVER_TABLES=['rollcall_log','fridge_temp','o2_check'];
 function daysAgoISO_(n){ const d=tpeDate(); d.setDate(d.getDate()-n); return fmtISO(d); }
 /* 後端 ?days=n 回的是「n 天前那天起」；保守一點只算到 n-1 天前（伺服器跟台北可能差幾小時） */
@@ -1827,33 +1832,47 @@ function rcPastDays(){
   const a=parseISO(curRcDate()), b=parseISO(todayISO());
   return Math.max(0, Math.round((b-a)/86400000));
 }
-/* 這個日期的資料手機裡有沒有？（今天、昨天一律當作有） */
+/* 這個日期的資料手機裡有沒有？
+   ★ b87：今天／昨天也要「真的讀到過」（後端成功一次，或有上次留在手機裡的資料）——
+   開 App 就讀不到後端時，不要整片顯示「17 項未完成・尚未開始」。 */
 function rcCovered(tables){
-  if(rcPastDays()<=1) return true;
   if(typeof BUNDLE_OK!=='undefined'&&!BUNDLE_OK) return true;   // 舊後端（逐張抓）沒有涵蓋資訊，照舊
   const d=curRcDate();
-  return (tables||COVER_TABLES).every(function(t){ return !!COVER[t] && COVER[t]<=d; });
+  if((tables||COVER_TABLES).every(function(t){ return !!COVER[t] && COVER[t]<=d; })) return true;
+  if(rcPastDays()<=1 && (CACHE_AT>0 || BUNDLE_AT>0)) return true;
+  return false;
 }
 function rcMD(){ const s=curRcDate(); return s.slice(5,7)+'/'+s.slice(8,10); }
-/* ★ b86：天數固定幾檔 —— 後端快取是用「表名＋天數」當鑰匙，天數一樣才共用得到 */
-var SYNC_PAST_FORCE=false, PAST_LOAD_N=0;
+/* 天數固定幾檔 —— 後端快取是用「表名＋天數」當鑰匙，天數一樣才共用得到 */
 function pastBucket(past){ const need=past+2, b=[7,14,31,64];
   for(let i=0;i<b.length;i++) if(need<=b[i]) return b[i];
   return need; }
-/* 手動按 ↻／立即更新：舊日期也一起重抓一次（只有按的人自己） */
-function syncManual(){ SYNC_PAST_FORCE=true; SYNC_AT=0; return syncAll(); }
-function rushEndText(){
-  const t=tpeParts(), m=t.h*60+t.mi;
-  if(m>=7*60+40&&m<=8*60+20) return '08:20';
-  if(m>=15*60+40&&m<=16*60+20) return '16:20';
-  return '00:20';
+function syncManual(){ SYNC_AT=0; return syncAll(); }
+var PAST_LOADING=false;
+/* 📥 讀這天的資料：只有按的人、只讀一次（不會變成每次自動更新都多抓） */
+async function loadPastDay(){
+  if(PAST_LOADING) return;
+  if(typeof syncInBackoff==='function'&&syncInBackoff()){
+    try{ toast('後端比較忙，'+Math.max(1,Math.ceil((SYNC_BACKOFF_UNTIL-Date.now())/1000))+' 秒後再按一次'); }catch(e){}
+    return;
+  }
+  const n=pastBucket(rcPastDays()), t0=Date.now();
+  PAST_LOADING=true; render();
+  try{
+    await loadBundle([['rollcall_log',n,null,true],['fridge_temp',n],['o2_check',n]],{merge:true,timeout:SYNC_GET_MS});
+    if(BUNDLE_OK&&!(BUNDLE_AT>=t0)){ try{ syncFailed(); }catch(e){} try{ toast('讀不到後端，等一下再按一次'); }catch(e){} }
+  }finally{ PAST_LOADING=false; render(); }
 }
-function rcLoadingWhy(){
-  if(typeof inRushWindow==='function'&&inRushWindow())
-    return '交班尖峰，'+rushEndText()+' 後再讀這天的資料';
-  if(typeof syncInBackoff==='function'&&syncInBackoff())
-    return '後端比較忙，'+Math.max(1,Math.ceil((SYNC_BACKOFF_UNTIL-Date.now())/1000))+' 秒後會自動再讀';
-  return '讀取中…';
+/* 「這天的資料還沒在手機裡」那一行字＋按鈕 */
+function rcNotLoadedHtml(what){
+  if(rcPastDays()<=1){                         // 今天／昨天：開 App 還沒讀到後端
+    const why=(typeof syncInBackoff==='function'&&syncInBackoff())
+      ? '後端比較忙，'+Math.max(1,Math.ceil((SYNC_BACKOFF_UNTIL-Date.now())/1000))+' 秒後會自動再讀' : '讀取中…';
+    return '⏳ 還沒讀到後端的'+what+'（'+why+'），讀到之前先不算完成率。';
+  }
+  if(PAST_LOADING) return '⏳ 正在讀 '+rcMD()+' 的'+what+'…';
+  return rcMD()+' 的'+what+'沒有帶進手機（平常只帶最近幾天，才不會拖慢速度）。'
+    +'<div style="margin-top:6px"><button class="btn btn-ghost" style="font-size:12.5px;padding:5px 12px" onclick="loadPastDay()">📥 讀 '+rcMD()+' 的資料</button></div>';
 }
 function isLeaderUser(){const u=state.user;return !!(u&&(u.role==='護理長'||u.role==='副護理長'));}
 const NIGHT_OPEN_MIN=23*60+30;        // 23:30 起可補「明天」大夜(0-8),上班前完成
@@ -1893,8 +1912,6 @@ function setRcDate(v){
      否則這個旗標會被 localStorage 一直帶著，隔天還壓著自動判斷。 */
   state.rcDateManual=true; state.rcManualDay=todayISO();
   rebindForDate();
-  /* ★ b85：選到手機裡沒有的日期 → 馬上補抓那幾天（後端忙的時候照退避規則等） */
-  try{ if(rcPastDays()>=2&&!rcCovered()&&!inRushWindow()){ COVER_KICK=''; SYNC_AT=0; syncNow(); } }catch(e){}
 }
 function rcManualActive(){
   return !!(state.rcDateManual && state.rcManualDay===todayISO());
@@ -5647,14 +5664,13 @@ function renderAuxCard(){
      原本算「今日 15 格」把晚上還沒開始的班也算進去，
      早上看永遠只有兩三成，數字沒有意義也讓人焦慮。 */
   const sh=effShift(), mySlot=SLOT_OF_SHIFT[sh];
-  /* ★ b85：選的日期手機裡還沒有冰箱／氧氣資料 → 不要算成 0% */
+  /* ★ b85／b87：手機裡沒有這天的冰箱／氧氣資料 → 不要算成 0%（給一顆按鈕自己讀） */
   if(!rcCovered(['fridge_temp','o2_check'])){
     return `<div class="card" id="auxLoading" style="padding:12px 14px;margin-bottom:12px;border-left:4px solid var(--line)">
       <div style="font-weight:800;display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span>🧾 輔助單張（冰箱／氧氣）<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">　${esc(rcMD())} ${SHIFT_NAME[sh]}</span></span>
-        <span style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap">⏳ ${esc(rcLoadingWhy())}</span></div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">
-        正在讀 ${esc(rcMD())} 的冰箱／氧氣紀錄（App 平常只帶最近幾天）。讀到之前先不算完成率，免得看起來像沒人做。</div></div>`;
+        <span style="font-size:12.5px;color:var(--ink-soft);white-space:nowrap">— 未讀取</span></div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">${rcNotLoadedHtml('冰箱／氧氣紀錄')}</div></div>`;
   }
   let need=0, got=0, miss=[];
   units.forEach(function(u){ need++;
@@ -5731,6 +5747,7 @@ function renderMissCard(){
   const cur={date:curRcDate(),sh:effShift()};
   const leader=isLeaderToday()||isShiftLeader();
   /* ★ b85：往回選的日期（含它的前一班）手機裡還沒有點班紀錄 → 不要列一整排「沒有人點」 */
+  if(!rcCovered(['rollcall_log'])) return '';      // ★ b87：還沒讀到就不列「沒有人點」
   if(rcPastDays()>=2&&BUNDLE_OK){
     const pd=prevSlotOf(cur.date,'N').date;
     if(!(COVER.rollcall_log&&COVER.rollcall_log<=pd)) return '';
@@ -5771,7 +5788,7 @@ function renderTodoCard(){
   if(t.loading){
     return `<div class="card" id="todoLoading" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--line)">
       <div style="font-weight:800">📌 我的待辦 · ${esc(rcMD())}<span style="font-weight:400;font-size:12px;color:var(--ink-soft)">（${esc(scope)}）</span></div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">⏳ ${esc(rcLoadingWhy())} —— 正在讀 ${esc(rcMD())} 的點班與冰箱／氧氣紀錄，讀到之前先不列未完成。</div></div>`;
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:4px">${rcNotLoadedHtml('點班與冰箱／氧氣紀錄')}</div></div>`;
   }
   if(!n){
     return `<div class="card" style="padding:14px;margin-bottom:12px;border-left:4px solid var(--ok,#2f9e44);background:#ebfbee">
@@ -6650,18 +6667,8 @@ async function syncAll(){
        異常明細（rollcall_issue）只有進點班表時要用，改成進表時才抓（icLoad 那種作法）。
        點班紀錄一律用 lite ＋ 2 天：首頁只看今天與上一班。 */
     const onRc=(state.screen==='rollcall'||state.screen==='half');
-    /* ★ b85：補點選了較早的日期 → 把那天也一起抓。
-       ★ b86（護理長：「這樣會造成不穩定或扼殺目前速度嗎?」）收緊成：
-         ‧ 手上沒有那天才抓，抓到就不再重抓（舊日期很少變；要最新按 ↻）
-         ‧ 天數只用固定幾檔（7／14／31／64），不同人選不同日期也能共用後端快取
-         ‧ 交班尖峰（07:40–08:20、15:40–16:20、23:30–00:20）一律不做大範圍讀取，過了再讀 */
-    const past=rcPastDays(), pastDate=curRcDate();
-    const force=!!SYNC_PAST_FORCE; SYNC_PAST_FORCE=false;
-    const pastOK=past>=2&&!inRushWindow();
-    const dd=function(t,n){ return (pastOK&&(force||!rcCovered([t])))?Math.max(n,pastBucket(past)):n; };
-    const pastRefresh=pastOK&&force;
-    const spec=[['rollcall_log',dd('rollcall_log',2),null,true],['rollcall_active']]
-      .concat(onRc?[]:[['fridge_temp',dd('fridge_temp',1)],['o2_check',dd('o2_check',1)]])   // 首頁只看「今天登了沒」
+    const spec=[['rollcall_log',2,null,true],['rollcall_active']]
+      .concat(onRc?[]:[['fridge_temp',1],['o2_check',1]])   // 首頁只看「今天登了沒」
       .concat([['cart_seal']])
       .concat(MAINT_ON?[['device_maint',3]]:[]);
     await loadBundle(spec,{merge:true,timeout:SYNC_GET_MS});   // ★ 合併：只更新這幾天，手上的舊資料不會被縮掉
@@ -6669,18 +6676,10 @@ async function syncAll(){
     if(BUNDLE_OK&&!(BUNDLE_AT>=t0)) throw new Error(NET_ERR||'同步失敗');
     SYNC_MS=Date.now()-t0;
     syncSucceeded();
-    if(pastRefresh&&!onRc){ COVER_PAST_AT=Date.now(); COVER_PAST_DATE=pastDate; }
-    if(pastOK) PAST_LOAD_N++;
   }catch(e){ SYNC_MS=-1; syncFailed(); }
   SYNC_AT=Date.now();
   SYNCING=false;
   render();
-  /* ★ b85：同步途中才換了日期（那一輪沒帶到）→ 再補一次；同一個日期只補這一次，不會一直轉 */
-  try{
-    if(needsLiveSync()&&rcPastDays()>=2&&!rcCovered()&&!syncInBackoff()&&!inRushWindow()&&COVER_KICK!==curRcDate()){
-      COVER_KICK=curRcDate(); setTimeout(function(){ SYNC_AT=0; syncNow(); },300);
-    }
-  }catch(e){}
   /* 自己剛寫完的那一下，心跳一定會變 —— 先把它對齊，才不會馬上又同步一次 */
   if(TICK_ON&&API_URL){
     fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&app='+encodeURIComponent(APP_VER)+'&_='+Date.now(),{cache:'no-store'})
@@ -9040,9 +9039,16 @@ function updReload(ver,manual){
     location.replace(u.toString());
   }catch(e){ location.reload(); }
 }
+/* ★★ b87：發現新版不要「所有手機同一秒一起重新整理」。
+   每支手機各自等 20 秒～3 分鐘（亂數），交班尖峰也不自動更新，
+   免得十幾支手機同時重開、同時去跟後端要資料。等的時候下方照樣有更新列，想馬上更新可以自己按。 */
+var UPD_WAIT=20000+Math.round(Math.random()*160000), UPD_SEEN_AT=0, UPD_SEEN_VER='';
 function updApply(){
   if(!UPD.ver){ updBar(false); return; }
-  if(UPD.force&&updSafeNow()&&!updTriedRecently(UPD.ver)){ updReload(UPD.ver,false); return; }
+  if(UPD_SEEN_VER!==UPD.ver){ UPD_SEEN_VER=UPD.ver; UPD_SEEN_AT=Date.now(); }
+  const due=Date.now()-UPD_SEEN_AT>=UPD_WAIT;
+  const rush=(typeof inRushWindow==='function')&&inRushWindow();
+  if(UPD.force&&due&&!rush&&updSafeNow()&&!updTriedRecently(UPD.ver)){ updReload(UPD.ver,false); return; }
   updBar(true);
 }
 function updBar(show){
