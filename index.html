@@ -603,10 +603,11 @@ const ACCOUNTS=[
    她的初次同步實測 39.9 秒（Apps Script 讀整份試算表就是這麼慢），
    所以逾時一定要比那個數字寬很多，否則會把「其實會成功、只是慢」的請求砍掉。 */
 const GET_MS=90000;
-async function getJSON(q){
+async function getJSON(q,ms){
+  ms=ms||GET_MS;
   const url=API_URL+(API_URL.includes('?')?'&':'?')+q+'&_='+Date.now();
   const ctl=(typeof AbortController!=='undefined')?new AbortController():null;
-  const t=ctl?setTimeout(function(){ try{ctl.abort();}catch(e){} },GET_MS):null;
+  const t=ctl?setTimeout(function(){ try{ctl.abort();}catch(e){} },ms):null;
   let r,txt;
   try{
     r=await fetch(url,Object.assign({cache:'no-store'},ctl?{signal:ctl.signal}:{}));
@@ -614,7 +615,7 @@ async function getJSON(q){
   }catch(e){
     if(t)clearTimeout(t);
     NET_ERR=(e&&e.name==='AbortError')
-      ? ('後端超過 '+Math.round(GET_MS/1000)+' 秒沒有回應')
+      ? ('後端超過 '+Math.round(ms/1000)+' 秒沒有回應')
       : String(e&&e.message||e);
     throw new Error(NET_ERR);
   }
@@ -1018,8 +1019,9 @@ async function loadBundle(spec,opts){
     const q='tables='+encodeURIComponent(spec.map(function(x){
       return x[0] + (x[1]?(':'+x[1]):((x[2]||x[3])?':':'')) + (x[2]?':arch':'') + (x[3]?':lite':'');
     }).join(','));
-    const j=await getJSON(q);
+    const j=await getJSON(q+'&app='+encodeURIComponent(APP_VER),opts&&opts.timeout);
     if(j&&j._version) API_VER_SEEN=String(j._version);
+    if(j&&j._app) updFromServer(j._app);            // ★ b83
     /* ★ 後端每次都會回「每張表各花多久」(_ms)，留一份下來 ——
        同步很慢的時候，可以直接在畫面上講出是哪一張表拖的，不用先進診斷頁。 */
     try{ if(j&&j._ms) SYNC_DETAIL=j._ms; }catch(e){}
@@ -1039,11 +1041,21 @@ async function loadBundle(spec,opts){
        loadBundle 失敗時會自己吞掉例外改走 fallback，外面 .catch 不到，
        所以想做「讀失敗就別把它當成已讀」的地方要看這個時間戳。 */
     BUNDLE_AT=Date.now();
-  }catch(e){ console.error('批次讀取失敗，改為逐張抓',e); return fallback(); }
+  }catch(e){
+    /* ★★ b84（2026-10-11 護理長：「同步太久了」，畫面顯示上次抓資料 80.9 秒、讀不到後端 HTTP 404）
+       舊版這裡是「批次讀取失敗 → 立刻改成逐張抓」，而且是同時發出去（Promise.all）。
+       批次會失敗，幾乎都是因為後端正在塞（逾時、Google 回錯誤頁）——
+       這時候一支手機馬上再丟 4～6 個請求，十幾支手機就是幾十個，
+       正好把本來只是「有點塞」推成「完全卡死」，然後大家又重新整理、又再丟一輪。
+       改成：失敗就先停手，畫面繼續顯示手機裡的資料，由 syncAll 依退避時間再試一次。
+       「後端太舊不支援批次讀取」那一條（上面 !j._version）才需要逐張抓，那條保留。 */
+    console.error('批次讀取失敗（不改逐張抓，等一下再試）',e);
+    return false;
+  }
 }
 
-const EXPECT_API_VER='2026-10-10-v36';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-10-10-b81';
+const EXPECT_API_VER='2026-10-10-v37';   // 後端應有的版本（?diag=1 可查）
+const APP_VER='2026-10-11-b84';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1218,7 +1230,10 @@ function failNote(task,err,ctx){
     const q=JSON.parse(localStorage.getItem(FAILQ_KEY)||'[]');
     q.push({ fid:Date.now().toString(36)+Math.random().toString(36).slice(2,7), task:String(task||''),
       page:FAIL_PAGE, unit:String(ctx.unit||''), empId:String(ctx.empId||''), name:String(ctx.name||''),
-      error:String(err||'').slice(0,300), ua:uaShort(), line:isLineUA(),
+      error:String(err||'').slice(0,300),
+      /* ★ b82：瀏覽器後面附上網頁版本（例：LINE內建 26.15.1 / iOS · b82）。
+         用來回答「失敗是不是都來自還沒更新的舊網頁」。放在這一欄是為了不用動後端。 */
+      ua:uaShort()+' · '+String(APP_VER).replace(/^.*-(b\d+)$/,'$1'), line:isLineUA(),
       at:new Date().toISOString(), dev:failDev() });
     while(q.length>FAILQ_MAX) q.shift();
     localStorage.setItem(FAILQ_KEY,JSON.stringify(q));
@@ -1464,21 +1479,121 @@ async function autoMaintFromRollcall(s,list){
 }
 /* ★ 確認後端真的寫進去了。失敗時在完成畫面顯示紅色警示＋重試，
    避免「畫面說完成、Sheet 裡沒有」——這是最危險的情況。 */
+/* ■■■■■■■■■■ b82：點班待送佇列＋自動補送 ■■■■■■■■■■
+   2026-10-10 護理長：「他們會重複按，多半是沒有立即更新。」
+
+   失敗紀錄證實了這一點：重複按的人，都是第一次失敗後等了 27～63 秒，
+   接著在幾秒內連按 4～8 次（林培琪 10/10 間隔 0.4～3 秒按了 7 次）。
+   後端塞住時 Google 會「馬上」回錯誤，所以每按一次就馬上失敗、再按一次 ——
+   畫面只給一個「重試上傳」鈕，沒告訴人資料其實已經在手機裡、系統會自己送。
+
+   ★ 而且舊版只有「一格」rcPending：A 表失敗還沒補上去，接著點完 B 表送出，
+     A 就被 B 蓋掉，那一筆點班從此消失。失敗紀錄裡這種情形出現過好幾次
+     （吳家儀 10/01 留觀急救車失敗 9 秒後又送留觀二、何孟婷 10/08 留觀二→留觀一、
+      林雅筑 10/02 留觀一→留觀急救車）—— 交班時一次點兩三本，正好最容易發生。
+
+   改成：
+     ① 一個「待送佇列」，每一本各自排隊，不會互相蓋掉，換版也保留
+     ② 失敗後系統自己補送：15 秒 → 30 秒 → 1 分 → 2 分 → 之後每 3 分鐘，
+        交班尖峰再拉長、加亂數，避免全部手機同一秒一起補
+     ③ 一次只送一筆，失敗就停，不要連續撞後端
+     ④ 手動「現在補送」有冷卻時間（平常 10 秒、尖峰 30 秒），按了也不會連發
+     ⑤ 畫面講實話：「已經存在這支手機了，系統會自己補送，不用一直按」
+   每一筆都帶同一個 reqId，所以就算某一次其實已經寫進去、只是回應沒收到，
+   補送時後端也會認得、不會長出重複的列。 */
+const RC_Q_MAX=30;
+let RC_DRAIN={busy:false,timer:null,tries:0,nextAt:0,manualAt:0};
+let RC_UP_AT=0;
+function rcQ(){ if(!Array.isArray(state.rcQueue)) state.rcQueue=[]; return state.rcQueue; }
+function rcQAdd(p){
+  if(!p||typeof p!=='object') return;
+  reqIdOf(p);
+  const q=rcQ();
+  if(!q.some(function(x){ return x&&x.reqId===p.reqId; })) q.push(p);
+  while(q.length>RC_Q_MAX) q.shift();
+  try{ store.save(); }catch(e){}
+}
+function rcQDone(reqId){
+  state.rcQueue=rcQ().filter(function(x){ return x&&x.reqId!==reqId; });
+  if(state.rcPending&&state.rcPending.reqId===reqId){ state.rcPending=null; state.rcSaved=true; }
+  try{ store.save(); }catch(e){}
+}
+/* 舊版留下來的那一格 rcPending 也搬進佇列（換版時不能弄丟） */
+function rcQMigrate(){ if(state.rcPending&&typeof state.rcPending==='object') rcQAdd(state.rcPending); }
+function rcBackoffMs(n){
+  const base=[15000,30000,60000,120000,180000][Math.min(n,4)];
+  const k=(typeof inRushWindow==='function'&&inRushWindow())?1.6:1;
+  return Math.round(base*k+Math.random()*base*0.4);
+}
+function rcDrainLater(ms){
+  if(RC_DRAIN.timer) return;
+  if(!rcQ().length) return;
+  ms=(ms==null)?rcBackoffMs(RC_DRAIN.tries):ms;
+  RC_DRAIN.nextAt=Date.now()+ms;
+  RC_DRAIN.timer=setTimeout(function(){ RC_DRAIN.timer=null; rcDrain(false); },ms);
+}
+async function rcDrain(manual){
+  if(RC_DRAIN.busy) return;
+  if(typeof _rcSubmitting!=='undefined'&&_rcSubmitting){ rcDrainLater(); return; }
+  const q=rcQ().slice();
+  if(!q.length){ RC_DRAIN.tries=0; return; }
+  RC_DRAIN.busy=true;
+  let allOk=true;
+  for(let i=0;i<q.length;i++){
+    let ok=false;
+    try{ const r=await owedWrite('rollcall_submit',q[i]); ok=!!(r&&r.ok); }catch(e){}
+    if(!ok){ allOk=false; break; }               // ★ 失敗就停，不要一筆接一筆撞後端
+    rcQDone(q[i].reqId);
+    if(i<q.length-1) await new Promise(function(z){ setTimeout(z,1500); });
+  }
+  RC_DRAIN.busy=false;
+  if(allOk) RC_DRAIN.tries=0; else { RC_DRAIN.tries++; rcDrainLater(); }
+  if(state.screen==='done'||state.screen==='home') render();
+}
 async function pushRollcall(payload){
+  rcQAdd(payload);                                 // ★ 先進佇列，送不送得出去都不會掉
+  RC_UP_AT=Date.now();
   let ok=false;
   try{ const r=await owedWrite('rollcall_submit',payload); ok=!!(r&&r.ok); }
   catch(e){ console.error('寫入完成紀錄失敗',e); }
-  state.rcSaved=ok;
-  if(ok) state.rcPending=null; else store.save();   // 失敗就把這筆留在本機等重送
-  if(state.screen==='done') render();
+  RC_UP_AT=0;
+  if(ok){ rcQDone(payload.reqId); state.rcSaved=true; RC_DRAIN.tries=0; }
+  else{
+    if(!state.rcPending||state.rcPending.reqId===payload.reqId) state.rcSaved=false;
+    try{ store.save(); }catch(e){}
+  }
+  if(rcQ().length) rcDrainLater();                 // 佇列裡還有（這筆或之前的）→ 排下一次自動補送
+  if(state.screen==='done'||state.screen==='home') render();
   return ok;
 }
 async function retryRollcall(){
-  if(!state.rcPending)return;
+  rcQMigrate();
+  if(!rcQ().length) return;
+  if(RC_DRAIN.busy){ toast('正在補送中，請稍候…'); return; }
+  const wait=RC_DRAIN.manualAt-Date.now();
+  if(wait>0){ toast(Math.ceil(wait/1000)+' 秒後才能再按 —— 後端忙的時候連按只會更塞'); return; }
+  RC_DRAIN.manualAt=Date.now()+((typeof inRushWindow==='function'&&inRushWindow())?30000:10000);
+  if(RC_DRAIN.timer){ clearTimeout(RC_DRAIN.timer); RC_DRAIN.timer=null; }
   toast('重新上傳中…');
-  const ok=await pushRollcall(state.rcPending);
-  toast(ok?'已上傳成功':'仍然失敗，請檢查後端連線');
+  await rcDrain(true);
+  toast(rcQ().length?'還沒成功 —— 已經存在手機裡，系統會自己繼續補送':'已上傳成功');
 }
+/* 完成畫面上的秒數與倒數，每秒更新一次（不重畫整頁） */
+setInterval(function(){
+  try{
+    const a=document.getElementById('rcEl');
+    if(a&&RC_UP_AT){ const n=Math.floor((Date.now()-RC_UP_AT)/1000); a.textContent=n;
+      const h=document.getElementById('rcSlow'); if(h) h.style.display=n>=8?'':'none'; }
+    const b=document.getElementById('rcNext');
+    if(b){ const n=Math.max(0,Math.ceil((RC_DRAIN.nextAt-Date.now())/1000)); b.textContent=RC_DRAIN.busy?'送出中':(n+' 秒後'); }
+    const c=document.getElementById('rcRetryBtn');
+    if(c){ const w=Math.ceil((RC_DRAIN.manualAt-Date.now())/1000);
+      c.disabled=w>0||RC_DRAIN.busy; c.textContent=RC_DRAIN.busy?'補送中…':(w>0?('現在補送（'+w+' 秒後可按）'):'現在補送'); }
+  }catch(e){}
+},1000);
+/* 開 App、網路恢復時：佇列裡有東西就排一次補送（加亂數，不要全部手機同一秒） */
+setTimeout(function(){ try{ rcQMigrate(); if(rcQ().length) rcDrainLater(5000+Math.random()*15000); }catch(e){} },4000);
+window.addEventListener('online',function(){ try{ if(rcQ().length) rcDrainLater(3000+Math.random()*5000); }catch(e){} });
 async function askAI(task,payload){
   if(!API_URL){alert('尚未設定後端 API_URL');return '';}
   const r=await fetch(API_URL,{method:'POST',body:JSON.stringify({task,payload})});
@@ -2371,7 +2486,7 @@ let state={screen:'login',user:null,areaId:null,sheetId:null,half:null,checks:{}
    ★ 一定要留下來的是 rcPending —— 那是還沒送出去的點班紀錄，清掉就真的不見了。 */
 /* ★ 'audits'＝雙月盤點還沒送到後端的那幾筆，跟 rcPending 同一個等級的東西，
      換版絕對不能清掉（清掉就真的不見了）。 */
-const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcSaved','signoffs','audits',
+const STATE_KEEP_ON_UPGRADE=['user','rcDate','rcPending','rcQueue','rcSaved','signoffs','audits',
                              'checks','reason','note','part','carry','carryDone','rcSlot','theme'];
 const store={
   save(){try{state._v=APP_VER;localStorage.setItem('ed_rc2',JSON.stringify(state))}catch(e){}},
@@ -3902,9 +4017,9 @@ async function clearLocalCache(){
       +'請到「急救車雙月效期盤點」重新按儲存。');
     return;
   }
-  if(state.rcPending){
-    alert('有一筆點班紀錄還沒送到後端，先送出再清。\n\n'
-      +'請到完成畫面按「重新上傳」，或確認網路後再回來。');
+  if(state.rcPending||rcQ().length){
+    alert('有 '+Math.max(1,rcQ().length)+' 筆點班紀錄還沒送到後端，先送出再清。\n\n'
+      +'系統會自己補送；也可以到首頁按「現在補送」。');
     return;
   }
   if(!confirm('要清掉這支手機的本機暫存嗎？\n\n'
@@ -6417,8 +6532,28 @@ function shortTime(s){
    看起來像很多人沒點班，其實是畫面沒更新。
    現在四張表一起抓，且在首頁／分區／點班表／Leader 頁都會自動跑。 */
 let SYNCING=false, SYNC_AT=0, SYNC_MS=null, SYNC_DETAIL=null;
+/* ★★ b84 同步退避：失敗之後不要一直重試。
+   後端塞住時，每 8 秒一次心跳、每次換畫面一次同步、每次有人存檔一次同步，
+   全部都在往同一個已經塞住的地方擠。失敗一次就先等：30 秒 → 1 分 → 2 分 → 最多 4 分（加亂數）。
+   等的這段時間畫面照常用手機裡的資料，按「立即更新」還是可以手動試（10 秒內不重複送）。
+   ★ 自動同步只等 30 秒就放棄：等 90 秒也不會比較快 —— 後端那一端還在算，
+     而它算完會留在後端的讀取快取裡，30 秒後再來拿，常常一下子就拿到了。 */
+var SYNC_FAILS=0, SYNC_BACKOFF_UNTIL=0;
+const SYNC_GET_MS=30000;
+function syncInBackoff(){ return Date.now()<SYNC_BACKOFF_UNTIL; }
+function syncFailed(){
+  SYNC_FAILS++;
+  const base=Math.min(30000*Math.pow(2,SYNC_FAILS-1),240000);
+  SYNC_BACKOFF_UNTIL=Date.now()+Math.round(base*(0.8+Math.random()*0.4));
+}
+function syncSucceeded(){ SYNC_FAILS=0; SYNC_BACKOFF_UNTIL=0; }
 async function syncAll(){
   if(SYNCING)return;
+  /* 退避中：自動呼叫的一律不送；手動按的 10 秒內也不重複送 */
+  if(syncInBackoff()&&Date.now()-SYNC_AT<10000){
+    try{ toast('剛剛才試過，後端比較忙 —— '+Math.max(1,Math.ceil((SYNC_BACKOFF_UNTIL-Date.now())/1000))+' 秒後會自動再試'); }catch(e){}
+    return;
+  }
   /* 頁面可能已經掛了好幾個小時 —— 每次同步順手檢查有沒有跨過 23:30。
      放在同步裡而不是另開計時器，是因為同步本來就會 render()。 */
   try{ if(state.user) rcAutoRollNight(); }catch(e){ console.warn('大夜跨日檢查失敗',e); }
@@ -6436,17 +6571,20 @@ async function syncAll(){
       .concat(onRc?[]:[['fridge_temp',1],['o2_check',1]])   // 首頁只看「今天登了沒」
       .concat([['cart_seal']])
       .concat(MAINT_ON?[['device_maint',3]]:[]);
-    await loadBundle(spec,{merge:true});   // ★ 合併：只更新這幾天，手上的舊資料不會被縮掉
+    await loadBundle(spec,{merge:true,timeout:SYNC_GET_MS});   // ★ 合併：只更新這幾天，手上的舊資料不會被縮掉
+    /* ★ b84：loadBundle 失敗時不再丟例外，要看「這一次有沒有真的讀成功」 */
+    if(BUNDLE_OK&&!(BUNDLE_AT>=t0)) throw new Error(NET_ERR||'同步失敗');
     SYNC_MS=Date.now()-t0;
-  }catch(e){ SYNC_MS=-1; }
+    syncSucceeded();
+  }catch(e){ SYNC_MS=-1; syncFailed(); }
   SYNC_AT=Date.now();
   SYNCING=false;
   render();
   /* 自己剛寫完的那一下，心跳一定會變 —— 先把它對齊，才不會馬上又同步一次 */
   if(TICK_ON&&API_URL){
-    fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'})
+    fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&app='+encodeURIComponent(APP_VER)+'&_='+Date.now(),{cache:'no-store'})
       .then(function(r){ return r.json(); })
-      .then(function(j){ if(j&&j.v!==undefined) TICK_V=String(j.v); }).catch(function(){});
+      .then(function(j){ if(j&&j.v!==undefined) TICK_V=String(j.v); if(j&&j.app) updFromServer(j.app); }).catch(function(){});
   }
 }
 // 舊名稱保留：畫面上各處的 ↻ 按鈕都指向這裡
@@ -6464,6 +6602,7 @@ var SYNC_FLOOR=3000;
 function syncNow(){
   if(typeof SYNCING==='undefined'||typeof SYNC_AT==='undefined')return;
   if(SYNCING)return;
+  if(typeof syncInBackoff==='function'&&syncInBackoff())return;   // ★ b84
   if(Date.now()-SYNC_AT<SYNC_FLOOR)return;
   SYNC_AT=0; syncAll();
 }
@@ -6516,7 +6655,8 @@ function syncBar(){
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
         color:${bad?'var(--bad,#E03131)':'var(--ink-soft)'}">
       <span>${SHOW_CACHE?'📦 顯示上次資料・更新中…':
-        (SYNCING?'⏳ 正在向後端同步…':(bad?'⚠ 上次同步失敗，資料可能不是最新':
+        (SYNCING?'⏳ 正在向後端同步…':(bad?('⚠ 上次同步沒成功，畫面是手機裡的資料'
+          +(syncInBackoff()?('・'+Math.max(1,Math.ceil((SYNC_BACKOFF_UNTIL-Date.now())/1000))+' 秒後自動再試'):'')):
         (SYNC_AT?('☁ 已同步・'+syncAgo()+ms+how):'☁ 尚未同步')))}</span>
       <button onclick="syncAll()" ${SYNCING?'disabled':''} style="border:1px solid var(--line);background:transparent;
         color:inherit;font-family:inherit;font-size:11.5px;padding:4px 10px;border-radius:7px;cursor:pointer">↻ 立即更新</button>
@@ -8028,15 +8168,23 @@ function renderDone(){
      ${tm.date&&tm.date!==todayISO()?`<div style="text-align:center;color:var(--warn);font-size:12.5px;margin-top:8px">補點日期：${esc(tm.date)}</div>`:''}
    </div>`:'';
   // 上傳狀態：null=進行中、true=已存後端、false=失敗（只在本機）
+  /* ★ b82：講實話。舊版失敗時只有紅字＋「重試上傳」，人就一直按。
+     其實資料已經在手機裡、系統會自己補送 —— 把這件事說清楚，人就不會一直按了。 */
+  const _qn=rcQ().length;
   const syncHtml = state.rcSaved===false
-    ? `<div class="card" style="max-width:340px;margin:0 auto 16px;background:#fbe8e8;border:1px solid #f0c0c0;color:#c0392b">
-         <div style="font-weight:800;font-size:14px;margin-bottom:6px">⚠ 這筆點班尚未存到後端</div>
-         <div style="font-size:12.5px;line-height:1.7;margin-bottom:10px">目前只留在這台裝置，主管簽核與其他人看不到。</div>
-         <button class="btn btn-block" style="background:#c0392b;color:#fff;border:none" onclick="retryRollcall()">重試上傳</button>
+    ? `<div class="card" style="max-width:360px;margin:0 auto 16px;text-align:left;background:#fff4e6;border:1px solid #ffd8a8;color:#b35309">
+         <div style="font-weight:800;font-size:14.5px;margin-bottom:6px">📱 已經存在這支手機裡了</div>
+         <div style="font-size:12.5px;line-height:1.8;margin-bottom:10px">
+           後端現在比較忙（交班時常見），<b>系統會自己補送，不用一直按</b>。<br>
+           下一次自動補送：<b id="rcNext">—</b>。你可以先去點下一本。
+           ${_qn>1?('<br>手機裡共有 <b>'+_qn+'</b> 筆在排隊，會一筆一筆送，不會互相蓋掉。'):''}<br>
+           <span style="opacity:.85">補上去之前，主管簽核與其他人暫時看不到這一筆。</span></div>
+         <button id="rcRetryBtn" class="btn btn-ghost btn-block" style="margin:0" onclick="retryRollcall()">現在補送</button>
        </div>`
     : (state.rcSaved===true
-       ? `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ok,#2f9e44);font-weight:700">✓ 已存入後端，各裝置同步</div>`
-       : `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ink-soft)">上傳中…</div>`);
+       ? `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ok,#2f9e44);font-weight:700">✓ 已存入後端，各裝置同步${_qn?('<div style="font-weight:400;color:#b35309;margin-top:4px">手機裡還有 '+_qn+' 筆之前的在排隊補送</div>'):''}</div>`
+       : `<div style="max-width:340px;margin:0 auto 16px;font-size:13px;color:var(--ink-soft)">上傳中…<b id="rcEl">0</b> 秒
+           <div id="rcSlow" style="display:none;margin-top:4px;color:#b35309">交班時段比較慢，<b>請不要重按</b>，資料已經在手機裡了。</div></div>`);
   $app.innerHTML=`
   <div class="screen"><div class="done-wrap">
     <div class="done-circle">✓</div>
@@ -8608,6 +8756,8 @@ let BOOT_MS1=0, BOOT_MS2=0;
   await loadBundle(BOOT_WAVE1);
   BOOT_MS1=Date.now()-t0;
   SHOW_CACHE=false; SYNC_AT=Date.now();
+  /* ★ b84：第一波沒讀成功（後端塞住）→ 記成失敗，走退避後重試，而不是假裝讀到了 */
+  if(BUNDLE_OK&&!(BUNDLE_AT>=t0)){ SYNC_MS=-1; try{ syncFailed(); }catch(e){} }
   render();                                   // ★ 到這裡就可以開始點班了
   const t1=Date.now();
   loadBundle(BOOT_WAVE2).then(function(){
@@ -8668,6 +8818,7 @@ function syncSoon(){
   const jitter=inRushWindow()? (500+Math.random()*9000) : (200+Math.random()*2500);
   setTimeout(function(){ SYNC_QUEUED=false;
     if(document.hidden||!state.user||SYNCING) return;
+    if(syncInBackoff()) return;                     // ★ b84
     if(!needsLiveSync()) return;
     syncAll();
   }, jitter);
@@ -8681,8 +8832,9 @@ async function tickCheck(){
   if(Date.now()-TICK_AT<tickEveryMs()-500) return;
   TICK_AT=Date.now();
   try{
-    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&_='+Date.now(),{cache:'no-store'});
+    const r=await fetch(API_URL+(API_URL.includes('?')?'&':'?')+'tick=1&app='+encodeURIComponent(APP_VER)+'&_='+Date.now(),{cache:'no-store'});
     const j=await r.json();
+    if(j&&j.app) updFromServer(j.app);              // ★ b83：後端告訴我們網頁最新是哪一版
     if(!j||j.v===undefined){ if(++TICK_BAD>=3){ TICK_ON=false; TICK_OFF_AT=Date.now(); } return; }
     TICK_BAD=0;
     if(TICK_V===null){ TICK_V=String(j.v); return; }      // 第一次只記起來
@@ -8693,9 +8845,12 @@ setInterval(function(){
   if(!state.user||SYNCING)return;
   if(document.hidden)return;
   if(!needsLiveSync())return;
+  if(syncInBackoff())return;                     // ★ b84：剛失敗過，連心跳都先停，不要往塞住的地方擠
   tickCheck();                                   // 8 秒問一次「有沒有人動過」
   /* 保底：就算心跳沒通（舊後端／掉封包），該來的完整同步還是會來。
      心跳有在運作時就把保底拉長 —— 反正有人寫入時心跳會馬上叫它同步。 */
+  /* ★ b84：上一次同步失敗、退避時間也過了 → 直接再試，不必等到下一個保底週期 */
+  if(SYNC_MS===-1){ syncAll(); return; }
   const floor=TICK_ON?(syncEveryMs()*3):syncEveryMs();
   if(Date.now()-SYNC_AT<floor-2000)return;
   syncAll();
@@ -8705,12 +8860,14 @@ setInterval(function(){
 document.addEventListener('visibilitychange',function(){
   if(document.hidden||!state.user||SYNCING)return;
   if(!needsLiveSync())return;
+  if(syncInBackoff())return;
   if(Date.now()-SYNC_AT<3000)return;
   syncAll();
 });
 window.addEventListener('focus',function(){
   if(!state.user||SYNCING)return;
   if(!needsLiveSync())return;
+  if(syncInBackoff())return;
   if(Date.now()-SYNC_AT<3000)return;
   syncAll();
 });
@@ -8721,6 +8878,145 @@ setInterval(function(){
   if(state.screen!=='rollcall'&&state.screen!=='home')return;
   loadRtls().then(function(){ if(state.screen==='rollcall'||state.screen==='home')render(); }).catch(function(){});
 },120000);
+/* ■■■■■■■■■■ 網頁自動更新（b82 起；b83 改由後端告知版本）＋建議離開 LINE 內建瀏覽器 ■■■■■■■■■■
+   2026-10-10 護理長：「他們持續用 LINE 就會一直在舊端卡住？是否可以強制他們更新？」
+
+   為什麼會卡在舊版：LINE 內建瀏覽器會把整頁留在記憶體裡。
+   很多人只是切到別的 App 再切回來，那一頁從來沒有重新載入過，
+   所以 GitHub 上換了新的 index.html，他手上跑的還是舊的程式。
+   （LINE 這個 App 本身的版本跟這件事無關，也沒辦法、也不需要強制大家更新 LINE。）
+
+   ★ b83（護理長：「你不如直接改 GS」）：不再需要 GitHub 上的 version.json。
+     每支手機問心跳、做批次讀取時順便帶上自己的版本，後端記住看過最新的那一版再回給大家。
+     只要有一支手機（通常是護理長自己）打開了新的 index.html，其他手機下一次問心跳就知道。
+     不多發任何請求，心跳本來就在跑。
+
+   看到比自己新的版本：
+     ① 人沒有在做事（首頁、清單、點完了而且已存好），也沒有待送的點班 → 自己重新載入
+     ② 人正在點班、封車、或有東西還沒存進後端 → 底部顯示更新列，回到安全的畫面再自動更新
+   ★ 防無限重整：GitHub 有時候晚幾分鐘才換到新的 index.html，
+     這時重新載入拿到的還是舊頁。所以同一個版本 10 分鐘內只自動試一次，之後改成按鈕。 */
+let UPD={ver:'',force:true,note:'',at:0,busy:false};
+function verKey(v){ const m=String(v||'').match(/^(\d{4}-\d{2}-\d{2})-b(\d+)$/); return m?[m[1],+m[2]]:null; }
+function verNewer(a,b){ const x=verKey(a), y=verKey(b); if(!x||!y) return false;
+  return x[0]>y[0]||(x[0]===y[0]&&x[1]>y[1]); }
+/* 後端回報的「網頁最新版本」 */
+function updFromServer(v){
+  v=String(v||'');
+  if(v&&verNewer(v,APP_VER)){ UPD.ver=v; UPD.force=true; }
+  else UPD.ver='';
+  try{ updApply(); }catch(e){}
+}
+function updSafeNow(){
+  try{
+    if(typeof _rcSubmitting!=='undefined'&&_rcSubmitting) return false;
+    if(typeof _sealClosing!=='undefined'&&_sealClosing) return false;
+    if(typeof SYNCING!=='undefined'&&SYNCING) return false;
+    if(state.rcPending||rcQ().length) return false;   // 還有點班沒進後端 → 不動
+    const safe=['home','pick','areas','login','adminHub','history','records','leader'];
+    if(safe.indexOf(state.screen)>=0) return true;
+    return state.screen==='done'&&state.rcSaved===true;
+  }catch(e){ return false; }
+}
+function updTriedRecently(ver){
+  try{ const t=JSON.parse(sessionStorage.getItem('ed_upd_try')||'{}');
+    return t.ver===ver&&Date.now()-t.at<10*60*1000; }catch(e){ return true; }   // 存不了就當試過（只給按鈕）
+}
+function updReload(ver,manual){
+  try{ store.save(); }catch(e){}
+  if(!manual){ try{ sessionStorage.setItem('ed_upd_try',JSON.stringify({ver:ver,at:Date.now()})); }catch(e){} }
+  try{
+    const u=new URL(location.href);
+    u.searchParams.set('v',String(ver||'').replace(/^.*-(b\d+)$/,'$1')||String(Date.now()));
+    u.searchParams.delete('openExternalBrowser');
+    location.replace(u.toString());
+  }catch(e){ location.reload(); }
+}
+function updApply(){
+  if(!UPD.ver){ updBar(false); return; }
+  if(UPD.force&&updSafeNow()&&!updTriedRecently(UPD.ver)){ updReload(UPD.ver,false); return; }
+  updBar(true);
+}
+function updBar(show){
+  let el=document.getElementById('updBar');
+  if(!show){ if(el) el.remove(); try{ document.body.style.paddingBottom=''; }catch(e){} return; }
+  if(!el){
+    el=document.createElement('div'); el.id='updBar';
+    el.setAttribute('role','button'); el.tabIndex=0;
+    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:9000;cursor:pointer;'
+      +'padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));'
+      +'background:#0f7a86;color:#fff;font-size:14px;font-weight:700;line-height:1.5;'
+      +'box-shadow:0 -4px 16px rgba(0,0,0,.18);text-align:center';
+    el.onclick=function(){ updReload(UPD.ver,true); };
+    document.body.appendChild(el);
+  }
+  const short=UPD.ver.replace(/^.*-(b\d+)$/,'$1');
+  el.innerHTML='🔄 有新版本 '+esc(short)+'，<u>點這裡更新</u>'
+    +(UPD.force&&!updSafeNow()?'<div style="font-size:12px;font-weight:400;opacity:.9">做完這一筆、回到首頁時會自動更新</div>':'')
+    +(UPD.note?'<div style="font-size:12px;font-weight:400;opacity:.9">'+esc(UPD.note)+'</div>':'');
+  try{ document.body.style.paddingBottom='64px'; }catch(e){}
+}
+
+/* ---------- 建議離開 LINE 內建瀏覽器 ----------
+   LINE 內建瀏覽器的兩個實際問題（跟 LINE 版本新舊無關）：
+     ① 頁面留在記憶體裡不重新載入 → 卡在舊版（上面那一段處理）
+     ② LINE 一關掉，常把這一頁存在手機裡的東西清掉 → 沒送出的點班、失敗補報一起消失
+   所以在首頁提醒一次，改用 Safari／Chrome 開、加入主畫面。
+   ★ openExternalBrowser=1 是 LINE 自己支援的參數：在 LINE 裡打開帶這個參數的網址，
+     LINE 會改用手機預設的瀏覽器開。
+   ★ 有一筆點班還沒存進後端時不顯示 —— 換了瀏覽器，那一筆就留在 LINE 裡出不來了。
+   ★ 按「先不要」7 天內不再出現；不擋任何操作。 */
+function lineTipHtml(){
+  try{
+    if(!isLineUA()||state.screen!=='home'||state.rcPending||rcQ().length) return '';
+    const until=Number(localStorage.getItem('ed_linetip_off')||0);
+    if(until&&Date.now()<until) return '';
+  }catch(e){ return ''; }
+  return `<div class="card" id="lineTip" style="background:#e7f5ff;border:1px solid #a5d8ff;color:#1864ab;
+      font-size:13px;line-height:1.75;margin-bottom:12px">
+    <b>📱 你現在是在 LINE 裡面開的</b><br>
+    改用 Safari／Chrome 開、再「加入主畫面」，交班時比較不容易存檔失敗，也不會卡在舊版。
+    換瀏覽器後要重新登入一次。
+    <div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="margin:0" onclick="lineOpenExternal()">用瀏覽器開啟</button>
+      <button class="btn btn-ghost" style="margin:0" onclick="lineTipOff()">先不要</button></div></div>`;
+}
+function lineOpenExternal(){
+  try{ store.save(); }catch(e){}
+  try{ const u=new URL(location.href); u.searchParams.set('openExternalBrowser','1'); location.href=u.toString(); }
+  catch(e){ location.href=location.href+(location.href.indexOf('?')>=0?'&':'?')+'openExternalBrowser=1'; }
+}
+function lineTipOff(){
+  try{ localStorage.setItem('ed_linetip_off',String(Date.now()+7*86400000)); }catch(e){}
+  const el=document.getElementById('lineTip'); if(el) el.remove();
+}
+/* 每次畫面重繪之後：補上 LINE 提醒、檢查能不能自動更新 */
+function rcQCardHtml(){
+  const q=rcQ(); if(!q.length) return '';
+  const names=q.map(function(p){ return (p.sheet||p.sheetId||'')+(p.date?(' '+String(p.date).slice(5).replace('-','/')):''); });
+  return `<div class="card" id="rcQCard" style="background:#fff4e6;border:1px solid #ffd8a8;color:#b35309;
+      font-size:13px;line-height:1.75;margin-bottom:12px">
+    <b>📱 手機裡還有 ${q.length} 筆點班等著補送</b><br>
+    ${esc(names.slice(0,6).join('、'))}${names.length>6?'…':''}<br>
+    系統會自己補送（下一次：<b id="rcNext">—</b>），不用一直按。
+    <button id="rcRetryBtn" class="btn btn-ghost btn-block" style="margin:8px 0 0" onclick="retryRollcall()">現在補送</button></div>`;
+}
+function uxAfterRender(){
+  if(state.screen==='home'&&!document.getElementById('rcQCard')){
+    const h=rcQCardHtml();
+    if(h){ const sc=document.querySelector('#app .screen'); if(sc) sc.insertAdjacentHTML('afterbegin',h); }
+  }
+  if(state.screen==='home'&&!document.getElementById('lineTip')){
+    const h=lineTipHtml();
+    if(h){ const sc=document.querySelector('#app .screen'); if(sc) sc.insertAdjacentHTML('afterbegin',h); }
+  }
+  if(UPD.ver) updApply();
+}
+(function(){
+  const _r0=render;
+  render=function(){ const out=_r0.apply(this,arguments); try{ uxAfterRender(); }catch(e){} return out; };
+})();
+
 </script>
 </body>
 </html>
