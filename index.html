@@ -578,8 +578,49 @@ const ACCOUNTS=[
   {id:"16720",name:"羅勤祐",title:"助理員",role:"點班人員",active:true},
   {id:"02907",name:"張秀月",title:"技術員",role:"點班人員",active:true},
   {id:"12706",name:"陳盈利",title:"技術員",role:"點班人員",active:true},
-  {id:"15896",name:"龔鈺雯",title:"事務員",role:"點班人員",active:true}
+  {id:"15896",name:"龔鈺雯",title:"事務員",role:"點班人員",active:true},
+  {id:"14604",name:"楊舒婷",title:"護理師",role:"點班人員",active:true},
+  {id:"16791",name:"廖妤軒",title:"護理師",role:"點班人員",active:true},
+  {id:"15731",name:"李佩樺",title:"護理師",role:"點班人員",active:true}
 ];
+/* ★★ b88（2026-10-12 護理長：accounts 分頁已經輸入新人，卻無法登入）
+   原因：登入名冊一直是寫死在這支 index.html 裡的 ACCOUNTS，Sheet 的 accounts 分頁從來沒被讀過。
+   改成：開 App 時（第二波、背景）順便讀 accounts 分頁，跟上面的名單合併 ——
+     ‧ 分頁裡有、上面沒有 → 加進來（新人不用等改程式）
+     ‧ 兩邊都有 → 以分頁為準（改職稱、角色、停用都在分頁改就好）
+   上面這份寫死的名單保留：後端讀不到時照樣可以登入。
+   ★ 登入碼一律是員編（跟以前一樣）；分頁的「登入碼」欄不使用，也請不要填真正的密碼 ——
+     後端的讀取網址是公開的，分頁內容任何拿到網址的人都讀得到。 */
+var ACCOUNTS_SHEET_AT=0;
+function accIdNorm_(v){
+  let s=String(v==null?'':v).trim().replace(/\.0+$/,'');
+  if(/^\d{1,4}$/.test(s)) s=('00000'+s).slice(-5);          // Sheet 把 02907 當數字存成 2907 → 補回 0
+  return s;
+}
+function accBool_(v){
+  if(v===false||v===0) return false;
+  const s=String(v==null?'':v).trim().toUpperCase();
+  return !(s==='FALSE'||s==='否'||s==='0'||s==='N'||s==='NO'||s==='停用');
+}
+function loadAccounts(rows){
+  if(!Array.isArray(rows)) return;
+  let add=0, upd=0;
+  rows.forEach(function(r){
+    const g=function(ks){ for(let i=0;i<ks.length;i++){ const v=pick0(r,[ks[i]]); if(v!=='') return v; } return ''; };
+    const id=accIdNorm_(g(['員編','id']));
+    if(!/^\d{5}$/.test(id)) return;                          // 標題列、說明列、空白列都略過
+    const name=String(g(['姓名','name'])).trim(); if(!name) return;
+    const role0=String(g(['角色','role'])).trim();
+    const role=(role0==='護理長'||role0==='副護理長')?role0:'點班人員';
+    const actRaw=g(['啟用','active']);
+    const o={id:id,name:name,title:String(g(['職稱','title'])).trim()||'點班人員',role:role,
+             active:(actRaw==='')?true:accBool_(actRaw)};
+    const a=ACCOUNTS.find(function(x){ return x.id===id; });
+    if(a){ Object.assign(a,o); upd++; } else { ACCOUNTS.push(o); add++; }
+  });
+  ACCOUNTS_SHEET_AT=Date.now();
+  if(add) console.log('accounts 分頁：新增 '+add+' 人、更新 '+upd+' 人');
+}
 
 /* ========== 權限模型（單一事實來源）==========
    ★ 要調整誰有權限，只改下面這兩行員編名單，其他都不用動。
@@ -993,6 +1034,7 @@ function BUNDLE_APPLY(merge){
     fridge_temp: a=>loadFridgeLog(null,a,merge),
     o2_check:    a=>loadO2Log(null,a,merge),
     staff_perm:  a=>loadPerms(a),
+    accounts:    a=>loadAccounts(a),
     rtls:        a=>loadRtls(a),
     rollcall_active:a=>loadActive(a),
     rollcall_issue: a=>loadIssues(a,merge),
@@ -1062,7 +1104,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-10-10-v37';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-10-11-b87';
+const APP_VER='2026-10-12-b88';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -2752,7 +2794,11 @@ async function doLogin_(){
   const pw=document.getElementById('pwIn').value.trim();
   const err=document.getElementById('loginErr');
   const a=ACCOUNTS.find(x=>x.id===emp);
-  if(!a){err.textContent='查無此員編';return}
+  if(!a){
+    /* ★ b88：名冊還沒從 accounts 分頁讀進來時，不要直接說查無此人 */
+    err.textContent=ACCOUNTS_SHEET_AT?'查無此員編（請護理長確認 accounts 分頁有這位、啟用＝TRUE）'
+                                     :'查無此員編 —— 名冊還在讀取中，請等 5 秒再按一次登入';
+    return}
   if(!a.active){err.textContent='此帳號已停用（留停／長假）';return}
   if(pw!==a.id){err.textContent='登入碼錯誤（初始＝員編）';return}
   state.user={id:a.id,name:a.name,title:a.title,role:a.role};
@@ -8847,7 +8893,7 @@ const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',2
      營運分析要的近 14 天，是在打開分析畫面時自己抓 30 天（openAnalytics），
      不必每個人一開 App 就先扛一份。o2_check 是全院科別 × 每天三班 × 六個評值項目，
      長得最快，抓 16 天大約 80KB、抓 3 天只要十幾 KB。 */
-const BOOT_WAVE2=[['rollcall_log',7,null,true],['owed'],['item_report'],
+const BOOT_WAVE2=[['rollcall_log',7,null,true],['owed'],['item_report'],['accounts'],
                   ['fridge_temp',3],['o2_check',3],['cart_expiry'],['rollcall_issue',3]]
   .concat(MAINT_ON?[['device_maint',7]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
