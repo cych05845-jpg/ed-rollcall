@@ -31,7 +31,14 @@ body{margin:0;font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",syst
   background:#fff;border-radius:10px;box-shadow:var(--shadow);overflow:hidden}
 .mapframe img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}
 .dot{position:absolute;width:20px;height:20px;border-radius:50%;transform:translate(-50%,-50%);
-  border:3px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4);cursor:pointer;transition:transform .12s;z-index:5}
+  border:3px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4);cursor:pointer;z-index:5;
+  transition:left .7s cubic-bezier(.4,.1,.2,1),top .7s cubic-bezier(.4,.1,.2,1),transform .12s}
+.dot.low{box-shadow:0 0 0 3px rgba(224,147,31,.65),0 2px 5px rgba(0,0,0,.4)}
+.mbadge{font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;margin-right:4px;white-space:nowrap}
+.mbadge.real{color:#1c7a45;background:#e4f6ea;border:1px solid #9fdcb6}
+.mbadge.demo{color:#b5680f;background:#fdf0dd;border:1px solid #f0c994}
+.msum{font-size:12px;color:var(--muted);margin:0 6px;white-space:nowrap}
+.msum b{color:var(--ink)} .msum b.w{color:var(--s-out)}
 .dot:hover{transform:translate(-50%,-50%) scale(1.45);z-index:9}
 .dot.sel{transform:translate(-50%,-50%) scale(1.9);z-index:10;outline:3px solid rgba(15,90,110,.45)}
 .dot.s-in{background:var(--s-in)} .dot.s-out{background:var(--s-out);animation:pulse 1.6s infinite}
@@ -168,6 +175,18 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
 .track .tp{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--primary);border:2px solid #fff;transform:translate(-50%,-50%);transition:.4s linear}
 .track .tlabel{position:absolute;top:9px;left:9px;font-size:11px;color:var(--muted);background:#fff;padding:2px 8px;border-radius:6px}
 @media(max-width:880px){.app{grid-template-columns:1fr}.rail{display:none}}
+/* ★ 手機：寬版平面圖在直式螢幕會被壓成一條細線（點看起來就超大）。
+   改成「地圖填滿高度、左右滑動看」，地圖就大了，點也相對變小。 */
+@media(max-width:760px){
+  .mapwrap{justify-content:flex-start;align-items:center;overflow:auto;-webkit-overflow-scrolling:touch;padding:6px}
+  .mapframe{width:auto;height:100%;max-width:none;max-height:none;flex:0 0 auto}
+  .dot{width:12px;height:12px;border-width:2px}
+  .dot:hover{transform:translate(-50%,-50%) scale(1.4)}
+  .dot.sel{transform:translate(-50%,-50%) scale(1.75)}
+  .dot .tag{font-size:12px;padding:2px 7px;top:-7px}
+  .legend{left:8px;bottom:8px;font-size:11px;padding:7px 9px}
+  .mapbar{top:10px;font-size:13px}
+}
 </style>
 </head>
 <body>
@@ -238,7 +257,7 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
     <button onclick="openTrack()">📍 軌跡查詢</button>
     <button onclick="switchView('list')">📋 儀器盤點</button>
     <button onclick="exportData()">⬇ 匯出點班資料</button>
-    <span class="sp">最後同步 剛剛 · 共 <span id="total"></span> 台</span>
+    <span class="sp">最後同步 <span id="syncAt">—</span> · 共 <span id="total"></span> 台</span>
   </div>
 </div>
 
@@ -292,6 +311,9 @@ const ZONES={
   treat:{name:'治療區',x:[.32,.60],y:[.60,.78]},
   triage:{name:'檢傷區',x:[.67,.73],y:[.53,.62]},
   neg:{name:'負壓室',x:[.665,.725],y:[.66,.71]},
+  nurse:{name:'護理站/辦公室',x:[.60,.645],y:[.43,.49]},
+  xray:{name:'放射/X光',x:[.25,.34],y:[.63,.71]},
+  other:{name:'其他/待確認',x:[.45,.55],y:[.90,.955]},
 };
 const STATUS={in:['站內','s-in'],out:['移位','s-out'],off:['離線','s-off'],
   repair:['送修','s-repair'],borrow:['外借','s-borrow'],away:['攜出','s-away']};
@@ -303,57 +325,59 @@ const ICON={'油壓推床':'🛏','IV Pump 輸液幫浦':'💧','生理監視器
 let seed=42; function rnd(){seed=(seed*9301+49297)%233280;return seed/233280;}
 
 // ===================== 資料來源（之後接創鈺,只改這一段） =====================
-// 點班系統後端（單一事實來源，與 index/fridge/o2 同一個部署）
+// 後端(與點班同一個 Apps Script;院內 relay 把創鈺定位寫進它的 rtls 分頁)
 const API_BASE='https://script.google.com/macros/s/AKfycbzTv13UdRLJWLEgZE1ExCp9ub_u_fi_pYxCA6ndTNT-K7zCP1Ra-wf9jfnqwgG2fKMJmg/exec';
-
 const CONFIG={
-  // 'demo'=示意資料(展示/競賽) ｜ 'feed'=即時資料
-  // 已切成 feed：rtls 表沒資料時 mergeLive 會自動退回主檔的配置區，不會空白
-  source:'feed',
-  masterUrl:API_BASE+'?table=devices',   // 設備主檔（與點班系統共用同一張 devices 表）
-  // ★ 即時來源不是直接打創鈺！rtls.cych.org.tw 是院內網域且為 http，
-  //    瀏覽器（https 的 GitHub Pages）連不到也會被混合內容擋。
-  //    改由院內排程 rtls_relay.py 每 2 分鐘推進 Sheet 的 rtls 分頁，這裡讀那張表。
-  feedUrl:API_BASE+'?table=rtls',
+  source:'feed',              // 'demo'=示意資料 ｜ 'feed'=真實即時(後端 rtls 分頁)
+  masterUrl:API_BASE+'?table=devices', // 設備主檔:財碼↔名稱/類別/配置區
+  feedUrl:API_BASE+'?table=rtls',      // 即時定位:院內 relay 推上來的 rtls 分頁
   trackUrl:'',                // 軌跡端點(可留空)
-  refreshSec:60,              // rtls 由院內每 2 分鐘推一次，前端 60 秒刷新已足夠
+  refreshSec:30,              // feed 模式自動刷新秒數(標籤約 20 分回報一次,不用太密)
 };
+const FRESH_MIN=30;           // 幾分鐘內有回報 = 追蹤中/在家;超過視為離線(脫離追蹤)
 
-// 座標校正:創鈺地圖座標 → 本平面圖(0~1)。
-// ★ 維持 null：IpsCloud 的 GET /api/v1/position（設備狀態列表）只回傳 Location 區域字串，
-//   不含座標；要拿經緯度需逐台打 /position/{userKey}，150 台成本過高。
-//   因此採「區域散布」放點——這正是本設計原本就備好的路徑。
+// 座標校正:創鈺地圖座標 → 本平面圖(0~1)。等創鈺給該樓層座標範圍再填。
+// 留 null = 不用座標,改用「區域」放點(永遠可用)。
+// 例: {minX:0,maxX:1553,minY:0,maxY:700,flipY:true}
 const CALIB=null;
 
-// 創鈺(IpsCloud) 代碼 → 本系統代碼 對照表
-// IpsCloud 的 Location 若直接回中文區域名，這裡就能對上；實際值出來後再補。
-const ZONE_ALIAS={
-  '第一觀察區':'guan1','第一觀察':'guan1','留觀1':'guan1','留觀區-1':'guan1',
-  '第二觀察區':'guan2','第二觀察':'guan2','留觀2':'guan2','留觀區-2':'guan2',
-  '急救室':'resus','急救區':'resus',
-  '檢傷區':'triage','檢傷':'triage',
-  '治療區':'treat','治療':'treat',
-  '兒科區':'peds','兒童區':'peds','兒童':'peds','兒童檢傷':'triage',
-  '負壓室':'neg','負壓':'neg'
-};
-const STATUS_ALIAS={ 'online':'in','offline':'off','Online':'in','Offline':'off' };
-
-// ★ 主檔管理（新增/刪除/匯入）權限：護理長、副護理長，加上後端 staff_perm 指派的財管組長
-const ADMIN_IDS=['05845','06843'];      // 護理長、副護理長
-let PERM_LEADS=[];                       // 由 staff_perm 載入的財管組長員編
-let adminUser=null;                      // 通過驗證的管理者
-async function loadPermLeads(){
-  try{
-    const r=await fetchT(API_BASE+'?table=staff_perm',{cache:'no-store'},8000);
-    const a=await r.json(); if(!Array.isArray(a))return;
-    const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
-    PERM_LEADS=a.filter(o=>yes(o['財管組長'])).map(o=>String(o['員編']||'').trim()).filter(Boolean);
-  }catch(e){ /* 讀不到就只認 ADMIN_IDS */ }
+// 創鈺代碼 → 本系統代碼 的對照表（拿到創鈺實際值後填這兩張）
+const ZONE_ALIAS={ /* 例: '第一觀察':'guan1','急救室':'resus','負壓':'neg','檢傷':'triage' */ };
+const STATUS_ALIAS={ /* 例: 'online':'in','offline':'off' */ };
+// 創鈺/後端的「區域字串」→ 本平面圖的區域代碼。先認已是代碼,再用關鍵字對應。
+function mapZone(v){
+  v=(''+(v||'')).trim();
+  if(!v)return 'other';
+  if(ZONES[v])return v;                         // 已是代碼(主檔 home_zone 就是 treat/triage…)
+  if(ZONE_ALIAS[v])return ZONE_ALIAS[v];
+  const has=arr=>arr.some(k=>v.indexOf(k)>=0);
+  if(has(['急救','搶救']))return 'resus';
+  if(has(['治療']))return 'treat';
+  if(has(['檢傷','分檢']))return 'triage';
+  if(has(['負壓']))return 'neg';
+  if(has(['兒科','小兒','兒童']))return 'peds';
+  if(has(['留觀一','第一觀','觀一','一觀','ER1','ER-1']))return 'guan1';
+  if(has(['留觀二','第二觀','觀二','二觀','ER2','ER-2']))return 'guan2';
+  if(has(['留觀','觀察']))return 'guan1';
+  if(has(['護理','辦公','醫護','護理長']))return 'nurse';
+  if(has(['X光','x光','X-RAY','X-ray','放射','影像','CT']))return 'xray';
+  return 'other';                               // 對不到 → 待確認區(不會消失,看得出來有台沒對到)
 }
-function canAdmin(id){ id=String(id||'').trim();
-  return ADMIN_IDS.indexOf(id)>=0 || PERM_LEADS.indexOf(id)>=0; }
-function mapZone(v){return ZONE_ALIAS[v]||v;}     // 對不到就原樣帶入,方便看出哪個沒對到
 function mapStatus(v){return STATUS_ALIAS[v]||'in';}
+
+// 後端 rtls 分頁(中文欄位:財碼/區域/樓層/在線/電量/更新時間)→ 本系統即時欄位
+function adaptRtls(r){
+  const code=String(r['財碼']||'').trim();
+  const zoneRaw=String(r['區域']||'').trim();
+  const at=r['更新時間']||'';
+  const mins=minsAgo(at);
+  const onlineFlag=(r['在線']===true||r['在線']===1||/^(true|TRUE|是|y)/.test(''+r['在線']));
+  const fresh = at ? (mins<=FRESH_MIN) : onlineFlag;   // 以回報新鮮度判斷在家/脫離
+  let bat=parseInt(r['電量'],10); if(isNaN(bat))bat=null;
+  return { code, name:'', cat:'', brand:'', home:'',
+    zone:mapZone(zoneRaw), zoneRaw, floor:String(r['樓層']||'').trim(),
+    rx:null, ry:null, status:(fresh?'in':'off'), battery:bat, lastSeen:mins, at };
+}
 function minsAgo(t){if(!t)return 0;const d=new Date(t);return isNaN(d)?0:Math.max(0,Math.round((Date.now()-d)/60000));}
 function projectXY(rx,ry){
   if(!CALIB||rx==null||ry==null)return null;
@@ -363,53 +387,54 @@ function projectXY(rx,ry){
   return [Math.max(0,Math.min(1,px)),Math.max(0,Math.min(1,py))];
 }
 
-/* 把一筆即時資料轉成本系統欄位。
-   來源＝Sheet 的 rtls 分頁（由院內 rtls_relay.py 從 IpsCloud
-   GET /api/v1/position 的 StatusViewModel 轉存），欄位對應：
-     標籤ID ← TagMac          財碼 ← UserKey（儀器以財碼註冊為 UserType=Device）
-     區域   ← Location        樓層 ← MapName
-     在線   ← IsOnline        電量 ← TagPower      更新時間 ← LastUpdateTime
-   同時保留直接吃 IpsCloud 原生欄位的能力，方便日後改為直連。 */
+// 把創鈺回傳的「一筆」轉成本系統欄位（右側欄位名待創鈺確認後微調）
 function adaptRow(r){
-  const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
-  const online = (r['在線']!==undefined) ? yes(r['在線'])
-               : (r.IsOnline!==undefined ? !!r.IsOnline
-               : (r.isOnline!==undefined ? !!r.isOnline : true));
-  // 請修／外借／攜出是「我們的」流程狀態，創鈺沒有，之後由點班系統的欄位補進來
   let st='in';
-  if(r.repair||r.repairing||r.underRepair) st='repair';
-  else if(r.borrow||r.borrowed||r.lent)    st='borrow';
-  else if(r.away||r.checkout)              st='away';
-  else if(!online)                          st='off';        // 標籤離線
-  else st=mapStatus(r.status ?? 'in');
-  const bat=parseFloat(r['電量'] ?? r.TagPower ?? r.tagPower ?? r.battery);
+  if(r.repair||r.repairing||r.underRepair) st='repair';      // 請修旗標
+  else if(r.borrow||r.borrowed||r.lent)    st='borrow';      // 借出旗標
+  else if(r.away||r.checkout)              st='away';        // 攜出
+  else if(r.online===false||r.offline)     st='off';         // 離線
+  else st=mapStatus(r.status ?? r.tagStatus ?? 'in');
   return {
-    code:   String(r['財碼'] ?? r.UserKey ?? r.userKey ?? r.code ?? '').trim(),  // 主鍵★＝財碼
-    tag:    String(r['標籤ID'] ?? r.TagMac ?? r.tagMac ?? '').trim(),
-    name:   r.name ?? r.devName,
-    cat:    r.category ?? r.cat ?? r.name ?? r.devName,
+    code:   r.id ?? r.assetNo ?? r.code,                     // ID-財碼（主鍵★）
+    name:   r.name ?? r.devName,                             // 名稱
+    cat:    r.category ?? r.cat ?? r.name ?? r.devName,      // 類別(分組用)
     brand:  r.brand ?? '',
-    home:   mapZone(r.homeZone ?? r.home ?? ''),                               // 配置區(來自主檔)
-    zone:   mapZone(r['區域'] ?? r.Location ?? r.location ?? r.Region ?? ''),   // 即時區域 ★
-    floor:  r['樓層'] ?? r.MapName ?? r.mapName ?? '',
-    rx:     r.Longitude ?? r.x ?? null,      // 列表端點不給座標，維持 null → 走區域散布
-    ry:     r.Latitude  ?? r.y ?? null,
+    home:   mapZone(r.homeZone ?? r.home ?? ''),             // 配置區
+    zone:   mapZone(r.area ?? r.areaName ?? r.zone ?? ''),   // 即時區域 ★
+    rx:     r.x ?? r.posX ?? null,                           // 座標X(創鈺地圖座標,需CALIB校正)
+    ry:     r.y ?? r.posY ?? null,                           // 座標Y
     status: st,
-    online: online,
-    battery:isNaN(bat)?100:bat,
-    lastSeen:minsAgo(r['更新時間'] ?? r.LastUpdateTime ?? r.lastUpdateTime),
+    battery:r.battery ?? 100,
+    lastSeen:minsAgo(r.lastTime ?? r.updated ?? r.ts),
   };
 }
 
-let EQUIP=[], MASTER=[];
-function assignCoords(){seed=42;EQUIP.forEach(e=>{
-  const p=projectXY(e.rx,e.ry);                              // 有校正座標就用真實點位
-  if(p){e.px=p[0];e.py=p[1];}
-  else{const z=ZONES[e.zone]||ZONES.treat;                   // 否則用區域散布
-    e.px=z.x[0]+rnd()*(z.x[1]-z.x[0]);e.py=z.y[0]+rnd()*(z.y[1]-z.y[0]);}
-});}
+let EQUIP=[], MASTER=[], MASTER_REAL=false, LIVE_REAL=false, REALMODE='demo', LAST_SYNC=null;
+// 落點:同一區多台,以「區域中心」為基準用黃金角螺旋散開(穩定、不貼邊、不重疊)
+function assignCoords(){
+  const byZone={};
+  EQUIP.forEach(e=>{ const z=ZONES[e.zone]?e.zone:'other'; (byZone[z]=byZone[z]||[]).push(e); });
+  Object.keys(byZone).forEach(zk=>{
+    const z=ZONES[zk], list=byZone[zk];
+    const cx=(z.x[0]+z.x[1])/2, cy=(z.y[0]+z.y[1])/2;
+    const rx=(z.x[1]-z.x[0]), ry=(z.y[1]-z.y[0]);
+    list.forEach((e,i)=>{
+      const p=projectXY(e.rx,e.ry);                           // 有真實座標就用(未來創鈺給座標時)
+      if(p){e.px=p[0];e.py=p[1];return;}
+      if(list.length===1){e.px=cx;e.py=cy;return;}
+      const ang=i*2.399963229;                                // 黃金角
+      const t=Math.sqrt((i+0.5)/list.length);                 // 由內往外
+      e.px=Math.max(z.x[0]+rx*0.10,Math.min(z.x[1]-rx*0.10, cx+Math.cos(ang)*rx*0.40*t));
+      e.py=Math.max(z.y[0]+ry*0.10,Math.min(z.y[1]-ry*0.10, cy+Math.sin(ang)*ry*0.40*t));
+    });
+  });
+}
 // 即時區≠配置區 → 自動標「移位」(創鈺只需給位置,移位由系統判斷)
-function deriveMoved(){EQUIP.forEach(e=>{if(e.status==='in'&&e.home&&e.zone&&e.zone!==e.home)e.status='out';});}
+// 即時區≠配置區 → 標「移位」。只對「有定位回報且兩邊都是明確區域」的才判斷,避免誤報。
+function deriveMoved(){EQUIP.forEach(e=>{
+  if(e.tracked&&e.status==='in'&&e.home&&e.zone&&e.home!=='other'&&e.zone!=='other'&&e.zone!==e.home)e.status='out';
+});}
 
 // (1) 主檔:讀同 repo 的 equipment.json(你管理的共用資訊);讀不到就用內建示意
 // fetch 逾時保護:後端再慢也不會卡死畫面
@@ -418,54 +443,75 @@ function fetchT(url,opt,ms){
   return fetch(url,Object.assign({},opt,{signal:c.signal})).finally(()=>clearTimeout(t));
 }
 async function loadMaster(){
+  MASTER_REAL=false;
   if(CONFIG.masterUrl){
     try{
       const res=await fetchT(CONFIG.masterUrl,{cache:'no-store'},8000);
       if(res.ok){
         const arr=await res.json();
-        if(Array.isArray(arr)&&arr.length){
-          const yes=v=>{v=String(v==null?'':v).trim().toUpperCase();return v==='TRUE'||v==='1'||v==='是';};
+        if(Array.isArray(arr)){
+          MASTER_REAL=true;                 // 後端有回應(即使 0 台也算真的連上)
           return arr.map(m=>({
-            unit:m.unit||'', code:String(m.code), name:m.name, cat:m.cat||m.name, brand:m.brand||'',
-            home:mapZone(m.home_zone||m.home||'treat'), needRollcall:m.need_rollcall!==false,
-            // ★ 只有 devices 表勾選「是否定位」的（約150台）才會有標籤回報
-            locate:(m.locate===true)||yes(m.locate), beaconId:m.beaconId||'',
-            zone:mapZone(m.home_zone||m.home||'treat'), status:'in', online:false,
-            battery:100, lastSeen:0, rx:null, ry:null
-          }));
+            unit:m.unit||'', code:String(m.code||'').trim(), name:m.name||'', cat:m.cat||m.name||'未分類', brand:m.brand||'',
+            home:mapZone(m.home_zone||m.home||''), needRollcall:m.need_rollcall!==false,
+            locate:(m.locate===true||m.locate==='TRUE'),
+            zone:mapZone(m.home_zone||m.home||''), status:'in', battery:100, lastSeen:0, rx:null, ry:null
+          })).filter(m=>m.code);
         }
       }
-    }catch(err){ /* 沒有資料或逾時 → 用示意 */ }
+    }catch(err){ console.warn('主檔讀取失敗',err); }
   }
-  return DEMO_EQUIP.map(o=>({...o}));     // 後備:示意資料(已含 live 欄位)
+  return [];     // 連不到/非陣列 → 空,交給 feed 或最後才用示意
 }
 
 // (2) 即時:創鈺 feed,整理成 {財碼: 即時資料}
 async function loadLive(){
+  LIVE_REAL=false;
   if(!(CONFIG.source==='feed'&&CONFIG.feedUrl))return null;
   try{
     const res=await fetchT(CONFIG.feedUrl,{cache:'no-store'},8000);
     const raw=await res.json();
-    const live=(Array.isArray(raw)?raw:(raw.items||raw.Payload||[])).map(adaptRow).filter(e=>e.code||e.tag);
-    const map={}; live.forEach(e=>{ if(e.code)map[e.code]=e; if(e.tag)map['tag:'+e.tag]=e; }); return map;
+    const rows=Array.isArray(raw)?raw:(raw.items||raw.rows||[]);
+    // 後端 rtls 用中文欄位(財碼/區域…);若未來換成英文欄位也相容
+    const live=rows.map(r=>(('財碼' in r)||('區域' in r))?adaptRtls(r):adaptRow(r)).filter(e=>e.code);
+    const map={}; live.forEach(e=>map[e.code]=e);
+    LIVE_REAL=live.length>0; LAST_SYNC=new Date();
+    return map;
   }catch(err){console.error('即時資料讀取失敗',err);return null;}
 }
 
 // (3) 合併:主檔為準(財碼/名稱/類別/配置區),即時只覆蓋 位置/狀態/座標/電量
 function mergeLive(live){
-  EQUIP=MASTER.map(m=>{
-    const e={...m};
-    // 即時資料可用財碼或標籤MAC對上（財碼優先，因為儀器以財碼註冊為 UserType=Device）
-    const L=live&&(live[m.code]||(m.beaconId&&live['tag:'+m.beaconId]));
-    if(L){
-      e.zone=L.zone||m.home; e.status=L.status; e.online=L.online;
-      e.rx=L.rx; e.ry=L.ry; e.battery=L.battery; e.lastSeen=L.lastSeen;
-      if(L.floor)e.floor=L.floor;
-    }else if(m.locate){
-      // 有裝標籤卻查無回報 → 標離線，不要假裝它乖乖待在配置區
-      e.status='off'; e.online=false;
-    }
+  const haveMaster=MASTER&&MASTER.length;
+  const haveLive=live&&Object.keys(live).length;
+  if(!haveMaster&&!haveLive){                 // 主檔與定位都空 → 才用示意(畫面會標「示意資料」)
+    REALMODE='demo';
+    EQUIP=DEMO_EQUIP.map(o=>({...o}));
+    deriveMoved(); assignCoords(); return;
+  }
+  REALMODE='real';
+  const seen={};
+  EQUIP=(MASTER||[]).map(m=>{
+    const e={...m}; seen[m.code]=1;
+    const L=live&&live[m.code];
+    if(L){                                     // 這台有定位回報
+      e.zone=L.zone||m.home||'other'; e.status=L.status; e.battery=(L.battery==null?e.battery:L.battery);
+      e.lastSeen=L.lastSeen; e.at=L.at; e.zoneRaw=L.zoneRaw; e.tracked=true;
+    }else if(haveLive){                        // feed 正常、但這台沒上定位
+      e.tracked=false;
+      if(m.locate){e.status='off'; e.lastSeen=null;}   // 有貼標卻沒回報 → 離線/脫離
+      else{e.status='in'; e.tracked=null;}             // 本來就沒貼標的設備 → 留在配置區,不當異常
+    }else{ e.tracked=null; }                   // feed 暫時讀不到 → 不亂標離線
+    if(!ZONES[e.zone])e.zone=m.home&&ZONES[m.home]?m.home:'other';
     return e;
+  });
+  // 定位有、主檔沒有的財碼 → 也要顯示(名稱先用財碼,類別標「未分類(定位中)」)
+  if(live)Object.keys(live).forEach(code=>{
+    if(seen[code])return;
+    const L=live[code];
+    EQUIP.push({ unit:'', code, name:code, cat:'未分類(定位中)', brand:'',
+      home:L.zone, zone:L.zone, needRollcall:false, locate:true,
+      status:L.status, battery:L.battery, lastSeen:L.lastSeen, at:L.at, zoneRaw:L.zoneRaw, tracked:true, rx:null, ry:null });
   });
   deriveMoved(); assignCoords();
 }
@@ -485,7 +531,7 @@ async function refreshLive(){
 // =========================================================================
 
 // 地圖顯示狀態: mapItem(單台) > mapCat(單類) > mapMode('abn'異常 / 'all'全部)
-let mapItem=null, mapCat=null, mapMode='abn';
+let mapItem=null, mapCat=null, mapMode='live';   // live=有定位的都顯示 ｜ abn=只看異常 ｜ all=全部
 let curFilter=null, selCode=null, brCode=null;
 
 function visibleOnMap(e){
@@ -493,7 +539,8 @@ function visibleOnMap(e){
   if(mapItem)return e.code===mapItem;
   if(mapCat)return e.cat===mapCat;
   if(mapMode==='all')return true;
-  return e.status==='out'||e.status==='off';   // 預設:只顯示異常
+  if(mapMode==='abn')return e.status==='out'||e.status==='off';   // 只看異常
+  return e.tracked===true||e.status==='out'||e.status==='off';   // 預設:有定位回報的都顯示(看得到位置)
 }
 
 function lbl(e){return e.unit||e.name||e.code;}            // 顯示用:優先院內編號
@@ -508,6 +555,8 @@ function renderBoard(){
     `<div class="cell ${cls} ${curFilter===k?'on':''}" onclick="filterStatus('${k}')"><div class="n">${c[k]}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('total').textContent=c.tot;
   document.getElementById('abnBadge').textContent='異常 '+(c.out+c.off);
+  const sa=document.getElementById('syncAt');
+  if(sa)sa.textContent=LAST_SYNC?LAST_SYNC.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):(REALMODE==='real'?'剛剛':'示意');
 }
 function filterStatus(k){
   if(k==='tot'){curFilter=null;mapMode='all';mapCat=null;mapItem=null;}
@@ -515,33 +564,55 @@ function filterStatus(k){
   renderAll();
 }
 
+function smartSummary(){
+  let trk=0,mv=0,off=0,low=0;
+  EQUIP.forEach(e=>{ if(e.tracked){trk++; if(e.status==='out')mv++; if(e.status==='off')off++;
+    if(e.battery!=null&&e.battery<=20)low++;} });
+  return {trk,mv,off,low};
+}
 function renderMapbar(){
-  const bar=document.getElementById('mapbar');let label='',html='';
-  if(mapItem){const e=EQUIP.find(x=>x.code===mapItem);label='只顯示:'+e.name+' '+e.code.slice(-5);}
+  const bar=document.getElementById('mapbar');let label='';
+  if(mapItem){const e=EQUIP.find(x=>x.code===mapItem);label='只顯示:'+(e?(lbl(e)+' '+e.code.slice(-5)):mapItem);}
   else if(mapCat){label='只顯示:'+mapCat+'（'+EQUIP.filter(x=>x.cat===mapCat).length+'台）';}
   else if(curFilter){label='狀態篩選:'+STATUS[curFilter][0];}
   else if(mapMode==='all'){label='顯示全部儀器';}
-  else{label='預設:只顯示異常（移位/離線）';}
-  html=`<span class="now">${label}</span>
-    <button class="chip ${mapMode==='abn'&&!mapCat&&!mapItem&&!curFilter?'on':''}" onclick="setMode('abn')">只看異常</button>
-    <button class="chip ${mapMode==='all'&&!mapCat&&!mapItem&&!curFilter?'on':''}" onclick="setMode('all')">全部</button>`;
-  if(mapCat||mapItem||curFilter)html+=`<button class="chip clear" onclick="setMode('abn')">✕ 清除</button>`;
+  else if(mapMode==='abn'){label='只顯示異常（移位/離線）';}
+  else{label='即時定位:有回報的都顯示';}
+  const s=smartSummary();
+  const badge = REALMODE==='real'
+     ? `<span class="mbadge real" title="資料來自院內 relay 推上來的創鈺定位">● 真實即時</span>`
+     : `<span class="mbadge demo" title="目前讀不到後端,顯示示意資料">● 示意資料</span>`;
+  const summ = REALMODE==='real'
+     ? `<span class="msum">追蹤中 <b>${s.trk}</b> · 移位 <b class="w">${s.mv}</b> · 離線 <b class="w">${s.off}</b> · 低電 <b class="w">${s.low}</b></span>`
+     : '';
+  let html=badge+`<span class="now">${label}</span>`+summ+
+    `<button class="chip ${mapMode==='live'&&!mapCat&&!mapItem&&!curFilter?'on':''}" onclick="setMode('live')">即時定位</button>
+     <button class="chip ${mapMode==='abn'&&!mapCat&&!mapItem&&!curFilter?'on':''}" onclick="setMode('abn')">只看異常</button>
+     <button class="chip ${mapMode==='all'&&!mapCat&&!mapItem&&!curFilter?'on':''}" onclick="setMode('all')">全部</button>`;
+  if(mapCat||mapItem||curFilter)html+=`<button class="chip clear" onclick="setMode('live')">✕ 清除</button>`;
   bar.innerHTML=html;
 }
 function setMode(m){clearTrack();mapMode=m;mapCat=null;mapItem=null;curFilter=null;renderAll();}
 
+let DOTS={};
 function renderDots(){
   const f=document.getElementById('mapframe');
-  f.querySelectorAll('.dot').forEach(d=>d.remove());
-  EQUIP.forEach(e=>{
-    if(!visibleOnMap(e))return;
-    const d=document.createElement('div');
-    d.className='dot s-'+e.status+(e.code===selCode?' sel':'');
-    d.style.left=(e.px*100)+'%';d.style.top=(e.py*100)+'%';
-    d.innerHTML=`<span class="tag">${lbl(e)}</span>`;
-    d.title=e.name+' '+e.code;
-    d.onclick=ev=>{ev.stopPropagation();showPop(e,d);};
-    f.appendChild(d);
+  const want={};
+  EQUIP.forEach(e=>{ if(visibleOnMap(e))want[e.code]=e; });
+  // 收掉不該顯示的點
+  Object.keys(DOTS).forEach(code=>{ if(!want[code]){DOTS[code].remove();delete DOTS[code];} });
+  // 新增 / 就地更新(重用節點 → 位置變動會平滑滑過去)
+  Object.keys(want).forEach(code=>{
+    const e=want[code]; let d=DOTS[code];
+    if(!d){ d=document.createElement('div'); d.innerHTML='<span class="tag"></span>';
+      d.onclick=ev=>{ev.stopPropagation();showPop(d._e,d);};
+      f.appendChild(d); DOTS[code]=d; }
+    d._e=e;
+    const low=(e.battery!=null&&e.battery<=20);
+    d.className='dot s-'+e.status+(e.code===selCode?' sel':'')+(low?' low':'');
+    d.style.left=(e.px*100)+'%'; d.style.top=(e.py*100)+'%';
+    d.querySelector('.tag').textContent=lbl(e)+(low?' 🔋'+e.battery+'%':'');
+    d.title=(e.name||e.code)+(e.zoneRaw?(' · '+e.zoneRaw):'');
   });
 }
 
@@ -550,10 +621,14 @@ function showPop(e,d){
   document.querySelectorAll('.poptip').forEach(p=>p.remove());
   const p=document.createElement('div');p.className='poptip';
   p.style.left=(e.px*100)+'%';p.style.top=(e.py*100)+'%';
-  const [sl]=STATUS[e.status];const moved=e.zone!==e.home;
-  p.innerHTML=`<h4>${lbl(e)}</h4><div class="code">${e.code} · ${e.brand}</div>
-    <div class="meta"><span>即時:<b style="${moved?'color:#b5680f':''}">${ZONES[e.zone].name}</b></span><span>配置:${ZONES[e.home].name}</span></div>
-    <div class="meta"><span>狀態:<b>${sl}</b></span><span>🔋${e.battery}% · ${e.lastSeen}分前</span></div>
+  const [sl]=STATUS[e.status];const moved=e.status==='out';
+  const zName=(ZONES[e.zone]||ZONES.other).name + (e.zoneRaw&&e.zoneRaw!==(ZONES[e.zone]||{}).name?('（'+e.zoneRaw+'）'):'');
+  const hName=(ZONES[e.home]||ZONES.other).name;
+  const bat=(e.battery==null?'—':e.battery+'%');
+  const seen=(e.lastSeen==null?(e.tracked===false?'尚未回報':'—'):e.lastSeen+'分前');
+  p.innerHTML=`<h4>${lbl(e)}</h4><div class="code">${e.code}${e.brand?(' · '+e.brand):''}</div>
+    <div class="meta"><span>大概位置:<b style="${moved?'color:#b5680f':''}">${zName}</b></span><span>配置:${hName}</span></div>
+    <div class="meta"><span>狀態:<b>${sl}</b></span><span>🔋${bat} · ${seen}</span></div>
     <div class="acts"><button onclick="openBR('${e.code}')">外借/送修</button>
     <button onclick="document.getElementById('tkCode').value='${e.code}';openTrack();playTrack();">查軌跡</button></div>`;
   document.getElementById('mapframe').appendChild(p);
@@ -630,32 +705,7 @@ function switchView(v){
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.view===v));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('on'));
   document.getElementById('v-'+v).classList.add('on');
-  if(v==='list')renderList();if(v==='data')renderDataView();
-  if(v==='admin'){ adminUser?renderAdmin():renderAdminGate(); }
-}
-// ★ 主檔管理需驗證身分：護理長／副護理長／財管組長（刷員編）
-function renderAdminGate(){
-  const v=document.getElementById('v-admin');
-  v.innerHTML=`<div style="max-width:420px;margin:40px auto;padding:22px;border:1px solid var(--line);border-radius:12px;background:#fff">
-    <div style="font-weight:800;font-size:16px;margin-bottom:6px">🔒 主檔管理需要權限</div>
-    <div style="font-size:13px;color:#5d6c77;line-height:1.8;margin-bottom:14px">
-      新增／刪除／匯入設備主檔會影響全院點班，僅限<b>護理長、副護理長、財管組長</b>操作。<br>
-      其他人員仍可正常使用地圖、盤點與查詢。</div>
-    <input id="adm_id" inputmode="numeric" placeholder="刷／輸入員編"
-      style="width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:16px"
-      onkeydown="if(event.key==='Enter')tryAdmin()">
-    <div id="adm_msg" style="font-size:12.5px;color:#c0392b;min-height:18px;margin:8px 2px"></div>
-    <button onclick="tryAdmin()" style="width:100%;padding:11px;border:none;border-radius:9px;
-      background:var(--brand,#0f7a86);color:#fff;font-weight:800;font-size:15px;cursor:pointer">驗證</button>
-  </div>`;
-  setTimeout(()=>{const el=document.getElementById('adm_id');if(el)el.focus();},50);
-}
-function tryAdmin(){
-  const id=(document.getElementById('adm_id').value||'').trim();
-  const msg=document.getElementById('adm_msg');
-  if(!id){msg.textContent='請輸入員編';return;}
-  if(!canAdmin(id)){msg.textContent='此員編沒有主檔管理權限，請洽護理長或財管組長';return;}
-  adminUser=id; renderAdmin();
+  if(v==='list')renderList();if(v==='data')renderDataView();if(v==='admin')renderAdmin();
 }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchView(t.dataset.view));
 
@@ -923,7 +973,7 @@ function clearTrack(){
   document.getElementById('mapframe').querySelectorAll('.trackdot,.trackstart').forEach(x=>x.remove());
   document.getElementById('trackBar').classList.remove('on');
   document.getElementById('mapbar').style.display='';         // 還原篩選列
-  if(trackDevice){mapItem=null;mapMode='abn';selCode=null;trackDevice=null;renderAll();}  // 收掉「只看這台」回到預設
+  if(trackDevice){mapItem=null;mapMode='live';selCode=null;trackDevice=null;renderAll();}  // 收掉「只看這台」回到預設
 }
 
 function renderAll(){renderBoard();renderGroups();renderMapbar();renderDots();}
@@ -937,20 +987,14 @@ function bootDeepLink(){
   renderAll();
 }
 async function boot(){
-  // 先用內建示意資料把畫面畫出來(後端再慢也不白屏)
-  MASTER=DEMO_EQUIP.map(o=>({...o}));
-  mergeLive(null);
-  bootDeepLink();
-  // 背景載入真實主檔(+即時)與權限名單,好了再重畫
+  // 先畫一次(後端再慢也不白屏);MASTER 空 → mergeLive 會用示意並標「示意資料」
+  MASTER=[]; mergeLive(null); bootDeepLink();
+  // 背景載入真實主檔(+即時),好了再重畫
   try{
-    const [master,,] = await Promise.all([loadMaster(), loadPermLeads()]);
-    MASTER=master;
+    MASTER=await loadMaster();
     const live=await loadLive();
     mergeLive(live);
-    bootDeepLink();
-    // 從點班系統帶進來的員編（openDeviceMap 會附 ?uid=），有權限就免再刷一次
-    const uid=new URLSearchParams(location.search).get('uid');
-    if(uid&&canAdmin(uid))adminUser=uid;
+    renderAll(); bootDeepLink();
   }catch(e){console.error('載入真實資料失敗,維持示意',e);}
   if(CONFIG.source==='feed'&&CONFIG.refreshSec){
     setInterval(refreshLive,CONFIG.refreshSec*1000);
