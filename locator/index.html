@@ -497,7 +497,7 @@ function mergeLive(live){
   const seen={};
   EQUIP=(MASTER||[]).map(m=>{
     const e={...m}; seen[m.code]=1;
-    if(!e.cat||e.cat==='未分類'){const _fx=CAT_FIX[e.code]; if(_fx)e.cat=_fx;} const _nk=NICK[e.code]; if(_nk&&!e.unit)e.nick=_nk;
+    if(!e.cat||e.cat==='未分類'){const _fx=CAT_FIX[e.code]; if(_fx)e.cat=_fx;} const _nk=NICK[e.code]; if(_nk)e.nick=_nk;
     const L=live&&live[m.code];
     if(L){                                     // 這台有定位回報
       e.zone=L.zone||m.home||'other'; e.status=L.status; e.battery=(L.battery==null?e.battery:L.battery);
@@ -548,7 +548,7 @@ function visibleOnMap(e){
   return e.tracked===true||e.status==='out'||e.status==='off';   // 預設:有定位回報的都顯示(看得到位置)
 }
 
-function lbl(e){return e.unit||e.nick||e.name||e.code;}            // 顯示用:優先院內編號
+function lbl(e){return (e.nick&&e.nick!==e.cat)?e.nick:(e.unit||e.nick||e.name||e.code);}            // 顯示用:優先院內編號
 function statusCounts(){const c={tot:EQUIP.length,in:0,out:0,off:0,repair:0,borrow:0,away:0};
   EQUIP.forEach(e=>c[e.status]++);return c;}
 
