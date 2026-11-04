@@ -710,29 +710,54 @@ function sealUndoOK(){ return apiVerNum()>=19; }
    在那之前做這個等於叫人做兩次，功能再完整也沒有意義。
    ★ 程式沒有刪掉，只是關著：等院內開了匯入介面（或書籤代填談成），
      把這一行改成 true 就整包回來，後端 device_maint 也還在。 */
-let MAINT_ON=false;
+/* ★★ b89（2026-10-28 護理長：儀器保養先試，只有 AED 跟六台電擊器）
+   ‧ 心臟電擊器 6 台：每班每台都要點（各區點班表）
+   ‧ AED 電擊器 1 台：一天一次，白班 Leader 點（Leader 點班表「AED+TCP+電池」）
+   院內保養清單同時顯示新財產編號與舊財碼：34030101-000074 (8002291)，asset2 就是新編號。
+   院內的「保養人」＝登入院內的人 —— 送出鍵一律由人按，不做自動登入／自動送出。 */
+let MAINT_ON=true;
+const DEFIB_RE=/DC\s*SHOCK|電擊|除顫|去顫/i;
 const DEFIB=[
-  {id:'ER-1',asset:'8002291',name:'飛利浦 DC Shock 1 號',sheetId:'resus-2',zone:'急救室',note:'全配'},
-  {id:'ER-2',asset:'8002292',name:'飛利浦 DC Shock 2 號',sheetId:'resus-2',zone:'急救室',note:'全配'},
-  {id:'ER-3',asset:'8002288',name:'飛利浦 DC Shock 3 號',sheetId:'resus-2',zone:'急救室',note:'簡配'},
-  {id:'ER-4',asset:'8002287',name:'飛利浦 DC Shock 4 號',sheetId:'resus-2',zone:'急救室',note:'簡配'},
-  {id:'ER-5',asset:'8002290',name:'飛利浦 DC Shock 5 號',sheetId:'peds-area',zone:'兒童區',note:''},
-  {id:'ER-6',asset:'8002289',name:'飛利浦 DC Shock 6 號',sheetId:'obs-2',zone:'留觀區',note:''}
+  {id:'ER-1',asset:'8002291',asset2:'34030101-000074',name:'飛利浦 DC Shock 1 號',sheetId:'resus-2',zone:'急救室',note:'全配',match:DEFIB_RE},
+  {id:'ER-2',asset:'8002292',asset2:'34030101-000075',name:'飛利浦 DC Shock 2 號',sheetId:'resus-2',zone:'急救室',note:'全配',match:DEFIB_RE},
+  {id:'ER-3',asset:'8002288',asset2:'34030101-000071',name:'飛利浦 DC Shock 3 號',sheetId:'resus-2',zone:'急救室',note:'簡配',match:DEFIB_RE},
+  {id:'ER-4',asset:'8002287',asset2:'34030101-000070',name:'飛利浦 DC Shock 4 號',sheetId:'resus-2',zone:'急救室',note:'簡配',match:DEFIB_RE},
+  {id:'ER-5',asset:'8002290',asset2:'34030101-000073',name:'飛利浦 DC Shock 5 號',sheetId:'peds-area',zone:'兒童區',note:'',match:DEFIB_RE},
+  {id:'ER-6',asset:'8002289',asset2:'34030101-000072',name:'飛利浦 DC Shock 6 號',sheetId:'obs-2',zone:'留觀區',note:'',match:DEFIB_RE},
+  /* AED 的點班項目叫「AED+TCP+電池」；同一張表還有「AED成人／兒童貼片」，那兩個是耗材，不能對到 */
+  {id:'AED',asset:'34030101-000076',asset2:'34030101-000076',name:'AED 電擊器',sheetId:'leader',zone:'Leader',note:'每日・白班',
+   freq:'day',shift:'D',match:/AED(?!.*貼片)/i}
 ];
+/* 這台在這一班要不要保養：電擊器每班都要；AED 只有白班 */
+function maintDue(dev,shift){ return dev.freq!=='day' || String(shift)===String(dev.shift||'D'); }
+function maintDevsAt(shift){ return DEFIB.filter(function(d){ return maintDue(d,shift); }); }
+/* ★ b89：保養資料只在「會顯示它」的畫面才跟著自動更新一起抓 ——
+   一般人停在首頁、點沒有電擊器的表時，每 20 秒不必多讀一張表（速度優先）。 */
+function maintNeedSync(){
+  if(!MAINT_ON) return false;
+  const sc=state.screen;
+  if(sc==='maint'||sc==='maintHub'||sc==='done') return true;
+  if((sc==='rollcall'||sc==='half')&&state.sheetId) return DEFIB.some(function(d){ return d.sheetId===state.sheetId; });
+  if(sc==='home'||sc==='leader') return maintIsLeader();
+  return false;
+}
+function maintSlotsPerDay(){ return SHIFT_SEQ.reduce(function(n,sh){ return n+maintDevsAt(sh).length; },0); }
+function devCodes(dev){ return dev.asset2&&dev.asset2!==dev.asset?(dev.asset2+'（'+dev.asset+'）'):(dev.asset2||dev.asset); }
 /* 欄位名跟院內那張卡一字不差。不一樣的話，轉寫的人要自己翻譯，翻譯就會出錯。 */
+/* ★ b89：順序改成院內保養表單的順序（護理長 10/28 截圖），代登的人由上往下對著點 */
 const MAINT_FIELDS=[
+  {k:'功能檢測',label:'功能檢測'},
   {k:'外觀版面',label:'外觀版面無破損'},
   {k:'外觀清潔',label:'外觀清潔'},
-  {k:'導線整齊',label:'導線纏繞整齊'},
-  {k:'功能檢測',label:'功能檢測'},
-  {k:'蓄電功能',label:'蓄電功能'},
   {k:'列印記錄',label:'列印記錄功能'},
-  {k:'儀器時間',label:'儀器時間'}
+  {k:'蓄電功能',label:'蓄電功能'},
+  {k:'儀器時間',label:'儀器時間'},
+  {k:'導線整齊',label:'導線纏繞整齊'}
 ];
 const MAINT_VALS=['正常','異常','不適用'];
 let MAINTLOG=[];
 function defibById(id){ for(let i=0;i<DEFIB.length;i++) if(DEFIB[i].id===id) return DEFIB[i]; return null; }
-function defibOfSheet(sheetId){ return DEFIB.filter(d=>d.sheetId===sheetId); }
+function defibOfSheet(sheetId,shift){ const sh=shift||effShift(); return DEFIB.filter(d=>d.sheetId===sheetId&&maintDue(d,sh)); }
 function hasDefib(sheetId){ return MAINT_ON && defibOfSheet(sheetId).length>0; }
 async function loadMaint(days,pre,merge){
   if(!API_URL&&!pre)return;
@@ -1104,7 +1129,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-10-10-v37';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-10-12-b88';
+const APP_VER='2026-10-28-b89';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -1494,8 +1519,8 @@ async function submitRollcall(){
      被這裡一句「全正常」蓋掉會把真實狀況抹掉。 */
 async function autoMaintFromRollcall(s,list){
   if(!MAINT_ON) return;
-  const devs=defibOfSheet(s.id); if(!devs.length) return;
   const item=list.filter(o=>isDefibItem(s.id,o.name))[0]; if(!item) return;
+  const devs=defibForItem(s.id,item.name); if(!devs.length) return;
   const st=state.checks[keyOf(item)];
   if(st!=='ok'&&st!=='bad') return;
   if(!maintWriteOK()){
@@ -2881,7 +2906,7 @@ function renderHome(){
     <button class="btn btn-ghost btn-block" style="margin-bottom:10px" onclick="state.screen='owed';render()">📦 欠物本（依分區）</button>
     ${maintIsLeader()?(function(){ const b=maintBadToday();
       return `<button class="btn btn-ghost btn-block ${b?'':'done'}" style="margin-bottom:10px"
-        onclick="openMaintHub()">🛠 今天的電擊器保養${b?('（'+b+' 台異常）'):'（全部正常）'}</button>`;})():''}
+        onclick="openMaintHub()">🛠 今天的儀器保養${b?('（'+b+' 台異常）'):'（全部正常）'}</button>`;})():''}
     ${reviewBtn}
     ${(!hasAdmin&&can('record.print'))?`<button class="btn btn-ghost btn-block" style="margin-bottom:10px"
       onclick="openPrintWeek()">🖨 每週點班紀錄（可列印・抽查用）</button>
@@ -3072,9 +3097,9 @@ function renderRollcall(){
       <span class="tool-pill" onclick="openMap('全部儀器')">🗺 全部儀器</span>
       ${hasDefib(s.id)?(function(){
         const pend=maintPending(s.id), mv=maintToMove(s.id), tot=defibOfSheet(s.id).length;
-        return `<span class="tool-pill ${pend.length?'':'done'}" onclick="openMaint('${s.id}')">🛠 電擊器保養卡（${tot-pend.length}/${tot}）${
+        return `<span class="tool-pill ${pend.length?'':'done'}" onclick="openMaint('${s.id}')">🛠 保養卡（${tot-pend.length}/${tot}）${
           (!pend.length&&mv.length)?(' · '+mv.length+' 台待轉入院內'):''}</span>`;})()
-      :'<span class="tool-pill" style="opacity:.55" onclick="alert(\'這張點班表沒有電擊器。\\n\\n目前保養卡只做電擊器（6 台，在急救室-2、兒童區、留觀區-2）。\')">🛠 保養卡</span>'}</div>
+      :'<span class="tool-pill" style="opacity:.55" onclick="alert(\'這張點班表本班沒有要保養的儀器。\\n\\n心臟電擊器 6 台每班（急救室-2、兒童區、留觀區-2）；AED 每天白班由 Leader 點。\')">🛠 保養卡</span>'}</div>
       <div style="font-size:11px;color:var(--ink-soft);margin:-4px 2px 10px">＊只有 devices 表「是否定位」勾選的儀器才會出現 📍；綠點＝標籤主動回報中</div>`;
     const rows=its.map(o=>renderItem(o,s)).join('');
     blocks+=`<div class="cat">
@@ -3314,7 +3339,40 @@ function setCheck(k,v){state.checks[k]=(state.checks[k]===v?'':v);if(state.check
 function setReason(k,r){state.reason[k]=(state.reason[k]===r?'':r);render()}
 function setNote(k,v){state.note[k]=v}
 
-const ZONE_NAME={triage:'檢傷區',resus:'急救室',treat:'治療區',peds:'兒科區',guan1:'第一觀察區',guan2:'第二觀察區',neg:'負壓室'};
+const ZONE_NAME={triage:'檢傷區',resus:'急救室',treat:'治療區',peds:'兒科區',guan1:'第一觀察區',guan2:'第二觀察區',neg:'負壓室',
+  treat1:'治療區-一診',treat2:'治療區-二診',treat3:'治療區-三診',nurse:'護理站/辦公室',xray:'放射/X光',ct:'CT室',pharmacy:'急診藥局',meeting:'急診討論室',elevA:'A棟電梯',other:'待確認'};
+/* ★ 與 locator 同一套：創鈺原始房名 → 區域代碼（含一/二/三診、退配置、各周邊區） */
+function rtlsZoneKey(v){
+  v=(''+(v||'')).trim();
+  if(!v)return 'other';
+  if(ZONE_NAME[v])return v;                       // 已經是代碼
+  var has=function(a){return a.some(function(k){return v.indexOf(k)>=0;});};
+  if(has(['急救','搶救']))return 'resus';
+  if(has(['外傷']))return 'treat1';
+  if(has(['診間1','1診','一診','診一']))return 'treat1';
+  if(has(['診間2','2診','二診','診二']))return 'treat2';
+  if(has(['診間3','3診','三診','診三']))return 'treat3';
+  if(has(['治療']))return 'treat';
+  if(has(['檢傷','分檢']))return 'triage';
+  if(has(['負壓']))return 'neg';
+  if(has(['兒科','小兒','兒童']))return 'peds';
+  if(has(['留觀一','第一觀','觀一','一觀','ER1','ER-1']))return 'guan1';
+  if(has(['留觀二','第二觀','觀二','二觀','ER2','ER-2']))return 'guan2';
+  if(has(['留觀','觀察']))return 'guan1';
+  if(has(['護理','辦公','醫護','護理長']))return 'nurse';
+  if(has(['CT']))return 'ct';
+  if(has(['X光','x光','X-RAY','X-ray','放射','影像']))return 'xray';
+  if(has(['藥局','藥物']))return 'pharmacy';
+  if(has(['討論','會議']))return 'meeting';
+  if(has(['電梯']))return 'elevA';
+  return 'other';
+}
+function rtlsFam(z){return (z==='treat1'||z==='treat2'||z==='treat3')?'treat':z;}  // 一/二/三診都算治療區
+// 即時定位要顯示的區域名：rtls 對到明確區就用它，只給「急診」等粗區（→other）就退回配置區
+function rtlsWhere(s,d){
+  if(s&&s.zone){ var zk=rtlsZoneKey(s.zone); if(zk!=='other') return ZONE_NAME[zk]; }
+  return ZONE_NAME[d.zone]||d.zone||'—';
+}
 let LOCED=[];
 const OWED_FALLBACK=[{"id": "OW001", "zone": "急救室", "date": "2023-05-01", "item": "ETCO2(黑)", "names": "張祺勝", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW002", "zone": "急救室", "date": "2023-07-07", "item": "鋼彎", "names": "林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "2023/10/7已送單"}, {"id": "OW003", "zone": "急救室", "date": "2024-12-18", "item": "0號 Mask", "names": "江沛鄉/曾鈺涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW004", "zone": "急救室", "date": "2025-08-08", "item": "血氧機", "names": "李宜靜", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": "不確定是否已回來"}, {"id": "OW005", "zone": "急救室", "date": "2025-11-04", "item": "5號 Mask", "names": "蔡依玲/林伯雄", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW006", "zone": "急救室", "date": "2025-11-14", "item": "5號 Mask", "names": "楊琇涵/林素娥", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW007", "zone": "急救室", "date": "2026-03-30", "item": "ETCO2(黑)", "names": "張祺勝/劉彩晶", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW008", "zone": "第一診間", "date": "2020-06-13", "item": "大彎Kelly", "names": "林伯雄/松韻禪", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW009", "zone": "第一診間", "date": "2023-11-08", "item": "CVP包", "names": "林妤蓁/張爾珈", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW010", "zone": "第一診間", "date": "2024-02-19", "item": "張眼器(小)", "names": "陳永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW011", "zone": "第一診間", "date": "2026-05-03", "item": "置針座5號", "names": "黃晟凱", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW012", "zone": "檢傷", "date": "2024-10-16", "item": "Suction tube", "names": "張舜硯", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW013", "zone": "檢傷", "date": "2025-01-26", "item": "Forceps", "names": "楊琇涵", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW014", "zone": "檢傷", "date": "2025-06-02", "item": "Suction tube", "names": "蕭筑云", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW015", "zone": "留觀區", "date": "2019-09-03", "item": "小鼻聶", "names": "家儀/琪文/祐蓁/鐘毅", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW016", "zone": "留觀區", "date": "2026-02-24", "item": "冰枕", "names": "永軒", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}, {"id": "OW017", "zone": "留觀區", "date": "2026-02-26", "item": "冰枕", "names": "乃嘉", "status": "欠物中", "way": "", "closer": "", "closeDate": "", "note": ""}];
 let OWED=OWED_FALLBACK.slice();
@@ -5269,7 +5327,7 @@ function analytics(){
     dev.loc++;
     const s=rtlsOf(d);
     if(s&&s.live){ dev.live++;
-      if(s.zone&&d.zone&&String(s.zone)!==String(d.zone))dev.moved++;
+      if(s.zone&&d.zone){ var _fr=rtlsFam(rtlsZoneKey(s.zone)), _fh=rtlsFam(rtlsZoneKey(d.zone)); if(_fr!=='other'&&_fh!=='other'&&_fr!==_fh)dev.moved++; }
       if(s.lowPower)dev.low.push({name:d.unit||d.name,p:s.power});
     } else dev.off.push(d.unit||d.name);
   });
@@ -6288,7 +6346,7 @@ function locRows(list){
   const row=d=>{
     const s=rtlsOf(d);
     const on=!!(s&&s.live);
-    const where=(s&&s.zone)?((ZONE_NAME[s.zone]||s.zone)+(s.floor?(' · '+s.floor):'')):(ZONE_NAME[d.zone]||d.zone||'—');
+    const where=rtlsWhere(s,d)+((s&&s.zone&&s.floor)?(' · '+s.floor):'');
     const when=s? (s.mins===null?esc(s.at):(s.mins<1?'剛剛':(s.mins<60?(s.mins+' 分鐘前'):(Math.floor(s.mins/60)+' 小時前'))))
                : (d.locate?'尚無回報':'未裝定位');
     const bat=(s&&s.power!==null)?`<span class="loc-st-badge" style="${s.lowPower?'color:#e8590c;font-weight:800':''}">${s.lowPower?'🔋 ':''}${s.power}%</span>`:'';
@@ -6716,7 +6774,7 @@ async function syncAll(){
     const spec=[['rollcall_log',2,null,true],['rollcall_active']]
       .concat(onRc?[]:[['fridge_temp',1],['o2_check',1]])   // 首頁只看「今天登了沒」
       .concat([['cart_seal']])
-      .concat(MAINT_ON?[['device_maint',3]]:[]);
+      .concat(maintNeedSync()?[['device_maint',2]]:[]);   // ★ b89：只有看得到保養狀態的畫面才抓
     await loadBundle(spec,{merge:true,timeout:SYNC_GET_MS});   // ★ 合併：只更新這幾天，手上的舊資料不會被縮掉
     /* ★ b84：loadBundle 失敗時不再丟例外，要看「這一次有沒有真的讀成功」 */
     if(BUNDLE_OK&&!(BUNDLE_AT>=t0)) throw new Error(NET_ERR||'同步失敗');
@@ -8509,7 +8567,10 @@ function maintTodoHtml(sheetId,compact){
      ・全正常的（絕大多數）→ 一句話：直接按【保養完成】
      ・有異常的 → 列出是哪一格、備註要打什麼，而且可以一鍵複製
      ・打完按一下，下次進來就不會再看到它 —— 才不會重複打或漏打 */
-function openMaintHub(){ state.maintAllShifts=false; state.screen='maintHub'; render(); }
+function openMaintHub(){ state.maintAllShifts=false; state.screen='maintHub'; render();
+  /* ★ b89：代登頁不跟每 20 秒的自動更新走，打開時自己抓一次（之後按「已打進院內」也會重抓） */
+  loadBundle([['device_maint',3]],{merge:true,timeout:SYNC_GET_MS}).then(function(){ if(state.screen==='maintHub') render(); });
+}
 function toggleMaintAll(){ state.maintAllShifts=!state.maintAllShifts; render(); }
 
 /* 複製到剪貼簿。navigator.clipboard 在非 https 會失效（院內可能是 http），
@@ -8555,31 +8616,37 @@ function renderMaintHub(){
   const shifts=state.maintAllShifts?SHIFT_SEQ:[cur];
   let filled=0, moved=0, waiting=0, blank=0;
   const blocks=shifts.map(function(sh){
-    const rows=DEFIB.map(function(dev){
+    const rows=maintDevsAt(sh).map(function(dev){
       const t=maintTodoOf(dev.id,sh);
       const bid='cp_'+sh+'_'+dev.id;
+      const nameCell=`<div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(devCodes(dev))}<br>${esc(dev.id)}・${esc(dev.zone)}</span></div>`;
       if(!t){ blank++;
         return `<div class="mh-row mh-blank">
-          <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
+          ${nameCell}
           <div class="mh-body">這一班還沒有人填保養卡 —— 先請該班填，再來院內打</div>
           <div class="mh-act"></div></div>`; }
       filled++;
       if(t.moved){ moved++;
         return `<div class="mh-row mh-done">
-          <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
-          <div class="mh-body">✓ 已核對院內已打${t.rec.movedBy?('（'+esc(t.rec.movedBy)+'）'):''}${t.rec.movedAt?('　'+esc(String(t.rec.movedAt).slice(5,16))):''}</div>
+          ${nameCell}
+          <div class="mh-body">✓ 已打進院內${t.rec.movedBy?('（'+esc(t.rec.movedBy)+'）'):''}${t.rec.movedAt?('　'+esc(String(t.rec.movedAt).slice(5,16))):''}</div>
           <div class="mh-act"><button class="mh-undo" onclick="markMaintMoved('${dev.id}',true,'${sh}')">取消</button></div></div>`; }
       waiting++;
-      const body=t.allOK
-        ? `<b class="mh-ok">7 項全部正常</b>${t.rec.by?('　<span style="color:var(--ink-soft);font-weight:400">'+esc(t.rec.by)+'</span>'):''} → 院內直接按【保養完成】`
+      /* ★ b89 代登用：先給「找哪一台」（院內清單可搜尋財碼），再給「誰、幾點做的」 */
+      const cpId='cpa_'+sh+'_'+dev.id;
+      const who=`<div class="mh-who">🔍 院內搜尋：<b>${esc(dev.asset2||dev.asset)}</b>
+          <button class="mh-copy" id="${cpId}" onclick="copyText('${esc(dev.asset2||dev.asset)}','${cpId}')">📋 複製</button><br>
+          實際保養：<b>${esc(t.rec.by||'（未記）')}</b>${t.rec.empId?('（'+esc(t.rec.empId)+'）'):''}${t.rec.at?('　'+esc(String(t.rec.at).slice(5,16))):''}</div>`;
+      const body=who+(t.allOK
+        ? `<b class="mh-ok">7 項全部正常</b> → 院內不用改任何一格，直接按【保養完成】`
         : `${t.odd.map(x=>`<b class="${x.val==='異常'?'mh-bad':'mh-na'}">${esc(x.label)} → ${esc(x.val)}</b>`).join('　')}
            <div class="mh-note">備註要打：<b>${esc(t.note||'（沒寫備註，請回頭補）')}</b>
              ${t.note?`<button class="mh-copy" id="${bid}" onclick="copyText(${JSON.stringify(t.note).replace(/"/g,'&quot;')},'${bid}')">📋 複製備註</button>`:''}</div>
-           <div class="mh-rest">其餘 ${MAINT_FIELDS.length-t.odd.length} 項維持「正常」→ 按【保養完成】</div>`;
+           <div class="mh-rest">其餘 ${MAINT_FIELDS.length-t.odd.length} 項維持「正常」→ 按【保養完成】</div>`);
       return `<div class="mh-row ${t.allOK?'':'mh-warn'}">
-        <div class="mh-name">${esc(dev.name)}<span class="mh-sub">${esc(dev.id)}・${esc(dev.zone)}</span></div>
+        ${nameCell}
         <div class="mh-body">${body}</div>
-        <div class="mh-act"><button class="mh-ok-btn" onclick="markMaintMoved('${dev.id}',false,'${sh}')">已核對</button></div></div>`;
+        <div class="mh-act"><button class="mh-ok-btn" onclick="markMaintMoved('${dev.id}',false,'${sh}')">已打進院內</button></div></div>`;
     }).join('');
     return `<div class="mh-blk"><div class="mh-h">${SHIFT_NAME[sh]}（${sh}）${sh===cur?'　<span style="font-weight:600;font-size:12px;color:var(--brand)">← 目前這一班</span>':''}</div>${rows}</div>`;
   }).join('');
@@ -8597,6 +8664,8 @@ function renderMaintHub(){
     .mh-done{background:#f2faf4} .mh-warn{background:#fff9f2}
     .mh-ok{color:#2f9e44} .mh-bad{color:#E03131} .mh-na{color:#e8590c}
     .mh-note{margin-top:4px}
+    .mh-who{font-size:12.5px;color:var(--ink-soft);margin-bottom:4px;line-height:1.7}
+    .mh-who b{color:var(--ink,#16232b)}
     .mh-rest{font-size:12.5px;color:var(--ink-soft)}
     .mh-tog,.mh-copy{margin-left:8px;border:1px solid var(--line);background:#fff;font-family:inherit;
       font-size:12px;padding:3px 9px;border-radius:7px;cursor:pointer}
@@ -8607,17 +8676,18 @@ function renderMaintHub(){
     @media(max-width:700px){ .mh-row{grid-template-columns:1fr;gap:6px} .mh-act{margin-top:4px} }
   </style>
   <div class="topbar"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">🛠 今天的電擊器保養</div>
+    <div><div class="title">🛠 今天的儀器保養・院內代登</div>
       <div class="sub">${fmtDate(curRcDateObj())} · ${state.maintAllShifts?'三班全部':SHIFT_NAME[cur]}　已填 ${filled} 格・未填 ${blank} 格${waiting?('・未核對 '+waiting):''}</div></div>
     <button class="back" onclick="state.screen='home';render()">返回</button></div></div>
   <div class="screen wide">
     <div class="card" style="padding:12px 15px;margin-bottom:14px;border-left:4px solid var(--brand)">
       <div style="font-size:13px;line-height:1.85">
-        <b>這一頁是給妳看的，護理師不用進來。</b>
-        他們點班時把電擊器打勾「正常」，保養卡就自動記一筆 7 項全正常；標異常才要填細節。<br>
-        <b>我們沒辦法自動送進院內保養程式</b>（院內網段、沒有介面），所以院內那張卡還是要人自己打。
-        妳在這裡看到的是「今天實際的狀況」，不是「誰按了按鈕」。<br>
-        妳核對過院內確實打了，可以按「已核對」做個記號；不按也不影響任何事。
+        <b>院內代登用：左邊開這一頁、右邊開院內「儀器設備資訊系統 → 保養」，由上往下照著點。</b><br>
+        ① 院內清單搜尋財碼（可一鍵複製）→ 按那一列的保養圖示<br>
+        ② 全部正常 → 院內預設就是正常，直接按【保養完成】；有異常 → 照這裡改那一格、貼上備註<br>
+        ③ 打完回來按「已打進院內」，Leader 才知道哪一班還沒打。按錯可以取消。<br>
+        <span style="color:var(--ink-soft)">護理師點班時把電擊器／AED 打勾「正常」，這裡就自動記一筆 7 項全正常；標異常才要填細節。
+        院內送出鍵一律由人按，請用自己的員編登入院內。</span>
       </div>
       ${maintWriteOK()?'':`<div style="margin-top:9px;padding:9px 11px;border-radius:8px;background:#fdf1f1;
         color:#b02a2a;font-size:12.5px;line-height:1.7">⚠ 後端目前是 ${esc(API_VER_SEEN||'未知')}，
@@ -8628,10 +8698,10 @@ function renderMaintHub(){
     <div class="card" style="padding:11px 15px;font-size:13px;line-height:1.85;margin-bottom:10px">
       ${state.maintAllShifts
         ? `目前顯示三班全部。<button class="mh-tog" onclick="toggleMaintAll()">只看 ${SHIFT_NAME[cur]}</button>`
-        : `目前只顯示 ${SHIFT_NAME[cur]}。<button class="mh-tog" onclick="toggleMaintAll()">看三班全部（${DEFIB.length*SHIFT_SEQ.length} 格）</button>`}
+        : `目前只顯示 ${SHIFT_NAME[cur]}。<button class="mh-tog" onclick="toggleMaintAll()">看三班全部（${maintSlotsPerDay()} 格）</button>`}
     </div>
     <div style="text-align:center;font-size:11.5px;color:var(--ink-soft);margin:10px 0 4px;line-height:1.9">
-      ＊一天 ${DEFIB.length*SHIFT_SEQ.length} 格（${DEFIB.length} 台 × ${SHIFT_SEQ.length} 班），院內規定每班一張、不合併。<br>
+      ＊一天 ${maintSlotsPerDay()} 格（電擊器 6 台 × 3 班＋AED 白班 1 格），院內規定每班一張、不合併。<br>
       ＊「未填」表示那一班還沒點到電擊器，或點班時沒打勾 —— 不是漏做保養，是還沒點班。
     </div>
   </div>`;
@@ -8649,11 +8719,11 @@ function renderMaintHub(){
    ★ 一個點班項目可能對到好幾台機器：
      急救室那一項「飛利浦DC shock 1到4號」就是 ER-1~ER-4 四台。
      打勾正常 → 四台都記正常；標異常 → 要問他是「哪幾台、哪幾項」。 */
-function isDefibItem(sheetId,name){
-  return MAINT_ON && defibOfSheet(sheetId).length>0
-    && /DC\s*SHOCK|電擊|除顫|去顫/i.test(String(name||''));
+function defibForItem(sheetId,name){
+  if(!MAINT_ON) return [];
+  return defibOfSheet(sheetId).filter(function(d){ return d.match.test(String(name||'')); });
 }
-function defibForItem(sheetId,name){ return isDefibItem(sheetId,name)?defibOfSheet(sheetId):[]; }
+function isDefibItem(sheetId,name){ return defibForItem(sheetId,name).length>0; }
 /* ★★ 現實檢查：我們沒辦法自動把資料送進院內保養程式（院內網段、沒有介面）。
    在「不能自動轉」的前提下，叫護理師多按一個對他自己沒好處的按鈕，不會有人按，
    最後只會得到一堆永遠顯示「待打」的假資料 —— 比沒有還糟。
@@ -8665,7 +8735,8 @@ function defibForItem(sheetId,name){ return isDefibItem(sheetId,name)?defibOfShe
 function maintIsLeader(){
   if(!MAINT_ON) return false;
   const u=state.user;
-  return !!(u&&(u.role==='護理長'||u.role==='副護理長'));
+  if(u&&(u.role==='護理長'||u.role==='副護理長')) return true;
+  try{ return isShiftLeader()||isLeaderToday(); }catch(e){ return false; }   // ★ b89：當班 Leader 也要能代登
 }
 function maintQuickOf(sheetId){
   state.maintQuick=state.maintQuick||{};
@@ -8697,7 +8768,7 @@ function maintQuickMissing(sheetId){
 function maintBadToday(){
   const d=curRcDate(); let n=0;
   SHIFT_SEQ.forEach(function(sh){
-    DEFIB.forEach(function(dev){
+    maintDevsAt(sh).forEach(function(dev){
       const r=maintOf(d,sh,dev.id);
       if(r&&r.verdict==='異常') n++;
     });
@@ -8706,7 +8777,7 @@ function maintBadToday(){
 }
 function maintWaitingIn(shift){
   const d=curRcDate(); let n=0;
-  DEFIB.forEach(function(dev){
+  maintDevsAt(shift).forEach(function(dev){
     const r=maintOf(d,shift,dev.id);
     if(r&&r.moved!=='是') n++;
   });
@@ -8747,7 +8818,7 @@ function renderMaint(){
     <div class="screen lvl2">
       <div class="card" style="padding:11px 14px;margin-bottom:12px;border-left:4px solid ${acolor}">
         <div style="font-size:13px;color:var(--ink-soft);line-height:1.8">
-          ${esc(dev.id)}・財產碼 ${esc(dev.asset)}・${esc(dev.zone)}${dev.note?('・'+esc(dev.note)):''}<br>
+          ${esc(dev.id)}・財產碼 ${esc(devCodes(dev))}・${esc(dev.zone)}${dev.note?('・'+esc(dev.note)):''}<br>
           <b>7 項預設都是「正常」，只要改有問題的那一格就好。</b>欄位跟院內保養卡一字不差。
         </div></div>
       ${cur?`<div class="card" style="padding:10px 14px;margin-bottom:12px;background:#eef4fb;border-left:4px solid #1c5fb0">
@@ -8778,7 +8849,7 @@ function renderMaint(){
     return `<div class="card" style="padding:12px 15px;margin-bottom:10px;border-left:4px solid ${st[1]}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
         <div><div style="font-weight:800;font-size:15px">${esc(x.name)}</div>
-          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px">${esc(x.id)}・財產碼 ${esc(x.asset)}${x.note?('・'+esc(x.note)):''}</div>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px">${esc(x.id)}・財產碼 ${esc(devCodes(x))}${x.note?('・'+esc(x.note)):''}</div>
           <div style="font-size:13px;margin-top:5px;color:${st[1]};font-weight:700">${st[0]}${r&&r.by?('　'+esc(r.by)):''}${r&&r.moved==='是'?'　·　✓ 已轉入院內':''}</div></div>
         <button class="btn ${r?'btn-ghost':'btn-primary'}" style="padding:9px 14px;font-size:13px;white-space:nowrap"
           onclick="openMaintCard('${x.id}')">${r?'查看／修改':'填寫'}</button>
@@ -8792,7 +8863,7 @@ function renderMaint(){
   }).join('');
   $app.innerHTML=`
   <div class="topbar" style="background:linear-gradient(135deg,${acolor},${acolor}cc)"><div class="topbar-in" style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="title">🛠 電擊器保養卡</div>
+    <div><div class="title">🛠 儀器保養卡</div>
       <div class="sub">${esc(s.name)} · ${fmtDate(curRcDateObj())} · ${SHIFT_NAME[sh]}</div></div>
     <button class="back" onclick="maintBack()">返回</button></div></div>
   <div class="screen lvl2">
@@ -8803,9 +8874,9 @@ function renderMaint(){
     ${cards||'<div class="card" style="padding:14px">這張點班表沒有電擊器。</div>'}
     ${maintTodoHtml(s.id)}
     ${maintIsLeader()?`<button class="btn btn-ghost btn-block" style="margin-bottom:12px" onclick="openMaintHub()">
-      🛠 今天的電擊器保養（三班 ${DEFIB.length*SHIFT_SEQ.length} 格）</button>`:''}
+      🛠 今天的儀器保養・院內代登（一天 ${maintSlotsPerDay()} 格）</button>`:''}
     <div class="card" style="padding:12px 15px;font-size:12.5px;color:var(--ink-soft);line-height:1.8">
-      ＊欄位與院內保養卡完全一致：外觀版面無破損／外觀清潔／導線纏繞整齊／功能檢測／蓄電功能／列印記錄功能／儀器時間。<br>
+      ＊欄位與院內保養卡完全一致（順序也一樣）：功能檢測／外觀版面無破損／外觀清潔／列印記錄功能／蓄電功能／儀器時間／導線纏繞整齊。<br>
       ＊院內那張卡 7 項預設都是「正常」，所以全正常時在院內只要按【保養完成】。<br>
       ＊這裡存的是電子紀錄；院內系統抓不到，仍需有人上院內網路點一次，打完請按「我打好了」。
     </div>
@@ -8895,7 +8966,7 @@ const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',2
      長得最快，抓 16 天大約 80KB、抓 3 天只要十幾 KB。 */
 const BOOT_WAVE2=[['rollcall_log',7,null,true],['owed'],['item_report'],['accounts'],
                   ['fridge_temp',3],['o2_check',3],['cart_expiry'],['rollcall_issue',3]]
-  .concat(MAINT_ON?[['device_maint',7]]:[]);
+  .concat(MAINT_ON?[['device_maint',3]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
   /* ★ 先用手機裡上次的資料畫畫面（幾乎瞬間），再去抓新的。
