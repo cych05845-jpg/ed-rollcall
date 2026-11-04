@@ -3091,7 +3091,7 @@ function renderRollcall(){
     let tools='';
     if(cat.key==='儀器') tools=`<div class="cat-tools">
       <span class="tool-pill" onclick="openZoneLocate('${esc(areaById(s.area).name)}')">📍 本區儀器定位${(function(){
-        const zl=LOCED.filter(d=>d.locate&&String(d.zone).includes(areaById(s.area).name));
+        const zl=LOCED.filter(d=>d.locate&&zoneHit(d.zone,areaById(s.area).name));
         const lv=zl.filter(d=>{const t=rtlsOf(d);return t&&t.live;}).length;
         return zl.length?`（${lv}/${zl.length} 回報中）`:'';})()}</span>
       <span class="tool-pill" onclick="openMap('全部儀器')">🗺 全部儀器</span>
@@ -3368,6 +3368,11 @@ function rtlsZoneKey(v){
   return 'other';
 }
 function rtlsFam(z){return (z==='treat1'||z==='treat2'||z==='treat3')?'treat':z;}  // 一/二/三診都算治療區
+/* 某設備的「配置區」是否屬於某點班表區（兩邊都轉成代碼＋家族再比，解決「兒童區≠兒科區」這種名稱對不上） */
+function zoneHit(deviceZone, areaNameOrKey){
+  var a=rtlsFam(rtlsZoneKey(areaNameOrKey));
+  return a!=='other' && rtlsFam(rtlsZoneKey(deviceZone))===a;
+}
 // 即時定位要顯示的區域名：rtls 對到明確區就用它，只給「急診」等粗區（→other）就退回配置區
 function rtlsWhere(s,d){
   if(s&&s.zone){ var zk=rtlsZoneKey(s.zone); if(zk!=='other') return ZONE_NAME[zk]; }
@@ -6364,7 +6369,7 @@ function locRows(list){
 /* ★ 一區顯示：列出該分區所有可定位儀器與即時狀態 */
 function openZoneLocate(zoneKeyOrName){
   const z=String(zoneKeyOrName||'');
-  const list=LOCED.filter(d=>d.locate&&(d.zone===z||(ZONE_NAME[d.zone]||'')===z||String(d.zone).includes(z)));
+  const list=LOCED.filter(d=>d.locate&&zoneHit(d.zone,z));
   const live=list.filter(d=>{const s=rtlsOf(d);return s&&s.live;}).length;
   closeLocatePanel();
   const wrap=document.createElement('div');wrap.id='locSheet';wrap.className='loc-sheet';
@@ -8965,7 +8970,8 @@ const BOOT_WAVE1=[['items'],['staff_perm'],['rollcall_active'],['rollcall_log',2
      不必每個人一開 App 就先扛一份。o2_check 是全院科別 × 每天三班 × 六個評值項目，
      長得最快，抓 16 天大約 80KB、抓 3 天只要十幾 KB。 */
 const BOOT_WAVE2=[['rollcall_log',7,null,true],['owed'],['item_report'],['accounts'],
-                  ['fridge_temp',3],['o2_check',3],['cart_expiry'],['rollcall_issue',3]]
+                  ['fridge_temp',3],['o2_check',3],['cart_expiry'],['rollcall_issue',3],
+                  ['devices'],['rtls']]        // ★ 定位清單一開機就載，每支手機都看得到 📍（不再只有開過分析頁的人才有）
   .concat(MAINT_ON?[['device_maint',3]]:[]);
 let BOOT_MS1=0, BOOT_MS2=0;
 (async()=>{
@@ -8985,7 +8991,7 @@ let BOOT_MS1=0, BOOT_MS2=0;
   render();                                   // ★ 到這裡就可以開始點班了
   const t1=Date.now();
   loadBundle(BOOT_WAVE2).then(function(){
-    BOOT_MS2=Date.now()-t1; render();
+    BOOT_MS2=Date.now()-t1; LOCATOR_LOADED=true; render();   // ★ 開機已載 devices/rtls，點 📍 不用再等
   }).catch(function(e){ console.warn('第二波讀取失敗',e); });
 })();
 /* devices／rtls 只有定位畫面要用，改成「進那一頁才抓，而且只抓一次」。
