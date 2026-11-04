@@ -90,6 +90,17 @@ body{margin:0;font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",syst
 .poptip button{flex:1;font-size:13.5px;padding:7px;border:1px solid var(--line);background:var(--paper);
   border-radius:6px;cursor:pointer;font-family:inherit}
 .poptip button:hover{background:#eaeff1}
+.legend .hint{margin-top:7px;font-size:11.5px;color:var(--muted);line-height:1.45;border-top:1px solid var(--line);padding-top:6px}
+.leadmask{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:60}
+.leadtip{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:61;background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;width:min(90vw,340px)}
+.leadtip h4{margin:0 0 8px;font-size:17px}
+.leadtip p{margin:6px 0;font-size:14px;line-height:1.55}
+.leadtip p.s{color:var(--muted);font-size:12.5px}
+.leadtip .f{text-align:right;margin-top:12px}
+.leadtip .f button{padding:7px 16px;border:none;border-radius:8px;background:var(--primary);color:#fff;cursor:pointer;font-size:14px}
+.trkrow{display:flex;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13.5px;align-items:baseline}
+.trkrow .t{color:var(--muted);font-family:monospace;white-space:nowrap}
+.trkrow .z{font-weight:600}
 
 .rail{background:var(--white);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
 .rail .brand{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
@@ -229,6 +240,7 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
           <span><i style="background:var(--s-borrow)"></i>外借</span>
           <span><i style="background:var(--s-away)"></i>攜出</span>
         </div>
+        <div class="hint">ℹ️ 概略區域供參考(約 8 成準);精準確認・軌跡請找 <b>Leader</b></div>
       </div>
     </div>
     <div class="view" id="v-list"></div>
@@ -254,7 +266,7 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
   </div>
 
   <div class="toolbar">
-    <button onclick="openTrack()">📍 軌跡查詢</button>
+    <button onclick="trackHint()">📍 軌跡查詢</button>
     <button onclick="switchView('list')">📋 儀器盤點</button>
     <button onclick="exportData()">⬇ 匯出點班資料</button>
     <span class="sp">最後同步 <span id="syncAt">—</span> · 共 <span id="total"></span> 台 · <span id="rtlsDiag" style="cursor:help"></span></span>
@@ -658,6 +670,10 @@ function showPop(e,d){
   document.querySelectorAll('.poptip').forEach(p=>p.remove());
   const p=document.createElement('div');p.className='poptip';
   p.style.left=(e.px*100)+'%';p.style.top=(e.py*100)+'%';
+  // 太靠上緣→往下彈(避免被頂部工具列蓋住);太靠左右→往內收
+  const vY=(e.py<0.32)?'22%':'-115%';
+  let hX='-50%'; if(e.px<0.13)hX='-6%'; else if(e.px>0.87)hX='-94%';
+  p.style.transform='translate('+hX+','+vY+')';
   const [sl]=STATUS[e.status];const moved=e.status==='out';
   const zName=(ZONES[e.zone]||ZONES.other).name + (e.zoneRaw&&e.zoneRaw!==(ZONES[e.zone]||{}).name?('（'+e.zoneRaw+'）'):'');
   const hName=(ZONES[e.home]||ZONES.other).name;
@@ -667,10 +683,9 @@ function showPop(e,d){
   p.innerHTML=`<h4>${titleOf(e)}</h4>
     <div class="meta"><span>區域:<b style="font-size:15px;${moved?'color:#b5680f':''}">${zName}</b></span></div>
     <div class="code">${e.code}${tag?(' · '+tag):''}${e.brand?(' · '+e.brand):''}</div>
-    <div class="meta"><span>配置:${hName}</span><span>狀態:<b>${sl}</b></span></div>
-    <div class="meta"><span>🔋${bat}</span><span>${seen}</span></div>
+    <div class="meta"><span>狀態:<b>${sl}</b></span><span>🔋${bat} · ${seen}</span></div>
     <div class="acts"><button onclick="openBR('${e.code}')">外借/送修(註記)</button>
-    <button onclick="document.getElementById('tkCode').value='${e.code}';openTrack();playTrack();">查軌跡</button></div>`;
+    <button onclick="showTrack('${e.code}')">🧭 查軌跡</button></div>`;
   document.getElementById('mapframe').appendChild(p);
 }
 document.getElementById('mapframe').addEventListener('click',()=>{document.querySelectorAll('.poptip').forEach(p=>p.remove());selCode=null;clearTrack();renderDots();renderGroups();});
@@ -943,6 +958,41 @@ function submitBR(){const sel=document.querySelector('#brSeg button.on');if(!sel
   const e=EQUIP.find(x=>x.code===brCode);e.status=sel.dataset.st;if(e.status==='in')e.zone=e.home;
   closeModal('mask-br');document.querySelectorAll('.poptip').forEach(p=>p.remove());renderAll();}
 function closeModal(id){document.getElementById(id).classList.remove('on');}
+async function showTrack(code){
+  document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const e=EQUIP.find(x=>x.code===code);
+  const close=()=>document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const m=document.createElement('div'); m.className='leadmask'; m.onclick=close;
+  const d=document.createElement('div'); d.className='leadtip'; d.style.width='min(92vw,430px)';
+  d.innerHTML='<h4>🧭 '+(e?lbl(e):code)+' 的移動軌跡</h4>'+
+    '<div id="trkBody" style="max-height:52vh;overflow:auto;margin-top:4px">讀取中…</div>'+
+    '<p class="s">只記「換區」事件（約每 3 分更新）；精準位置以創鈺為準。</p>'+
+    '<div class="f"><button id="trkClose">關閉</button></div>';
+  document.body.appendChild(m); document.body.appendChild(d);
+  document.getElementById('trkClose').onclick=close;
+  try{
+    const res=await fetchT(API_BASE+'?table=rtls_log&code='+encodeURIComponent(code),{cache:'no-store'},8000);
+    const arr=await res.json();
+    const rows=(Array.isArray(arr)?arr:[]).map(r=>({raw:String(r['區域']||'').trim(),at:String(r['時間']||'').trim()}))
+      .filter(r=>r.at).sort((a,b)=>a.at<b.at?1:-1);
+    const body=document.getElementById('trkBody'); if(!body)return;
+    if(!rows.length){ body.innerHTML='<div style="color:var(--muted);padding:12px 0">目前沒有換區紀錄——這台最近沒移動，或系統剛開始累積（換區後才會出現）。</div>'; return; }
+    body.innerHTML=rows.slice(0,60).map(r=>{
+      const zk=mapZone(r.raw); const zn=(ZONES[zk]||ZONES.other).name;
+      const loc=zn+(r.raw&&r.raw!==zn?('（'+r.raw+'）'):'');
+      return '<div class="trkrow"><span class="t">'+r.at.slice(5,16)+'</span><span class="z">'+loc+'</span></div>';
+    }).join('');
+  }catch(err){ const b=document.getElementById('trkBody'); if(b)b.innerHTML='<div style="color:#c0392b;padding:10px 0">讀取失敗：'+err+'</div>'; }
+}
+function trackHint(){
+  document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const close=()=>document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const m=document.createElement('div'); m.className='leadmask'; m.onclick=close;
+  const d=document.createElement('div'); d.className='leadtip';
+  d.innerHTML='<h4>🧭 查軌跡</h4><p>在地圖上<b>點選一台儀器</b>，資訊框裡按「<b>🧭 查軌跡</b>」，就能看它的移動軌跡（換區時間軸）。</p><p class="s">公尺級精準位置與完整路線，請找 Leader 於創鈺查詢。</p><div class="f"><button id="thOk">知道了</button></div>';
+  document.body.appendChild(m); document.body.appendChild(d);
+  document.getElementById('thOk').onclick=close;
+}
 function openTrack(){document.getElementById('mask-tk').classList.add('on');}
 
 // 軌跡搜尋建議
