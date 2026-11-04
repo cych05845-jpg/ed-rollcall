@@ -257,7 +257,7 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
     <button onclick="openTrack()">📍 軌跡查詢</button>
     <button onclick="switchView('list')">📋 儀器盤點</button>
     <button onclick="exportData()">⬇ 匯出點班資料</button>
-    <span class="sp">最後同步 <span id="syncAt">—</span> · 共 <span id="total"></span> 台</span>
+    <span class="sp">最後同步 <span id="syncAt">—</span> · 共 <span id="total"></span> 台 · <span id="rtlsDiag" style="cursor:help"></span></span>
   </div>
 </div>
 
@@ -309,10 +309,18 @@ const ZONES={
   peds:{name:'兒科區',x:[.31,.37],y:[.47,.58]},
   resus:{name:'急救室',x:[.47,.61],y:[.47,.57]},
   treat:{name:'治療區',x:[.32,.60],y:[.60,.78]},
+  treat1:{name:'治療區-一診',x:[.50,.59],y:[.61,.69]},     // 藍框(右上)：創鈺 急診外傷區/診間1
+  treat2:{name:'治療區-二診',x:[.42,.51],y:[.70,.78]},     // 棕框(中下)：創鈺 診間2
+  treat3:{name:'治療區-三診',x:[.32,.41],y:[.62,.75]},     // 紅框(左)：創鈺 診間3
+
   triage:{name:'檢傷區',x:[.67,.73],y:[.53,.62]},
   neg:{name:'負壓室',x:[.665,.725],y:[.66,.71]},
   nurse:{name:'護理站/辦公室',x:[.60,.645],y:[.43,.49]},
   xray:{name:'放射/X光',x:[.25,.34],y:[.63,.71]},
+  ct:{name:'CT室',x:[.33,.44],y:[.06,.25]},            // 紫框(大)
+  pharmacy:{name:'急診藥局',x:[.40,.49],y:[.40,.53]},   // 綠框
+  meeting:{name:'急診討論室',x:[.15,.24],y:[.42,.52]},  // 橘框
+  elevA:{name:'A棟電梯',x:[.26,.30],y:[.73,.83]},       // 咖啡框
   other:{name:'其他/待確認',x:[.45,.55],y:[.90,.955]},
 };
 const STATUS={in:['站內','s-in'],out:['移位','s-out'],off:['離線','s-off'],
@@ -338,7 +346,7 @@ const CONFIG={
   trackUrl:'',                // 軌跡端點(可留空)
   refreshSec:30,              // feed 模式自動刷新秒數(標籤約 20 分回報一次,不用太密)
 };
-const FRESH_MIN=30;           // 幾分鐘內有回報 = 追蹤中/在家;超過視為離線(脫離追蹤)
+const FRESH_MIN=45;           // 幾分鐘內有回報 = 追蹤中/在家;超過視為離線(靜止儀器回報較慢,放寬一點)
 
 // 座標校正:創鈺地圖座標 → 本平面圖(0~1)。等創鈺給該樓層座標範圍再填。
 // 留 null = 不用座標,改用「區域」放點(永遠可用)。
@@ -356,6 +364,10 @@ function mapZone(v){
   if(ZONE_ALIAS[v])return ZONE_ALIAS[v];
   const has=arr=>arr.some(k=>v.indexOf(k)>=0);
   if(has(['急救','搶救']))return 'resus';
+  if(has(['外傷']))return 'treat1';                          // 急診外傷區＝現場第一診區(一診)
+  if(has(['診間1','1診','一診','診一']))return 'treat1';
+  if(has(['診間2','2診','二診','診二']))return 'treat2';
+  if(has(['診間3','3診','三診','診三']))return 'treat3';
   if(has(['治療']))return 'treat';
   if(has(['檢傷','分檢']))return 'triage';
   if(has(['負壓']))return 'neg';
@@ -364,7 +376,11 @@ function mapZone(v){
   if(has(['留觀二','第二觀','觀二','二觀','ER2','ER-2']))return 'guan2';
   if(has(['留觀','觀察']))return 'guan1';
   if(has(['護理','辦公','醫護','護理長']))return 'nurse';
-  if(has(['X光','x光','X-RAY','X-ray','放射','影像','CT']))return 'xray';
+  if(has(['CT']))return 'ct';
+  if(has(['X光','x光','X-RAY','X-ray','放射','影像']))return 'xray';
+  if(has(['藥局','藥物']))return 'pharmacy';
+  if(has(['討論','會議']))return 'meeting';
+  if(has(['電梯']))return 'elevA';
   return 'other';                               // 對不到 → 待確認區(不會消失,看得出來有台沒對到)
 }
 function mapStatus(v){return STATUS_ALIAS[v]||'in';}
@@ -414,7 +430,7 @@ function adaptRow(r){
   };
 }
 
-let EQUIP=[], MASTER=[], MASTER_REAL=false, LIVE_REAL=false, REALMODE='demo', LAST_SYNC=null;
+let EQUIP=[], MASTER=[], MASTER_REAL=false, LIVE_REAL=false, REALMODE='demo', LAST_SYNC=null; let RTLS_DIAG=null;
 // 落點:同一區多台,以「區域中心」為基準用黃金角螺旋散開(穩定、不貼邊、不重疊)
 function assignCoords(){
   const byZone={};
@@ -436,8 +452,9 @@ function assignCoords(){
 }
 // 即時區≠配置區 → 自動標「移位」(創鈺只需給位置,移位由系統判斷)
 // 即時區≠配置區 → 標「移位」。只對「有定位回報且兩邊都是明確區域」的才判斷,避免誤報。
+function famOf(z){return (z==='treat1'||z==='treat2'||z==='treat3')?'treat':z;}  // 一/二/三診都算治療區
 function deriveMoved(){EQUIP.forEach(e=>{
-  if(e.tracked&&e.status==='in'&&e.home&&e.zone&&e.home!=='other'&&e.zone!=='other'&&e.zone!==e.home)e.status='out';
+  if(e.tracked&&e.status==='in'&&e.home&&e.zone&&famOf(e.home)!=='other'&&famOf(e.zone)!=='other'&&famOf(e.zone)!==famOf(e.home))e.status='out';
 });}
 
 // (1) 主檔:讀同 repo 的 equipment.json(你管理的共用資訊);讀不到就用內建示意
@@ -480,8 +497,12 @@ async function loadLive(){
     const live=rows.map(r=>(('財碼' in r)||('區域' in r))?adaptRtls(r):adaptRow(r)).filter(e=>e.code);
     const map={}; live.forEach(e=>map[e.code]=e);
     LIVE_REAL=live.length>0; LAST_SYNC=new Date();
+    let _latest='',_fresh=0;
+    rows.forEach(r=>{const t=(r['更新時間']||r.at||''); if(t&&(!_latest||String(t)>_latest))_latest=String(t);});
+    live.forEach(e=>{ if(e.status!=='off')_fresh++; });
+    RTLS_DIAG={n:rows.length, latest:_latest, min:(_latest?minsAgo(_latest):null), fresh:_fresh};
     return map;
-  }catch(err){console.error('即時資料讀取失敗',err);return null;}
+  }catch(err){console.error('即時資料讀取失敗',err);RTLS_DIAG={n:0,latest:'',min:null,fresh:0};return null;}
 }
 
 // (3) 合併:主檔為準(財碼/名稱/類別/配置區),即時只覆蓋 位置/狀態/座標/電量
@@ -500,7 +521,7 @@ function mergeLive(live){
     if(!e.cat||e.cat==='未分類'){const _fx=CAT_FIX[e.code]; if(_fx)e.cat=_fx;} const _nk=NICK[e.code]; if(_nk)e.nick=_nk;
     const L=live&&live[m.code];
     if(L){                                     // 這台有定位回報
-      e.zone=L.zone||m.home||'other'; e.status=L.status; e.battery=(L.battery==null?e.battery:L.battery);
+      e.zone=(L.zone&&L.zone!=='other'&&ZONES[L.zone])?L.zone:(m.home||'other'); e.status=L.status; e.battery=(L.battery==null?e.battery:L.battery);
       e.lastSeen=L.lastSeen; e.at=L.at; e.zoneRaw=L.zoneRaw; e.tracked=true;
     }else if(haveLive){                        // feed 正常、但這台沒上定位
       e.tracked=false;
@@ -549,6 +570,10 @@ function visibleOnMap(e){
 }
 
 function lbl(e){return (e.nick&&e.nick!==e.cat)?e.nick:(e.unit||e.nick||e.name||e.code);}            // 顯示用:優先院內編號
+// 財碼 → 創鈺 tag 編號(tagMac)
+const TAGNO={"8001446":"31259","8001448":"31260","8001449":"31261","8001450":"31262","8001451":"31263","8000541":"31264","8000542":"31265","8000543":"31266","8000544":"31267","33020104-000361":"31268","8000382":"31269","8000383":"31270","8000399":"31271","8002169":"31272","33030107-000147":"31273","33030107-000151":"31274","33030107-000154":"31275","8002287":"31276","8002288":"31277","8002289":"31278","8002290":"33999","8002291":"34000","8002292":"34001","8001967":"34002","8001968":"34003","8001969":"34004","8001970":"34005","8001971":"34006","8001972":"34007","8001973":"34008","8001974":"34009","8001975":"34010","8001976":"34011","8002067":"34012","8002358":"34013","33030204-000042":"34014","33030204-000055":"34015","33040807-00231":"34016","33040807-000168":"34017","173198":"34018","8000208":"34019","8001809":"34020","8001912":"34021","33040807-000169":"34022","33090199-00070":"34023","33090199-00072":"34024","8001819":"34025","8900653":"34026","8900654":"34027","8900655":"34028","8900656":"34029","8900657":"34030","8900658":"34031","8900659":"34032","8900660":"34033","8900661":"34034","8900662":"34035","8900663":"34036","8900664":"34037","8900665":"34038","8900666":"34139","8900667":"34140","8001705":"34141","34010612-000140":"34142","34010612-000146":"34143","34010612-000149":"34144","152667":"34145","152668":"34146","152669":"34147","152671":"34148","152674":"34149","152675":"34150","152677":"34151","152814":"34152","152817":"34153","152819":"34154","152820":"34155","152821":"34156","152991":"34157","152992":"34158","171205":"34499","171206":"34500","171208":"34501","171228":"34502","171229":"34503","171226":"34504","171227":"34505","35010208-000091":"34506","35010208-000092":"34507","35010208-000093":"34508","35010208-000094":"34509","35010208-000095":"34510","35010208-000096":"34511","35010208-000097":"34512","35010208-000098":"34513","35010208-000099":"34514","35010208-000100":"34515","35010208-000101":"34516","35010208-000102":"34517","35010208-000103":"34518","35010208-000104":"34519","35010208-000105":"34520","35010208-000106":"34521","35010208-000107":"34522","35010208-000108":"34523","35010208-000109":"34524","35010208-000110":"34525","35010208-000121":"34526","35010208-000122":"34527","35010208-000123":"34528","35010208-000124":"34529","35010208-000134":"34530","35010208-000135":"34531","35010208-000136":"34532","35010208-000137":"34533","35010208-000138":"34534","35010208-000139":"34535","35010208-000140":"34536","35010208-000141":"34537","35010208-000142":"34538","35010208-000159":"34589","35010208-000160":"34590","8000070":"34591","8000006":"34592","8000007":"34593","8000008":"34594","8000009":"34595","8000010":"34596","8000011":"34597","8000012":"34598","8000013":"37019","8000014":"37020","8001092":"37021","8001093":"37022","51040202-000034":"37023","51040202-000037":"37024","148903":"37025","172195":"37026","35011113-000425":"37027","35011113-000426":"37028","35011113-000427":"37029","35011113-000501":"37030","35011113-000502":"37031","35011113-000529":"37032","35011113-000530":"37033","35011113-000531":"37034","34030803-000113":"37035","34030803-000114":"37036","34030803-000115":"37037","34030803-000116":"37038"};
+// 資訊框標題：種類＋編號（暱稱已含號就用暱稱；否則 類別＋現場單位編號）
+function titleOf(e){ if(e.nick&&e.nick!==e.cat)return e.nick; const num=e.unit||''; return (e.cat||e.name||e.code)+(num?(' '+num):''); }
 function statusCounts(){const c={tot:EQUIP.length,in:0,out:0,off:0,repair:0,borrow:0,away:0};
   EQUIP.forEach(e=>c[e.status]++);return c;}
 
@@ -562,6 +587,13 @@ function renderBoard(){
   document.getElementById('abnBadge').textContent='異常 '+(c.out+c.off);
   const sa=document.getElementById('syncAt');
   if(sa)sa.textContent=LAST_SYNC?LAST_SYNC.toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}):(REALMODE==='real'?'剛剛':'示意');
+  const rd=document.getElementById('rtlsDiag');
+  if(rd){const D=RTLS_DIAG;
+    if(!D||D.n===0){rd.textContent='⚠ 定位讀不到(0 筆)—後端 rtls 分頁沒資料或連不到';rd.style.color='#c0392b';rd.title='';}
+    else{rd.textContent='定位 '+D.n+' 筆·追蹤中 '+D.fresh+'·最新 '+(D.min==null?'—':D.min+' 分前');
+      rd.style.color=(D.fresh===0?'#c0392b':'');
+      rd.title='rtls 最新更新時間：'+(D.latest||'—')+'（門檻 '+FRESH_MIN+' 分內算在線）';}
+  }
 }
 function filterStatus(k){
   if(k==='tot'){curFilter=null;mapMode='all';mapCat=null;mapItem=null;}
@@ -631,10 +663,13 @@ function showPop(e,d){
   const hName=(ZONES[e.home]||ZONES.other).name;
   const bat=(e.battery==null?'—':e.battery+'%');
   const seen=(e.lastSeen==null?(e.tracked===false?'尚未回報':'—'):e.lastSeen+'分前');
-  p.innerHTML=`<h4>${lbl(e)}</h4><div class="code">${e.code}${e.brand?(' · '+e.brand):''}</div>
-    <div class="meta"><span>大概位置:<b style="${moved?'color:#b5680f':''}">${zName}</b></span><span>配置:${hName}</span></div>
-    <div class="meta"><span>狀態:<b>${sl}</b></span><span>🔋${bat} · ${seen}</span></div>
-    <div class="acts"><button onclick="openBR('${e.code}')">外借/送修</button>
+  const tag=TAGNO[e.code]?('Tag '+TAGNO[e.code]):'';
+  p.innerHTML=`<h4>${titleOf(e)}</h4>
+    <div class="meta"><span>區域:<b style="font-size:15px;${moved?'color:#b5680f':''}">${zName}</b></span></div>
+    <div class="code">${e.code}${tag?(' · '+tag):''}${e.brand?(' · '+e.brand):''}</div>
+    <div class="meta"><span>配置:${hName}</span><span>狀態:<b>${sl}</b></span></div>
+    <div class="meta"><span>🔋${bat}</span><span>${seen}</span></div>
+    <div class="acts"><button onclick="openBR('${e.code}')">外借/送修(註記)</button>
     <button onclick="document.getElementById('tkCode').value='${e.code}';openTrack();playTrack();">查軌跡</button></div>`;
   document.getElementById('mapframe').appendChild(p);
 }
@@ -762,10 +797,11 @@ function renderAdminBody(){
   const rows=EQUIP.map((e,i)=>({e,i})).filter(({e})=>!q||(e.code+e.name+e.brand).toLowerCase().includes(q));
   document.getElementById('aCount').textContent=EQUIP.length;
   document.getElementById('adminBody').innerHTML=`<table><thead><tr>
-    <th style="width:150px">財碼 ★</th><th>名稱</th><th>類別</th><th>品牌</th><th style="width:130px">配置區</th><th style="width:80px">需點班</th><th style="width:54px"></th>
+    <th style="width:150px">財碼 ★</th><th style="width:90px">Tag編號</th><th>名稱</th><th>類別</th><th>品牌</th><th style="width:130px">配置區</th><th style="width:80px">需點班</th><th style="width:54px"></th>
     </tr></thead><tbody>
     ${rows.map(({e,i})=>`<tr>
       <td><input value="${e.code||''}" oninput="editField(${i},'code',this.value)" style="font-family:monospace"></td>
+      <td style="font-family:monospace;color:var(--muted);text-align:center">${TAGNO[e.code]||'—'}</td>
       <td><input value="${e.name||''}" oninput="editField(${i},'name',this.value)"></td>
       <td><input value="${e.cat||''}" list="catlist" oninput="editField(${i},'cat',this.value)"></td>
       <td><input value="${e.brand||''}" oninput="editField(${i},'brand',this.value)"></td>
