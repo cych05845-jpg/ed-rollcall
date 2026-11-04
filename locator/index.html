@@ -307,7 +307,16 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
         <select id="tkSpeed"><option>1X</option><option>2X</option><option>4X</option></select>
         <button class="btn" onclick="playTrack()">▶ 播放軌跡</button>
       </div>
-      <p style="font-size:13.5px;color:var(--muted);margin:10px 0 0">打名稱 → 從清單點一台 → 按播放,<b>軌跡會直接畫在你的平面圖上</b>。定位標籤每 10 秒回傳座標,可回放一日內移動路徑。</p>
+      <div class="toolrow" style="margin-top:9px;align-items:center;flex-wrap:wrap;gap:6px">
+        <span style="font-size:13px;color:var(--muted)">期間</span>
+        <input type="date" id="tkFrom" style="padding:5px 7px;border:1px solid var(--line);border-radius:6px">
+        <span style="color:var(--muted)">～</span>
+        <input type="date" id="tkTo" style="padding:5px 7px;border:1px solid var(--line);border-radius:6px">
+        <button class="chip" onclick="tkRange(0)">今天</button>
+        <button class="chip" onclick="tkRange(2)">近3天</button>
+        <button class="chip" onclick="tkRange(6)">近7天</button>
+      </div>
+      <p style="font-size:13.5px;color:var(--muted);margin:10px 0 0">打名稱 → 從清單點一台 → 選<b>期間</b> → 按播放,<b>軌跡會畫在你的平面圖上</b>。只讀你選的期間（不選預設今天），資料不會越拉越久。</p>
     </div>
   </div>
 </div>
@@ -959,24 +968,28 @@ function submitBR(){const sel=document.querySelector('#brSeg button.on');if(!sel
   const e=EQUIP.find(x=>x.code===brCode);e.status=sel.dataset.st;if(e.status==='in')e.zone=e.home;
   closeModal('mask-br');document.querySelectorAll('.poptip').forEach(p=>p.remove());renderAll();}
 function closeModal(id){document.getElementById(id).classList.remove('on');}
-async function showTrack(code){
+function todayStr(){return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(new Date());}
+let trackRange=null;
+async function showTrack(code,opts){
+  opts=opts||{}; const from=opts.from||todayStr(), to=opts.to||todayStr();
   const e=EQUIP.find(x=>x.code===code); if(!e)return;
   document.querySelectorAll('.poptip').forEach(p=>p.remove());
-  const pts=await fetchTrackPoints(code);
-  if(!pts||!pts.length){ trackNone(e); return; }
-  trackDevice=e;
+  const pts=await fetchTrackPoints(code,from,to);
+  if(!pts||!pts.length){ trackNone(e,from,to); return; }
+  trackDevice=e; trackRange={from,to};
   trackPts=(pts.length>=2)?pts:[pts[0],[e.px*100,e.py*100]];   // 只有一點就連到目前位置
   switchView('map');
   mapItem=code;mapCat=null;curFilter=null;selCode=code;
   renderDots();renderMapbar();
   drawTrackOnMap();
 }
-function trackNone(e){
+function trackNone(e,from,to){
   document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
   const close=()=>document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
   const m=document.createElement('div');m.className='leadmask';m.onclick=close;
   const d=document.createElement('div');d.className='leadtip';
-  d.innerHTML='<h4>🧭 '+lbl(e)+'</h4><p>目前<b>沒有換區紀錄</b>可畫——這台最近沒在不同區之間移動，或系統剛開始累積（要換過區才會有）。</p><div class="f"><button id="tnOk">知道了</button></div>';
+  const rng=(from&&to)?(from===to?from:from+'～'+to):'這段期間';
+  d.innerHTML='<h4>🧭 '+lbl(e)+'</h4><p>在 <b>'+rng+'</b> <b>沒有換區紀錄</b>——這段期間它沒在不同區之間移動，或系統還沒累積到。可改用下方「軌跡查詢」拉長期間再試。</p><div class="f"><button id="tnOk">知道了</button></div>';
   document.body.appendChild(m);document.body.appendChild(d);document.getElementById('tnOk').onclick=close;
 }
 function trackHint(){
@@ -993,14 +1006,24 @@ function openTrack(){document.getElementById('mask-tk').classList.add('on');}
 // 軌跡搜尋建議
 function tkSuggest(){const v=document.getElementById('tkCode').value;
   renderSuggest(v,'tkSuggest',code=>{document.getElementById('tkCode').value=code;
-    document.getElementById('tkSuggest').classList.remove('on');playTrack();},null);}
+    document.getElementById('tkSuggest').classList.remove('on');},null);}
+// 期間快捷：0=今天、2=近3天、6=近7天
+function tkRange(daysBack){
+  const to=todayStr(); const d=new Date(); d.setDate(d.getDate()-daysBack);
+  const from=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(d);
+  const f=document.getElementById('tkFrom'),t=document.getElementById('tkTo');
+  if(f)f.value=from; if(t)t.value=to;
+}
 
 let tkTimer=null;
 // 軌跡資料:有 trackUrl 就抓創鈺真實軌跡(座標經 CALIB 校正成 %),否則回傳 null 用示意
 let trackMeta=null;
-async function fetchTrackPoints(code){
+async function fetchTrackPoints(code,from,to){
   try{
-    const res=await fetchT(API_BASE+'?table=rtls_log&code='+encodeURIComponent(code),{cache:'no-store'},8000);
+    let url=API_BASE+'?table=rtls_log&code='+encodeURIComponent(code);
+    if(from)url+='&from='+encodeURIComponent(from);
+    if(to)url+='&to='+encodeURIComponent(to);
+    const res=await fetchT(url,{cache:'no-store'},8000);
     const arr=await res.json();
     const rows=(Array.isArray(arr)?arr:[]).map(r=>({raw:String(r['區域']||'').trim(),at:String(r['時間']||'').trim()}))
       .filter(r=>r.raw&&r.at).sort((a,b)=>a.at<b.at?-1:1);         // 舊→新
@@ -1019,7 +1042,9 @@ async function playTrack(){
   const q=document.getElementById('tkCode').value.trim().toLowerCase();
   const e=EQUIP.find(x=>x.code.toLowerCase()===q)||EQUIP.find(x=>((x.unit||'')+x.name+x.code+x.brand).toLowerCase().includes(q));
   if(!e){alert('查無符合的儀器');return;}
-  closeModal('mask-tk'); showTrack(e.code);
+  const from=document.getElementById('tkFrom').value||todayStr();
+  const to=document.getElementById('tkTo').value||todayStr();
+  closeModal('mask-tk'); showTrack(e.code,{from,to});
 }
 function drawTrackOnMap(){
   const svg=document.getElementById('trackLayer');
@@ -1042,7 +1067,7 @@ function drawTrackOnMap(){
   const tp=document.createElement('div');tp.className='trackdot';tp.id='trackDot';frame.appendChild(tp);
   document.getElementById('mapbar').style.display='none';
   const seg=trackMeta?trackMeta.length:trackPts.length;
-  document.getElementById('trackLbl').textContent='軌跡:'+lbl(trackDevice)+'（'+seg+' 個停留點，數字＝先後）';
+  document.getElementById('trackLbl').textContent='軌跡:'+lbl(trackDevice)+(trackRange?('　'+(trackRange.from===trackRange.to?trackRange.from:trackRange.from+'～'+trackRange.to)):'')+'（'+seg+' 個停留點）';
   document.getElementById('trackBar').classList.add('on');
   runTrack();
 }
