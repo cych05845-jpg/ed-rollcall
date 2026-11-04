@@ -1059,7 +1059,7 @@ function replayTrack(){runTrack();}
 function clearTrack(){
   clearInterval(tkTimer);
   const svg=document.getElementById('trackLayer');while(svg.firstChild)svg.removeChild(svg.firstChild);
-  document.getElementById('mapframe').querySelectorAll('.trackdot,.trackstart').forEach(x=>x.remove());
+  document.getElementById('mapframe').querySelectorAll('.trackdot,.trackstart,.trackwp').forEach(x=>x.remove());
   document.getElementById('trackBar').classList.remove('on');
   document.getElementById('mapbar').style.display='';         // 還原篩選列
   if(trackDevice){mapItem=null;mapMode='live';selCode=null;trackDevice=null;renderAll();}  // 收掉「只看這台」回到預設
