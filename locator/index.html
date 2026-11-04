@@ -101,6 +101,7 @@ body{margin:0;font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",syst
 .trkrow{display:flex;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13.5px;align-items:baseline}
 .trkrow .t{color:var(--muted);font-family:monospace;white-space:nowrap}
 .trkrow .z{font-weight:600}
+.trackwp{position:absolute;width:19px;height:19px;border-radius:50%;transform:translate(-50%,-50%);background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.45);z-index:7;cursor:help}
 
 .rail{background:var(--white);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
 .rail .brand{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
@@ -266,7 +267,7 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
   </div>
 
   <div class="toolbar">
-    <button onclick="trackHint()">📍 軌跡查詢</button>
+    <button onclick="openTrack()">📍 軌跡查詢</button>
     <button onclick="switchView('list')">📋 儀器盤點</button>
     <button onclick="exportData()">⬇ 匯出點班資料</button>
     <span class="sp">最後同步 <span id="syncAt">—</span> · 共 <span id="total"></span> 台 · <span id="rtlsDiag" style="cursor:help"></span></span>
@@ -959,30 +960,24 @@ function submitBR(){const sel=document.querySelector('#brSeg button.on');if(!sel
   closeModal('mask-br');document.querySelectorAll('.poptip').forEach(p=>p.remove());renderAll();}
 function closeModal(id){document.getElementById(id).classList.remove('on');}
 async function showTrack(code){
+  const e=EQUIP.find(x=>x.code===code); if(!e)return;
+  document.querySelectorAll('.poptip').forEach(p=>p.remove());
+  const pts=await fetchTrackPoints(code);
+  if(!pts||!pts.length){ trackNone(e); return; }
+  trackDevice=e;
+  trackPts=(pts.length>=2)?pts:[pts[0],[e.px*100,e.py*100]];   // 只有一點就連到目前位置
+  switchView('map');
+  mapItem=code;mapCat=null;curFilter=null;selCode=code;
+  renderDots();renderMapbar();
+  drawTrackOnMap();
+}
+function trackNone(e){
   document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
-  const e=EQUIP.find(x=>x.code===code);
   const close=()=>document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
-  const m=document.createElement('div'); m.className='leadmask'; m.onclick=close;
-  const d=document.createElement('div'); d.className='leadtip'; d.style.width='min(92vw,430px)';
-  d.innerHTML='<h4>🧭 '+(e?lbl(e):code)+' 的移動軌跡</h4>'+
-    '<div id="trkBody" style="max-height:52vh;overflow:auto;margin-top:4px">讀取中…</div>'+
-    '<p class="s">只記「換區」事件（約每 3 分更新）；精準位置以創鈺為準。</p>'+
-    '<div class="f"><button id="trkClose">關閉</button></div>';
-  document.body.appendChild(m); document.body.appendChild(d);
-  document.getElementById('trkClose').onclick=close;
-  try{
-    const res=await fetchT(API_BASE+'?table=rtls_log&code='+encodeURIComponent(code),{cache:'no-store'},8000);
-    const arr=await res.json();
-    const rows=(Array.isArray(arr)?arr:[]).map(r=>({raw:String(r['區域']||'').trim(),at:String(r['時間']||'').trim()}))
-      .filter(r=>r.at).sort((a,b)=>a.at<b.at?1:-1);
-    const body=document.getElementById('trkBody'); if(!body)return;
-    if(!rows.length){ body.innerHTML='<div style="color:var(--muted);padding:12px 0">目前沒有換區紀錄——這台最近沒移動，或系統剛開始累積（換區後才會出現）。</div>'; return; }
-    body.innerHTML=rows.slice(0,60).map(r=>{
-      const zk=mapZone(r.raw); const zn=(ZONES[zk]||ZONES.other).name;
-      const loc=zn+(r.raw&&r.raw!==zn?('（'+r.raw+'）'):'');
-      return '<div class="trkrow"><span class="t">'+r.at.slice(5,16)+'</span><span class="z">'+loc+'</span></div>';
-    }).join('');
-  }catch(err){ const b=document.getElementById('trkBody'); if(b)b.innerHTML='<div style="color:#c0392b;padding:10px 0">讀取失敗：'+err+'</div>'; }
+  const m=document.createElement('div');m.className='leadmask';m.onclick=close;
+  const d=document.createElement('div');d.className='leadtip';
+  d.innerHTML='<h4>🧭 '+lbl(e)+'</h4><p>目前<b>沒有換區紀錄</b>可畫——這台最近沒在不同區之間移動，或系統剛開始累積（要換過區才會有）。</p><div class="f"><button id="tnOk">知道了</button></div>';
+  document.body.appendChild(m);document.body.appendChild(d);document.getElementById('tnOk').onclick=close;
 }
 function trackHint(){
   document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
@@ -1002,14 +997,17 @@ function tkSuggest(){const v=document.getElementById('tkCode').value;
 
 let tkTimer=null;
 // 軌跡資料:有 trackUrl 就抓創鈺真實軌跡(座標經 CALIB 校正成 %),否則回傳 null 用示意
+let trackMeta=null;
 async function fetchTrackPoints(code){
-  if(!(CONFIG.source==='feed'&&CONFIG.trackUrl))return null;
   try{
-    const res=await fetch(CONFIG.trackUrl+(CONFIG.trackUrl.includes('?')?'&':'?')+'code='+encodeURIComponent(code),{cache:'no-store'});
-    const raw=await res.json();
-    const arr=Array.isArray(raw)?raw:(raw.points||raw.track||[]);
-    return arr.map(p=>{const xy=projectXY(p.x??p.posX,p.y??p.posY);return xy?[xy[0]*100,xy[1]*100]:null;}).filter(Boolean);
-  }catch(err){console.error('軌跡讀取失敗,改用示意',err);return null;}
+    const res=await fetchT(API_BASE+'?table=rtls_log&code='+encodeURIComponent(code),{cache:'no-store'},8000);
+    const arr=await res.json();
+    const rows=(Array.isArray(arr)?arr:[]).map(r=>({raw:String(r['區域']||'').trim(),at:String(r['時間']||'').trim()}))
+      .filter(r=>r.raw&&r.at).sort((a,b)=>a.at<b.at?-1:1);         // 舊→新
+    const ev=[]; rows.forEach(r=>{const zk=mapZone(r.raw); if(!ev.length||ev[ev.length-1].zk!==zk)ev.push({zk,raw:r.raw,at:r.at});});
+    trackMeta=ev;
+    return ev.map(x=>{const z=ZONES[x.zk]||ZONES.other;return [(z.x[0]+z.x[1])/2*100,(z.y[0]+z.y[1])/2*100];});
+  }catch(err){console.error('軌跡讀取失敗',err);trackMeta=null;return null;}
 }
 // 示意路徑:經過幾個區中心,最後停在該台目前位置(畫在真實平面圖上)
 function demoPath(e){
@@ -1020,31 +1018,31 @@ let trackPts=null, trackDevice=null;
 async function playTrack(){
   const q=document.getElementById('tkCode').value.trim().toLowerCase();
   const e=EQUIP.find(x=>x.code.toLowerCase()===q)||EQUIP.find(x=>((x.unit||'')+x.name+x.code+x.brand).toLowerCase().includes(q));
-  if(!e){alert('查無符合的儀器,試試打「心電圖」');return;}
-  const real=await fetchTrackPoints(e.code);
-  trackPts=(real&&real.length>=2)?real:demoPath(e);
-  trackDevice=e;
-  closeModal('mask-tk');
-  switchView('map');
-  mapItem=e.code;mapCat=null;curFilter=null;selCode=e.code;   // 地圖只留這一台
-  renderDots();renderMapbar();
-  drawTrackOnMap();
+  if(!e){alert('查無符合的儀器');return;}
+  closeModal('mask-tk'); showTrack(e.code);
 }
 function drawTrackOnMap(){
   const svg=document.getElementById('trackLayer');
   const frame=document.getElementById('mapframe');
-  // 清舊的,改用正規 SVG 命名空間建立元素(最穩)
   while(svg.firstChild)svg.removeChild(svg.firstChild);
   const NS='http://www.w3.org/2000/svg';
   const pl=document.createElementNS(NS,'polyline');
   pl.setAttribute('points',trackPts.map(p=>p[0]+','+p[1]).join(' '));
   svg.appendChild(pl);
-  frame.querySelectorAll('.trackdot,.trackstart').forEach(x=>x.remove());
+  frame.querySelectorAll('.trackdot,.trackstart,.trackwp').forEach(x=>x.remove());
+  trackPts.forEach((p,i)=>{
+    const w=document.createElement('div');w.className='trackwp';
+    w.style.left=p[0]+'%';w.style.top=p[1]+'%';w.textContent=(i+1);
+    const mt=(trackMeta&&trackMeta[i])?trackMeta[i]:null;
+    if(mt){const zn=(ZONES[mt.zk]||ZONES.other).name;w.title=(i+1)+'. '+mt.at.slice(5,16)+'　'+zn+(mt.raw&&mt.raw!==zn?('（'+mt.raw+'）'):'');}
+    frame.appendChild(w);
+  });
   const start=document.createElement('div');start.className='trackstart';
   start.style.left=trackPts[0][0]+'%';start.style.top=trackPts[0][1]+'%';frame.appendChild(start);
   const tp=document.createElement('div');tp.className='trackdot';tp.id='trackDot';frame.appendChild(tp);
-  document.getElementById('mapbar').style.display='none';      // 播軌跡時暫時隱藏篩選列,避免擋到
-  document.getElementById('trackLbl').textContent='軌跡:'+trackDevice.name+' '+trackDevice.code;
+  document.getElementById('mapbar').style.display='none';
+  const seg=trackMeta?trackMeta.length:trackPts.length;
+  document.getElementById('trackLbl').textContent='軌跡:'+lbl(trackDevice)+'（'+seg+' 個停留點，數字＝先後）';
   document.getElementById('trackBar').classList.add('on');
   runTrack();
 }
