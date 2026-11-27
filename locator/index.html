@@ -101,6 +101,9 @@ body{margin:0;font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",syst
 .trkrow{display:flex;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13.5px;align-items:baseline}
 .trkrow .t{color:var(--muted);font-family:monospace;white-space:nowrap}
 .trkrow .z{font-weight:600}
+.trkrow .p{font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+.trackbar .tkdays{display:inline-flex;gap:4px;margin:0 3px}
+.trackbar .tkdays button{font-size:12.5px;padding:4px 9px}
 .trackwp{position:absolute;width:19px;height:19px;border-radius:50%;transform:translate(-50%,-50%);background:var(--accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.45);z-index:7;cursor:help}
 
 .rail{background:var(--white);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
@@ -235,8 +238,10 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
       </div>
       <div class="trackbar" id="trackBar">
         <span class="lbl" id="trackLbl"></span>
+        <span class="tkdays"><button onclick="trackReload(0)">今天</button><button onclick="trackReload(2)">近3天</button><button onclick="trackReload(6)">近7天</button></span>
+        <button onclick="trackDetail()">📋 明細</button>
         <button onclick="replayTrack()">⟲ 重播</button>
-        <button onclick="clearTrack()">✕ 結束軌跡</button>
+        <button onclick="clearTrack()">✕ 結束</button>
       </div>
       <div class="mapwrap">
         <div class="mapframe" id="mapframe">
@@ -1106,6 +1111,38 @@ function runTrack(){
   tkTimer=setInterval(()=>{if(i>=trackPts.length)clearInterval(tkTimer);else step();},spd);
 }
 function replayTrack(){runTrack();}
+// 軌跡列上直接切期間（0=今天、2=近3天、6=近7天），用同一台重查
+function trackReload(daysBack){
+  if(!trackDevice)return;
+  const to=todayStr(); const d=new Date(); d.setDate(d.getDate()-daysBack);
+  const from=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei'}).format(d);
+  showTrack(trackDevice.code,{from,to});
+}
+function fmtDur(mins){ if(mins==null||mins<0)return '—'; if(mins<60)return mins+' 分'; const h=Math.floor(mins/60),m=mins%60; return h+' 小時'+(m?(' '+m+' 分'):''); }
+// 📋 明細：像創鈺「路過區域秒數」——路過哪些區、時間段、停留多久
+function trackDetail(){
+  document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const close=()=>document.querySelectorAll('.leadtip,.leadmask').forEach(x=>x.remove());
+  const m=document.createElement('div');m.className='leadmask';m.onclick=close;
+  const d=document.createElement('div');d.className='leadtip';d.style.width='min(94vw,470px)';
+  let body;
+  if(!trackMeta||!trackMeta.length){ body='<div style="color:var(--muted);padding:12px 0">這段期間沒有換區紀錄。</div>'; }
+  else{
+    const now=new Date();
+    body=trackMeta.map((it,i)=>{
+      const start=it.at, end=(i<trackMeta.length-1)?trackMeta[i+1].at:null;
+      const t0=new Date(String(start).replace(' ','T')), t1=end?new Date(String(end).replace(' ','T')):now;
+      let mins=Math.round((t1-t0)/60000); if(!(mins>=0))mins=0;
+      const zn=(ZONES[it.zk]||ZONES.other).name;
+      const loc=zn+(it.raw&&it.raw!==zn?('（'+it.raw+'）'):'');
+      const period=String(start).slice(5,16)+(end?('～'+String(end).slice(11,16)):'～現在');
+      return '<div class="trkrow"><span class="t">'+(i+1)+'</span><span class="z">'+loc+'<div class="p">'+period+' · 停留 '+fmtDur(mins)+'</div></span></div>';
+    }).join('');
+  }
+  const rng=trackRange?(trackRange.from===trackRange.to?trackRange.from:trackRange.from+'～'+trackRange.to):'';
+  d.innerHTML='<h4>🧭 '+(trackDevice?lbl(trackDevice):'')+' · 路過區域'+(rng?('　<span style="font-weight:400;font-size:12.5px;color:var(--muted)">'+rng+'</span>'):'')+'</h4><div style="max-height:56vh;overflow:auto;margin-top:6px">'+body+'</div><div class="f"><button id="tdOk">關閉</button></div>';
+  document.body.appendChild(m);document.body.appendChild(d);document.getElementById('tdOk').onclick=close;
+}
 function clearTrack(){
   clearInterval(tkTimer);
   const svg=document.getElementById('trackLayer');while(svg.firstChild)svg.removeChild(svg.firstChild);
