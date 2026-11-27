@@ -259,6 +259,8 @@
   .loc-item:last-child{border-bottom:none}
   .loc-item-main{flex:1;min-width:0}.loc-item-main b{font-size:15px}
   .loc-item-main .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+  .loc-unit{display:inline-block;font-size:13px;font-weight:800;color:var(--ink);background:#eef3f4;border-radius:6px;padding:1px 7px;margin-left:4px;vertical-align:1px}
+  .loc-code{display:block;font-size:11px;color:var(--ink-soft);font-family:monospace;margin-top:1px}
   .loc-st-badge{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--brand-soft);color:var(--brand-dark);margin-left:6px}
   .loc-map-btn{border:1.5px solid var(--brand);color:var(--brand);background:var(--card);border-radius:9px;padding:8px 16px;font-size:14px;font-weight:700;font-family:inherit;cursor:pointer;white-space:nowrap}
   .loc-empty{text-align:center;color:var(--ink-soft);padding:26px 10px;font-size:14px}.loc-empty span{font-size:12px}
@@ -1129,7 +1131,7 @@ async function loadBundle(spec,opts){
 }
 
 const EXPECT_API_VER='2026-10-10-v37';   // 後端應有的版本（?diag=1 可查）
-const APP_VER='2026-10-28-b89';
+const APP_VER='2026-11-27-b90';
 
 const CAISHI_LEAD_IDS = [];   // 預設財管組長（留空即可，正式由 HN 在 App 內設定）
 const CAISHI_IDS      = [];   // 預設財管組負責人（同上）
@@ -6318,6 +6320,7 @@ function matchDevices(name){
    先畫再補，使用者才不會以為按了沒反應。 */
 function openMap(name){
   showLocatePanel(name);
+  loadDevAlias().then(function(ok){ if(ok&&document.getElementById('locSheet')) showLocatePanel(name); });
   if(!LOCATOR_LOADED){
     const el=document.querySelector('#locSheet .loc-sheet-body');
     if(el) el.innerHTML='<div style="padding:18px;text-align:center;color:var(--ink-soft);font-size:13px">'
@@ -6344,6 +6347,37 @@ function showLocatePanel(name){
   </div>`;
   document.body.appendChild(wrap);
 }
+/* ★ b90：定位清單顯示「品項＋編號」（以前只顯示暱稱 ER-07，看不出是什麼）。
+   品項來源優先序：後端 rtls_alias 分頁（財碼/類別/暱稱，跟 locator 共用）→ 內建對照（取自 locator）
+   → devices 表的類別／名稱。只影響顯示，不動後端資料。 */
+const DEV_KIND={"8001446":"生理監視器(飛利浦/邁瑞)","8001448":"生理監視器(飛利浦/邁瑞)","8001449":"生理監視器(飛利浦/邁瑞)","8001450":"生理監視器(飛利浦/邁瑞)","8001451":"生理監視器(飛利浦/邁瑞)","8000541":"生理監視器(飛利浦/邁瑞)","8000542":"生理監視器(飛利浦/邁瑞)","8000543":"生理監視器(飛利浦/邁瑞)","8000544":"移動式生理監視器","33020104-000361":"移動式電子血壓計","8000382":"血壓血氧監視器","8000383":"血壓血氧監視器","8000399":"血壓血氧監視器","8002169":"血壓血氧監視器","33030107-000147":"血壓血氧監視器","33030107-000151":"血壓血氧監視器","33030107-000154":"血壓血氧監視器","8002287":"去顫器","8002288":"去顫器","8002289":"去顫器","8002290":"去顫器","8002291":"去顫器","8002292":"去顫器","8001967":"生理監視器(邁瑞 iMEC8)","8001968":"生理監視器(邁瑞 iMEC8)","8001969":"生理監視器(邁瑞 iMEC8)","8001970":"生理監視器(邁瑞 iMEC8)","8001971":"生理監視器(邁瑞 iMEC8)","8001972":"生理監視器(邁瑞 iMEC8)","8001973":"生理監視器(邁瑞 iMEC8)","8001974":"生理監視器(邁瑞 iMEC8)","8001975":"生理監視器(邁瑞 iMEC8)","8001976":"生理監視器(邁瑞 iMEC8)","8002067":"十二導程心電圖儀","8002358":"十二導程心電圖儀","33030204-000042":"十二導程心電圖儀","33030204-000055":"十二導程心電圖儀","33040807-00231":"血氧監測儀","33040807-000168":"血氧監測儀","173198":"血氧監測儀","8000208":"血氧監測儀","8001809":"血氧監測儀","8001912":"血氧監測儀","33040807-000169":"血氧監測儀","33090199-00070":"超音波掃瞄儀","33090199-00072":"超音波掃瞄儀","8001819":"超音波掃瞄儀","8900653":"靜脈輸液幫浦","8900654":"靜脈輸液幫浦","8900655":"靜脈輸液幫浦","8900656":"靜脈輸液幫浦","8900657":"靜脈輸液幫浦","8900658":"靜脈輸液幫浦","8900659":"靜脈輸液幫浦","8900660":"靜脈輸液幫浦","8900661":"靜脈輸液幫浦","8900662":"靜脈輸液幫浦","8900663":"靜脈輸液幫浦","8900664":"靜脈輸液幫浦","8900665":"靜脈輸液幫浦","8900666":"靜脈輸液幫浦","8900667":"靜脈輸液幫浦","8001705":"烤燈","34010612-000140":"烤燈","34010612-000146":"烤燈","34010612-000149":"烤燈","152667":"推床(油壓)","152668":"推床(油壓)","152669":"推床(油壓)","152671":"推床(油壓)","152674":"推床(油壓)","152675":"推床(油壓)","152677":"推床(油壓)","152814":"推床(油壓)","152817":"推床(油壓)","152819":"推床(油壓)","152820":"推床(油壓)","152821":"推床(油壓)","152991":"推床(油壓)","152992":"推床(油壓)","171205":"推床(油壓)","171206":"推床(油壓)","171208":"推床(油壓)","171228":"推床(油壓)","171229":"推床(油壓)","171226":"推床(油壓)","171227":"推床(油壓)","35010208-000091":"推床(油壓)","35010208-000092":"推床(油壓)","35010208-000093":"推床(油壓)","35010208-000094":"推床(油壓)","35010208-000095":"推床(油壓)","35010208-000096":"推床(油壓)","35010208-000097":"推床(油壓)","35010208-000098":"推床(油壓)","35010208-000099":"推床(油壓)","35010208-000100":"推床(油壓)","35010208-000101":"推床(油壓)","35010208-000102":"推床(油壓)","35010208-000103":"推床(油壓)","35010208-000104":"推床(油壓)","35010208-000105":"推床(油壓)","35010208-000106":"推床(油壓)","35010208-000107":"推床(油壓)","35010208-000108":"推床(油壓)","35010208-000109":"推床(油壓)","35010208-000110":"推床(油壓)","35010208-000121":"推床(油壓)","35010208-000122":"推床(油壓)","35010208-000123":"推床(油壓)","35010208-000124":"推床(油壓)","35010208-000134":"推床(油壓)","35010208-000135":"推床(油壓)","35010208-000136":"推床(油壓)","35010208-000137":"推床(油壓)","35010208-000138":"推床(油壓)","35010208-000139":"推床(油壓)","35010208-000140":"推床(油壓)","35010208-000141":"推床(油壓)","35010208-000142":"推床(油壓)","35010208-000159":"推床(油壓)","35010208-000160":"推床(油壓)","8000070":"推床(油壓)","8000006":"推床(油壓)","8000007":"推床(油壓)","8000008":"推床(油壓)","8000009":"推床(油壓)","8000010":"推床(油壓)","8000011":"推床(油壓)","8000012":"推床(油壓)","8000013":"推床(油壓)","8000014":"推床(油壓)","8001092":"推床(油壓)","8001093":"推床(油壓)","51040202-000034":"折合式便盆椅","51040202-000037":"折合式便盆椅","148903":"活動點滴架","172195":"活動點滴架","35011113-000425":"活動點滴架","35011113-000426":"活動點滴架","35011113-000427":"活動點滴架","35011113-000501":"活動點滴架","35011113-000502":"活動點滴架","35011113-000529":"活動點滴架","35011113-000530":"活動點滴架","35011113-000531":"活動點滴架","34030803-000113":"輸血加壓器","34030803-000114":"輸血加壓器","34030803-000115":"輸血加壓器","34030803-000116":"輸血加壓器"};
+let DEV_ALIAS={}, DEV_ALIAS_LOADED=false;
+function loadDevAlias(){
+  if(DEV_ALIAS_LOADED||!API_URL) return Promise.resolve(false);
+  DEV_ALIAS_LOADED=true;
+  return getJSON('table=rtls_alias').then(function(a){
+    if(!Array.isArray(a)) return false;
+    const m={};
+    a.forEach(function(r){
+      const code=String(r['財碼']||r.code||'').trim(); if(!code) return;
+      const cat=String(r['類別']||r.cat||'').trim();
+      if(cat) m[code]=cat;
+    });
+    DEV_ALIAS=m; return Object.keys(m).length>0;
+  }).catch(function(){ return false; });   // 讀不到就用內建對照
+}
+function devKind(d){
+  if(!d) return '';
+  const code=String(d.code||'').trim();
+  if(code&&DEV_ALIAS[code]) return DEV_ALIAS[code];
+  if(code&&DEV_KIND[code]) return DEV_KIND[code];
+  const u=String(d.unit||'').trim();
+  for(const v of [d.cat,d.name]){
+    const t=String(v||'').trim();
+    if(t&&t!==u&&!/未分類/.test(t)) return t;
+  }
+  return '';
+}
 // 設備列（含即時綠點／最後回報時間）
 function locRows(list){
   const loc=list.filter(d=>d.locate), plain=list.filter(d=>!d.locate);
@@ -6356,7 +6390,11 @@ function locRows(list){
                : (d.locate?'尚無回報':'未裝定位');
     const bat=(s&&s.power!==null)?`<span class="loc-st-badge" style="${s.lowPower?'color:#e8590c;font-weight:800':''}">${s.lowPower?'🔋 ':''}${s.power}%</span>`:'';
     return `<div class="loc-item">
-      <div class="loc-item-main"><b>${esc(d.unit||d.name)}</b>
+      <div class="loc-item-main">${(function(){
+          const k=devKind(d), u=String(d.unit||d.name||'').trim();
+          const head=(k&&k!==u)?`<b>${esc(k)}</b>${u?` <span class="loc-unit">${esc(u)}</span>`:''}`:`<b>${esc(u||k||d.code||'')}</b>`;
+          return head+(d.code?`<span class="loc-code">財碼 ${esc(d.code)}</span>`:'');
+        })()}
         <div class="sub"><span class="rt-dot ${on?'rt-on':'rt-off'}"></span>${esc(where)}
           <span class="loc-st-badge">${esc(when)}</span>${bat}</div></div>
       ${d.locate?`<button class="loc-map-btn" onclick="openDeviceMap('${(d.code||'').replace(/'/g,'')}')">地圖</button>`:''}
@@ -6382,7 +6420,10 @@ function openZoneLocate(zoneKeyOrName){
     <div class="rt-legend"><span><span class="rt-dot rt-on"></span>回報中</span><span><span class="rt-dot rt-off"></span>無訊號</span></div>
     <div class="loc-sheet-foot">${RTLS_AT?('RTLS 最後更新：'+esc(RTLS_AT)):'RTLS 尚未接入'}</div>
   </div>`;
-  document.body.appendChild(wrap);
+  document.body.appendChild(wrap);  loadDevAlias().then(function(ok){
+    const b=document.querySelector('#locSheet .loc-sheet-body');
+    if(ok&&b&&list.length) b.innerHTML=locRows(list);
+  });
 }
 function openDeviceMap(code){
   const uid=state.user?('&uid='+encodeURIComponent(state.user.id)):'';
