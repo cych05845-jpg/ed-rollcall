@@ -199,6 +199,17 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
   .legend{left:8px;bottom:8px;font-size:11px;padding:7px 9px}
   .mapbar{top:10px;font-size:13px}
 }
+
+/* ★ 手機：地圖畫面補浮動搜尋框（電腦版用左側欄，這塊只在手機出現） */
+.msearch{display:none}
+@media(max-width:880px){
+  .msearch{display:block;position:absolute;left:8px;right:8px;top:8px;z-index:20}
+  .msearch input{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
+    font-family:inherit;font-size:16px;background:rgba(255,255,255,.98);box-shadow:var(--shadow);box-sizing:border-box}
+  .msearch input:focus{outline:none;border-color:var(--primary)}
+  .msearch .suggest{left:0;right:0;top:48px;max-height:50vh}
+  .mapbar{top:60px} .trackbar{top:60px}
+}
 </style>
 </head>
 <body>
@@ -218,6 +229,10 @@ td.code{font-family:monospace;font-size:11.5px} tr:hover{background:#f7fafb}
   <div class="stage">
     <div class="view on" id="v-map" style="position:absolute;inset:0">
       <div class="mapbar" id="mapbar"></div>
+      <div class="msearch" id="mSearch">
+        <input id="msearchInput" placeholder="🔍 搜尋儀器：心電圖、血氧、8001586…" autocomplete="off">
+        <div class="suggest" id="msuggest"></div>
+      </div>
       <div class="trackbar" id="trackBar">
         <span class="lbl" id="trackLbl"></span>
         <button onclick="replayTrack()">⟲ 重播</button>
@@ -746,6 +761,16 @@ searchEl.addEventListener('input',()=>renderSuggest(searchEl.value,'suggest',cod
   if(el){el.classList.add('open','active');el.scrollIntoView({block:'nearest'});}
   mapCat=cat;mapItem=null;curFilter=null;switchView('map');renderDots();renderMapbar();}));
 searchEl.addEventListener('blur',()=>setTimeout(()=>document.getElementById('suggest').classList.remove('on'),180));
+// 手機浮動搜尋：沿用同一套建議清單與 locate()
+const mSearchEl=document.getElementById('msearchInput');
+if(mSearchEl){
+  mSearchEl.addEventListener('input',()=>renderSuggest(mSearchEl.value,'msuggest',code=>{
+    mSearchEl.value='';document.getElementById('msuggest').classList.remove('on');locate(code);
+  },cat=>{mSearchEl.value='';document.getElementById('msuggest').classList.remove('on');
+    document.querySelectorAll('.grp').forEach(x=>x.classList.remove('open','active'));
+    mapCat=cat;mapItem=null;curFilter=null;switchView('map');renderDots();renderMapbar();}));
+  mSearchEl.addEventListener('blur',()=>setTimeout(()=>document.getElementById('msuggest').classList.remove('on'),180));
+}
 
 function renderSuggest(q,boxId,onItem,onCat){
   q=q.trim().toLowerCase();const box=document.getElementById(boxId);
