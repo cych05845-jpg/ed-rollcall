@@ -164,7 +164,7 @@ function failWhy(t,status){
 setTimeout(function(){ try{ failFlush(); }catch(e){} },6000);   // 開頁 6 秒後把上次沒補報的送出去
 /* ===================== /v32 存檔失敗補報 ===================== */
 // 這份前端搭配的後端版本；不一致代表 GS 沒重新部署
-const APP_VER='2026-09-26-b46';   // 前端版本印記（畫面右下角會顯示）
+const APP_VER='2026-11-27-b47';   // 前端版本印記（畫面右下角會顯示）
 const EXPECT_VER='2026-09-26-v33';
 
 const P=new URLSearchParams(location.search);
@@ -662,7 +662,10 @@ let syncing=false;
 function daysBackFor(ym, base){
   var m=/^(\d{4})-(\d{2})$/.exec(String(ym||'')); if(!m) return base;
   var t=tpeParts();
-  if(+m[1]===t.y && +m[2]===t.m) return base;
+  // ★ b47：看「本月」時，抓取範圍要涵蓋到 1 號，不能只用固定的 base（16 天）。
+  //   否則月中以後（例如 27 號看 16 天只到 11 號），當月前段（1～10 日）不會被抓進來，
+  //   圖上就空白——後端其實有，是沒載進來。取 max(base, 當日+2) 保證蓋滿整個當月。
+  if(+m[1]===t.y && +m[2]===t.m) return Math.max(base, t.d+2);
   var start=Date.UTC(+m[1],+m[2]-1,1), now=Date.UTC(t.y,t.m-1,t.d);
   var d=Math.round((now-start)/86400000)+35;
   return (d>0&&d<3000)?d:base;
